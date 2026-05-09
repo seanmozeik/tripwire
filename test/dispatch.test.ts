@@ -139,6 +139,26 @@ describe('bash-scoped-rm', () => {
   test('cd-then-rm pattern is not fooled by safe scope on left side', () => {
     expect(allRules('cd dist && rm -rf /etc/foo').rm.kind).toBe('deny');
   });
+  test('fd-prefixed redirect does not become an rm target', () => {
+    // `2>&1` previously caused the `2` to be parsed as a positional arg
+    // To `rm`, denying an otherwise-safe `/tmp` deletion.
+    expect(allRules('rm -rf /tmp/foo-* 2>&1').rm.kind).toBe('allow');
+    expect(allRules('rm -rf /tmp/foo 2>/dev/null').rm.kind).toBe('allow');
+    expect(allRules('rm -rf /tmp/foo 1>&2').rm.kind).toBe('allow');
+    expect(allRules('rm -rf /tmp/foo 2>>log').rm.kind).toBe('allow');
+  });
+  test('digit positional arg with whitespace before redirect is preserved', () => {
+    // `rm 2 >file` — `2` is a real (unsafe) target, not an FD prefix.
+    // Without the whitespace check, the digit-strip would drop it.
+    expect(allRules('rm 2 >/tmp/log').rm.kind).toBe('deny');
+  });
+  test('&> and &>> redirects do not split the segment', () => {
+    // Previously `rm x &>file` was parsed as two segments (`rm x` and
+    // `>file`), losing the redirect entirely. The merged `&>` op keeps
+    // The segment whole.
+    expect(allRules('rm -rf /tmp/foo &>/tmp/log').rm.kind).toBe('allow');
+    expect(allRules('rm -rf /tmp/foo &>>/tmp/log').rm.kind).toBe('allow');
+  });
 });
 
 describe('bash-redirect', () => {

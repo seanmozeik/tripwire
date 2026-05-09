@@ -26,7 +26,7 @@ interface Segment {
 }
 
 interface Redirect {
-  readonly op: '>' | '>>' | '<' | '<<' | '<<<' | '<>' | '>&' | '<&';
+  readonly op: '>' | '>>' | '<' | '<<' | '<<<' | '<>' | '>&' | '<&' | '&>' | '&>>';
   readonly target: string;
 }
 
@@ -85,7 +85,18 @@ const SAFE_ABSOLUTE: readonly string[] = [
   '/private/var/folders',
 ];
 
-const REDIRECT_OPS: ReadonlySet<string> = new Set(['>', '>>', '<', '<<', '<<<', '<>', '>&', '<&']);
+const REDIRECT_OPS: ReadonlySet<string> = new Set([
+  '>',
+  '>>',
+  '<',
+  '<<',
+  '<<<',
+  '<>',
+  '>&',
+  '<&',
+  '&>',
+  '&>>',
+]);
 
 const SEGMENT_OPS: ReadonlySet<string> = new Set([';', '&&', '||', '|', '&']);
 
@@ -140,7 +151,11 @@ const entryToTokens = (e: ParseEntry): string[] => {
   return ['__tripwire_cmd_sub__'];
 };
 
-const parseSegment = (entries: readonly ParseEntry[]): Segment | null => {
+interface FdBudget {
+  remaining: number;
+}
+
+const parseSegment = (entries: readonly ParseEntry[], fdBudget: FdBudget): Segment | null => {
   const tokens: string[] = [];
   const args: string[] = [];
   const flags: string[] = [];
@@ -151,6 +166,18 @@ const parseSegment = (entries: readonly ParseEntry[]): Segment | null => {
     const e = entries[i]!;
     const op = getOp(e);
     if (op !== null && REDIRECT_OPS.has(op)) {
+      // Shell-quote emits a leading file-descriptor digit (e.g. the `2` in
+      // `2>&1`) as a separate string token *before* the redirect op. It
+      // Also drops the whitespace, so `echo 2 >file` and `echo 2>file`
+      // Produce identical token streams. We pre-scanned the original
+      // Command for digit-then-redirect-with-no-space patterns and stored
+      // The count in fdBudget; only consume one when we see a digit
+      // Adjacent to a redirect op here.
+      const last = tokens.at(-1);
+      if (last !== undefined && /^[0-9]+$/.test(last) && fdBudget.remaining > 0) {
+        tokens.pop();
+        fdBudget.remaining--;
+      }
       const target = entries[i + 1];
       if (target !== undefined && isStringToken(target)) {
         redirects.push({ op: op as Redirect['op'], target });
@@ -185,6 +212,35 @@ const parseSegment = (entries: readonly ParseEntry[]): Segment | null => {
 // The ability to reason about home-directory references.
 const PRESERVE_ENV = (key: string): string => `$${key}`;
 
+// Shell-quote splits `&>file` into two ops — `{op:"&"}` then `{op:">"}` —
+// Which would (a) make the `&` look like a backgrounding segment break and
+// (b) hide the redirect from rule analysis. Merge those pairs back into
+// `&>` / `&>>` before segment splitting.
+const mergeAmpRedirects = (entries: readonly ParseEntry[]): ParseEntry[] => {
+  const out: ParseEntry[] = [];
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i]!;
+    const next = entries[i + 1];
+    if (getOp(e) === '&' && next !== undefined && (getOp(next) === '>' || getOp(next) === '>>')) {
+      const merged = { op: getOp(next) === '>' ? '&>' : '&>>' } as unknown as ParseEntry;
+      out.push(merged);
+      i++;
+      continue;
+    }
+    out.push(e);
+  }
+  return out;
+};
+
+// Count digit-then-redirect adjacencies in the source string (`2>file`,
+// `1>&2`, `2>>log`). The `(?<![\w$])` rejects matches inside identifiers
+// Like `foo2>bar`. A trailing `>` or `<` with no whitespace is required —
+// `echo 2 >file` keeps `2` as a positional arg.
+const countFdPrefixRedirects = (cmd: string): number => {
+  const matches = cmd.match(/(?<![\w$])\d+(?=[<>])/g);
+  return matches?.length ?? 0;
+};
+
 const parseCommand = (cmd: string): Segment[] => {
   let entries: ParseEntry[];
   try {
@@ -192,13 +248,15 @@ const parseCommand = (cmd: string): Segment[] => {
   } catch {
     return [];
   }
+  entries = mergeAmpRedirects(entries);
+  const fdBudget: FdBudget = { remaining: countFdPrefixRedirects(cmd) };
 
   const out: Segment[] = [];
   let buf: ParseEntry[] = [];
   for (const e of entries) {
     const op = getOp(e);
     if (op !== null && SEGMENT_OPS.has(op)) {
-      const seg = parseSegment(buf);
+      const seg = parseSegment(buf, fdBudget);
       if (seg !== null) {
         out.push(seg);
       }
@@ -207,7 +265,7 @@ const parseCommand = (cmd: string): Segment[] => {
     }
     buf.push(e);
   }
-  const seg = parseSegment(buf);
+  const seg = parseSegment(buf, fdBudget);
   if (seg !== null) {
     out.push(seg);
   }
