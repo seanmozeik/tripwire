@@ -152,6 +152,32 @@ describe('bash-scoped-rm', () => {
     // Without the whitespace check, the digit-strip would drop it.
     expect(allRules('rm 2 >/tmp/log').rm.kind).toBe('deny');
   });
+  test('|& pipes split into separate segments and analyze both sides', () => {
+    // Previously `cmd1 |& cmd2` collapsed into one segment with
+    // `__op_|&__` as a fake positional arg, hiding `cmd2` from rules.
+    expect(allRules('echo x |& rm -rf /etc').rm.kind).toBe('deny');
+    expect(allRules('cat foo |& tee /tmp/log').rm.kind).toBe('allow');
+  });
+  test('>| noclobber-override redirect does not split the segment', () => {
+    // `echo x >|file` previously parsed as `>` then `|` (segment break),
+    // Losing the redirect target.
+    expect(allRules('echo TOKEN=abc >| .env').redirect.kind).toBe('deny');
+  });
+  test('inner command in process substitution is analyzed', () => {
+    // `tee >(rm -rf /etc)` — outer tee is harmless, inner rm is not.
+    expect(allRules('tee >(rm -rf /etc) < input').rm.kind).toBe('deny');
+    expect(allRules('cat <(rm -rf /etc)').rm.kind).toBe('deny');
+  });
+  test('inner command in $(...) substitution is analyzed', () => {
+    expect(allRules('echo $(rm -rf /etc)').rm.kind).toBe('deny');
+    expect(allRules('FOO=$(rm -rf /etc) bar').rm.kind).toBe('deny');
+  });
+  test('inner command in backticks is analyzed', () => {
+    expect(allRules('echo `rm -rf /etc`').rm.kind).toBe('deny');
+  });
+  test('nested $(...) substitutions are analyzed', () => {
+    expect(allRules('echo $(echo $(rm -rf /etc))').rm.kind).toBe('deny');
+  });
   test('&> and &>> redirects do not split the segment', () => {
     // Previously `rm x &>file` was parsed as two segments (`rm x` and
     // `>file`), losing the redirect entirely. The merged `&>` op keeps

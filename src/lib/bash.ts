@@ -98,7 +98,12 @@ const REDIRECT_OPS: ReadonlySet<string> = new Set([
   '&>>',
 ]);
 
-const SEGMENT_OPS: ReadonlySet<string> = new Set([';', '&&', '||', '|', '&']);
+// `|&` is bash shorthand for "pipe stdout AND stderr to the next command"
+// — semantically equivalent to `2>&1 |` for our purposes. shell-quote
+// Emits it as a single op; without classifying it as a segment break,
+// `cmd1 |& cmd2` collapses into one segment with `__op_|&__` as a fake
+// Positional arg, hiding `cmd2` from every rule.
+const SEGMENT_OPS: ReadonlySet<string> = new Set([';', '&&', '||', '|', '|&', '&']);
 
 // Type guards over `ParseEntry`.
 const isStringToken = (e: ParseEntry): e is string => typeof e === 'string';
@@ -227,6 +232,16 @@ const mergeAmpRedirects = (entries: readonly ParseEntry[]): ParseEntry[] => {
       i++;
       continue;
     }
+    // `>|file` is bash's noclobber-override redirect. shell-quote splits
+    // It into `{op:">"}, {op:"|"}` — the `|` then trips segment splitting
+    // And the redirect target is lost. Re-merge to a single `>` op (the
+    // Noclobber bit doesn't matter to rule analysis; what matters is that
+    // It's a write redirect to the following target).
+    if (getOp(e) === '>' && next !== undefined && getOp(next) === '|') {
+      out.push({ op: '>' } as unknown as ParseEntry);
+      i++;
+      continue;
+    }
     out.push(e);
   }
   return out;
@@ -239,6 +254,54 @@ const mergeAmpRedirects = (entries: readonly ParseEntry[]): ParseEntry[] => {
 const countFdPrefixRedirects = (cmd: string): number => {
   const matches = cmd.match(/(?<![\w$])\d+(?=[<>])/g);
   return matches?.length ?? 0;
+};
+
+// Extract inner commands from `$(...)`, `<(...)`, `>(...)`, and `` `...` ``.
+// Shell-quote collapses these into opaque sentinel tokens (which is correct
+// For safe-path checks — substituted output is unknown), but it also hides
+// The inner commands themselves from rule analysis. So `tee >(rm -rf /etc)`
+// Would let the `rm` slip through. We pull the inner commands out and
+// Analyze them as additional segments.
+//
+// Backticks don't nest (bash needs `\` escaping for that, which we treat as
+// A literal). Process/command substitutions can nest arbitrarily — a depth
+// Counter handles the balanced parens.
+const extractInnerCommands = (cmd: string): string[] => {
+  const inner: string[] = [];
+  // Backticks: simple, non-nesting.
+  const bt = cmd.match(/`([^`]+)`/g);
+  if (bt !== null) {
+    for (const m of bt) {
+      inner.push(m.slice(1, -1));
+    }
+  }
+  // $( ), <( ), >( ) with balanced parens.
+  for (let i = 0; i < cmd.length - 1; i++) {
+    const ch = cmd[i]!;
+    const next = cmd[i + 1]!;
+    const isSubStart = (ch === '$' || ch === '<' || ch === '>') && next === '(';
+    if (!isSubStart) {
+      continue;
+    }
+    let depth = 1;
+    let j = i + 2;
+    while (j < cmd.length && depth > 0) {
+      const cj = cmd[j]!;
+      if (cj === '(') {
+        depth++;
+      } else if (cj === ')') {
+        depth--;
+      }
+      if (depth > 0) {
+        j++;
+      }
+    }
+    if (depth === 0) {
+      inner.push(cmd.slice(i + 2, j));
+      i = j;
+    }
+  }
+  return inner;
 };
 
 const parseCommand = (cmd: string): Segment[] => {
@@ -269,6 +332,17 @@ const parseCommand = (cmd: string): Segment[] => {
   if (seg !== null) {
     out.push(seg);
   }
+
+  // Recursively analyze any embedded commands as additional segments. The
+  // Outer segment's args are already opaque sentinels (safe-path-failing);
+  // This catches dangerous inner commands the outer call would otherwise
+  // Hide.
+  for (const sub of extractInnerCommands(cmd)) {
+    for (const innerSeg of parseCommand(sub)) {
+      out.push(innerSeg);
+    }
+  }
+
   return out;
 };
 
