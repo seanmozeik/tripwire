@@ -1,0 +1,286 @@
+#!/usr/bin/env bun
+// Tripwire — Claude Code hooks dispatcher.
+//
+// Reads a hook event JSON payload on stdin, routes by hook_event_name +
+// Tool_name, runs rules with per-rule timeouts, merges decisions
+// (most-restrictive wins), wraps allowed Bash commands through rtk for
+// Token-saver rewriting, scans PostToolUse output for secrets via
+// Betterleaks, and writes Claude Code's expected JSON response on stdout.
+//
+// Design rules:
+//   - A buggy or slow rule must never block the agent. Every rule runs
+//     Under a timeout; any defect or timeout collapses to `allow`, logged.
+//   - Block messages address the agent in second person and name the
+//     Concrete alternative tool / approach. No vague "denied for safety".
+//   - One bypass token: `tripwire-allow` (any comment syntax) on a code
+//     Line, or `# tripwire-allow` in a bash command.
+
+import { BunRuntime } from '@effect/platform-bun';
+import { Cause, Effect, Exit, Schema } from 'effect';
+
+import { parseCommand } from './lib/bash.ts';
+import { type Decision, allow, merge } from './lib/decision.ts';
+import {
+  type BashInput,
+  type EditInput,
+  type HookEvent,
+  HookEventSchema,
+  type ReadInput,
+  type WriteInput,
+  isBashInput,
+  isEditInput,
+  isReadInput,
+  isWriteInput,
+} from './lib/event.ts';
+import { logError } from './lib/log.ts';
+import { runRtkRewrite } from './lib/rtk.ts';
+import { bashDeny } from './rules/bash-deny.ts';
+import { bashNetworkInstall } from './rules/bash-network-install.ts';
+import { bashRedirect } from './rules/bash-redirect.ts';
+import { bashScopedRm } from './rules/bash-scoped-rm.ts';
+import { bashTarExplosion } from './rules/bash-tar-explosion.ts';
+import { bashToolPolicy } from './rules/bash-tool-policy.ts';
+import { imsgDeny } from './rules/imsg-deny.ts';
+import { lazyCode } from './rules/lazy-code.ts';
+import { pathProtect } from './rules/path-protect.ts';
+import { postSecretScrub } from './rules/post-secret-scrub.ts';
+import { readProtect } from './rules/read-protect.ts';
+
+const RULE_TIMEOUT_MS = 250;
+const POST_RULE_TIMEOUT_MS = 5000; // Betterleaks subprocess can take longer
+
+const readStdin = async (): Promise<string> => {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+};
+
+const writeAllow = (): void => {
+  process.stdout.write('{"continue": true}\n');
+};
+
+const writeRewriteAllow = (eventName: string, command: string, reason?: string): void => {
+  const out = {
+    continue: true,
+    hookSpecificOutput: {
+      hookEventName: eventName,
+      permissionDecisionReason: reason ?? 'tripwire passthrough + rtk rewrite',
+      updatedInput: { command },
+    },
+  };
+  process.stdout.write(`${JSON.stringify(out)}\n`);
+};
+
+interface WarnOutput {
+  hookEventName: string;
+  additionalContext: string;
+  updatedInput?: { command: string };
+}
+
+const writeWarn = (eventName: string, decision: Decision): void => {
+  const hookSpecificOutput: WarnOutput = {
+    hookEventName: eventName,
+    additionalContext: `[tripwire:${decision.rule}] ${decision.message}`,
+  };
+  if (decision.rewriteCommand !== undefined) {
+    hookSpecificOutput.updatedInput = { command: decision.rewriteCommand };
+  }
+  process.stdout.write(`${JSON.stringify({ continue: true, hookSpecificOutput })}\n`);
+};
+
+const writePreToolGate = (eventName: string, decision: Decision): void => {
+  const out = {
+    hookSpecificOutput: {
+      hookEventName: eventName,
+      permissionDecision: decision.kind === 'deny' ? 'deny' : 'ask',
+      permissionDecisionReason: `[tripwire:${decision.rule}] ${decision.message}`,
+    },
+  };
+  process.stdout.write(`${JSON.stringify(out)}\n`);
+};
+
+const writePostToolBlock = (decision: Decision): void => {
+  const out = {
+    continue: true,
+    decision: 'block',
+    reason: `[tripwire:${decision.rule}] ${decision.message}`,
+  };
+  process.stdout.write(`${JSON.stringify(out)}\n`);
+};
+
+type RuleFn = () => Decision;
+
+const runRule = (name: string, fn: RuleFn, timeoutMs: number): Effect.Effect<Decision> =>
+  Effect.gen(function* () {
+    const exit = yield* Effect.exit(
+      Effect.try({ try: fn, catch: (e) => e }).pipe(Effect.timeout(timeoutMs)),
+    );
+    if (Exit.isSuccess(exit)) {
+      return exit.value;
+    }
+    logError(name, Cause.pretty(exit.cause));
+    return allow(name);
+  });
+
+interface Rule {
+  readonly name: string;
+  readonly fn: RuleFn;
+}
+
+const collectPreToolUseRules = (tool: string, input: unknown): Rule[] => {
+  const rules: Rule[] = [];
+  if (tool === 'Bash' && isBashInput(input)) {
+    const i: BashInput = input;
+    const segments = parseCommand(i.command);
+    rules.push({ name: 'bash-deny', fn: () => bashDeny(segments, i.command) });
+    rules.push({ name: 'bash-scoped-rm', fn: () => bashScopedRm(segments, i.command) });
+    rules.push({ name: 'bash-redirect', fn: () => bashRedirect(segments, i.command) });
+    rules.push({ name: 'bash-network-install', fn: () => bashNetworkInstall(segments, i.command) });
+    rules.push({ name: 'bash-tar-explosion', fn: () => bashTarExplosion(segments, i.command) });
+    rules.push({ name: 'bash-tool-policy', fn: () => bashToolPolicy(segments, i.command) });
+    rules.push({ name: 'imsg-deny', fn: () => imsgDeny(segments, i.command) });
+    return rules;
+  }
+  if (tool === 'Read' && isReadInput(input)) {
+    const i: ReadInput = input;
+    rules.push({ name: 'read-protect', fn: () => readProtect(i) });
+    return rules;
+  }
+  const isEdit = (tool === 'Edit' || tool === 'MultiEdit') && isEditInput(input);
+  const isWrite = tool === 'Write' && isWriteInput(input);
+  if (isEdit) {
+    const i: EditInput = input;
+    rules.push({ name: 'path-protect', fn: () => pathProtect(i) });
+    rules.push({ name: 'lazy-code', fn: () => lazyCode(i) });
+  } else if (isWrite) {
+    const i: WriteInput = input;
+    rules.push({ name: 'path-protect', fn: () => pathProtect(i) });
+    rules.push({ name: 'lazy-code', fn: () => lazyCode(i) });
+  }
+  return rules;
+};
+
+const collectPostToolUseRules = (tool: string, response: unknown): Rule[] => {
+  if (tool === 'Bash' || tool === 'Read' || tool === 'WebFetch') {
+    return [{ name: 'post-secret-scrub', fn: () => postSecretScrub({ toolName: tool, response }) }];
+  }
+  return [];
+};
+
+const runRules = (rules: readonly Rule[], timeoutMs: number): Effect.Effect<Decision> =>
+  Effect.gen(function* () {
+    if (rules.length === 0) {
+      return allow('no-rules');
+    }
+    const decisions: Decision[] = [];
+    for (const r of rules) {
+      decisions.push(yield* runRule(r.name, r.fn, timeoutMs));
+    }
+    return merge(decisions);
+  });
+
+const handleBashAllow = (event: HookEvent, decision: Decision): void => {
+  // After the gate passes (allow or warn), apply rtk command-rewrite. If
+  // Rtk doesn't change the command, fall through to normal allow / warn.
+  const eventName = event.hook_event_name;
+  const rtk = runRtkRewrite(event);
+  const original = (event.tool_input as { command?: string } | undefined)?.command ?? '';
+  const rewritten =
+    rtk.updatedCommand !== undefined && rtk.updatedCommand !== original ? rtk.updatedCommand : null;
+
+  if (decision.kind === 'warn') {
+    if (rewritten !== null) {
+      const out = {
+        continue: true,
+        hookSpecificOutput: {
+          hookEventName: eventName,
+          additionalContext: `[tripwire:${decision.rule}] ${decision.message}`,
+          updatedInput: { command: rewritten },
+          permissionDecisionReason: rtk.reason ?? 'rtk rewrite',
+        },
+      };
+      process.stdout.write(`${JSON.stringify(out)}\n`);
+      return;
+    }
+    writeWarn(eventName, decision);
+    return;
+  }
+  if (rewritten !== null) {
+    writeRewriteAllow(eventName, rewritten, rtk.reason);
+    return;
+  }
+  writeAllow();
+};
+
+const handleAllow = (event: HookEvent, decision: Decision): void => {
+  const eventName = event.hook_event_name;
+  if (eventName === 'PreToolUse' && event.tool_name === 'Bash') {
+    handleBashAllow(event, decision);
+    return;
+  }
+  if (decision.kind === 'warn') {
+    writeWarn(eventName, decision);
+    return;
+  }
+  writeAllow();
+};
+
+const program = Effect.gen(function* () {
+  const raw = yield* Effect.promise(readStdin);
+
+  const parseExit = yield* Effect.exit(
+    Effect.try({ try: () => JSON.parse(raw) as unknown, catch: (e) => e }),
+  );
+  if (Exit.isFailure(parseExit)) {
+    logError('parse', Cause.pretty(parseExit.cause));
+    writeAllow();
+    return;
+  }
+
+  const decodeExit = yield* Effect.exit(
+    Schema.decodeUnknownEffect(HookEventSchema)(parseExit.value),
+  );
+  if (Exit.isFailure(decodeExit)) {
+    logError('decode', Cause.pretty(decodeExit.cause));
+    writeAllow();
+    return;
+  }
+  const event = decodeExit.value;
+  const tool = event.tool_name ?? '';
+
+  if (event.hook_event_name === 'PreToolUse') {
+    const rules = collectPreToolUseRules(tool, event.tool_input);
+    const decision = yield* runRules(rules, RULE_TIMEOUT_MS);
+    if (decision.kind === 'deny' || decision.kind === 'ask') {
+      writePreToolGate(event.hook_event_name, decision);
+      return;
+    }
+    handleAllow(event, decision);
+    return;
+  }
+
+  if (event.hook_event_name === 'PostToolUse') {
+    const rules = collectPostToolUseRules(tool, event.tool_response);
+    const decision = yield* runRules(rules, POST_RULE_TIMEOUT_MS);
+    if (decision.kind === 'deny') {
+      writePostToolBlock(decision);
+      return;
+    }
+    writeAllow();
+    return;
+  }
+
+  writeAllow();
+});
+
+const handled = program.pipe(
+  Effect.catchCause((cause) => {
+    logError('dispatch-fatal', Cause.pretty(cause));
+    writeAllow();
+    return Effect.void;
+  }),
+);
+
+BunRuntime.runMain(handled);

@@ -1,0 +1,18 @@
+# JS / TS
+node_modules/
+dist/
+*.tsbuildinfo
+bun.lock
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.pytest_cache/
+
+# Local secrets
+*.curl
+.env
+.env.*
+!.env.example

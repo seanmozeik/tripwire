@@ -1,0 +1,36 @@
+{
+  "name": "tripwire",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Opinionated Claude Code hooks dispatcher. Blocks or rewrites dangerous commands; replies with actionable error messages.",
+  "bin": {
+    "tripwire": "./dist/tripwire-cli.js",
+    "tripwire-hook": "./dist/tripwire.js"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "bun build src/dispatch.ts --target=bun --minify --bytecode --outdir dist --entry-naming tripwire.js && bun build src/cli.ts --target=bun --minify --bytecode --outdir dist --entry-naming tripwire-cli.js && chmod +x dist/tripwire.js dist/tripwire-cli.js",
+    "check": "bun run format && bun run lint:fix && bun run typecheck",
+    "format": "oxfmt --write .",
+    "lint": "oxlint --tsconfig tsconfig.oxlint.json .",
+    "lint:fix": "oxlint --tsconfig tsconfig.oxlint.json --fix .",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@effect/platform-bun": "^4.0.0-beta.64",
+    "effect": "^4.0.0-beta.64",
+    "shell-quote": "^1.8.3"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.13",
+    "@types/shell-quote": "^1.7.5",
+    "oxfmt": "^0.47.0",
+    "oxlint": "^1.61.0",
+    "oxlint-tsgolint": "^0.22.1",
+    "typescript": "^6.0.3"
+  },
+  "engines": {
+    "bun": ">=1.0"
+  }
+}
