@@ -8,6 +8,7 @@ import { describe, expect, test } from 'bun:test';
 
 import { parseCommand } from '../src/lib/bash.ts';
 import { bashDeny } from '../src/rules/bash-deny.ts';
+import { bashGit } from '../src/rules/bash-git.ts';
 import { bashNetworkInstall } from '../src/rules/bash-network-install.ts';
 import { bashRedirect } from '../src/rules/bash-redirect.ts';
 import { bashScopedRm } from '../src/rules/bash-scoped-rm.ts';
@@ -22,6 +23,7 @@ const allRules = (cmd: string) => {
   const segs = parseCommand(cmd);
   return {
     deny: bashDeny(segs, cmd),
+    git: bashGit(segs, cmd),
     rm: bashScopedRm(segs, cmd),
     redirect: bashRedirect(segs, cmd),
     netinstall: bashNetworkInstall(segs, cmd),
@@ -47,18 +49,7 @@ describe('bash-deny', () => {
   test('blocks dd to disk', () => {
     expect(allRules('dd if=/dev/zero of=/dev/disk2').deny.kind).toBe('deny');
   });
-  test('blocks force push', () => {
-    expect(allRules('git push --force origin main').deny.kind).toBe('deny');
-  });
-  test('blocks git commit', () => {
-    expect(allRules('git commit -m foo').deny.kind).toBe('deny');
-  });
-  test('blocks git config --global', () => {
-    expect(allRules('git config --global user.email foo@bar').deny.kind).toBe('deny');
-  });
-  test('allows git config --get', () => {
-    expect(allRules('git config --get user.email').deny.kind).toBe('allow');
-  });
+  // (Detailed git policy is tested under bash-git below.)
   test('blocks defaults write', () => {
     expect(allRules('defaults write com.apple.dock orientation right').deny.kind).toBe('deny');
   });
@@ -68,6 +59,50 @@ describe('bash-deny', () => {
   test('blocks mackup', () => {
     expect(allRules('mackup backup').deny.kind).toBe('deny');
   });
+  test('blocks softwareupdate --install', () => {
+    expect(allRules('softwareupdate --install --all').deny.kind).toBe('deny');
+  });
+  test('blocks pmset write', () => {
+    expect(allRules('pmset -a sleep 0').deny.kind).toBe('deny');
+  });
+  test('allows pmset -g', () => {
+    expect(allRules('pmset -g').deny.kind).toBe('allow');
+  });
+  test('blocks dscl -delete', () => {
+    expect(allRules('dscl . -delete /Users/sean').deny.kind).toBe('deny');
+  });
+  test('blocks xattr quarantine bypass', () => {
+    expect(allRules('xattr -d com.apple.quarantine /tmp/foo').deny.kind).toBe('deny');
+  });
+  test('blocks spctl --master-disable', () => {
+    expect(allRules('spctl --master-disable').deny.kind).toBe('deny');
+  });
+  test('blocks kextload', () => {
+    expect(allRules('kextload /tmp/foo.kext').deny.kind).toBe('deny');
+  });
+  test('blocks kmutil load', () => {
+    expect(allRules('kmutil load -p /tmp/foo.kext').deny.kind).toBe('deny');
+  });
+  test('blocks security delete-keychain', () => {
+    expect(allRules('security delete-keychain login.keychain').deny.kind).toBe('deny');
+  });
+  test('blocks security delete-generic-password', () => {
+    expect(allRules('security delete-generic-password -s mySvc').deny.kind).toBe('deny');
+  });
+  test('asks on security add-generic-password', () => {
+    expect(allRules('security add-generic-password -s svc -a acct -w secret').deny.kind).toBe(
+      'ask',
+    );
+  });
+  test('blocks systemsetup -setremotelogin', () => {
+    expect(allRules('systemsetup -setremotelogin on').deny.kind).toBe('deny');
+  });
+  test('blocks scutil --set ComputerName', () => {
+    expect(allRules('scutil --set ComputerName foo').deny.kind).toBe('deny');
+  });
+  test('allows scutil --get', () => {
+    expect(allRules('scutil --get ComputerName').deny.kind).toBe('allow');
+  });
   test('asks on sudo', () => {
     expect(allRules('sudo apt install foo').deny.kind).toBe('ask');
   });
@@ -76,9 +111,6 @@ describe('bash-deny', () => {
   });
   test('allows ls', () => {
     expect(allRules('ls -la').deny.kind).toBe('allow');
-  });
-  test('allows git status', () => {
-    expect(allRules('git status').deny.kind).toBe('allow');
   });
   test('respects bypass marker', () => {
     expect(allRules('rm -rf /  # tripwire-allow: lab').deny.kind).toBe('allow');
@@ -196,6 +228,134 @@ describe('bash-tool-policy', () => {
   });
   test('allows uv add', () => {
     expect(allRules('uv add requests').policy.kind).toBe('allow');
+  });
+});
+
+describe('bash-git', () => {
+  test('allows git status', () => {
+    expect(allRules('git status').git.kind).toBe('allow');
+  });
+  test('allows git diff', () => {
+    expect(allRules('git diff main').git.kind).toBe('allow');
+  });
+  test('allows git log --oneline', () => {
+    expect(allRules('git log --oneline -10').git.kind).toBe('allow');
+  });
+  test('allows git fetch', () => {
+    expect(allRules('git fetch origin').git.kind).toBe('allow');
+  });
+  test('allows git config --get user.email', () => {
+    expect(allRules('git config --get user.email').git.kind).toBe('allow');
+  });
+  test('denies git config --global', () => {
+    expect(allRules('git config --global user.email foo@bar').git.kind).toBe('deny');
+  });
+  test('denies git reset --hard', () => {
+    expect(allRules('git reset --hard HEAD~1').git.kind).toBe('deny');
+  });
+  test('denies git reset --hard via git -C', () => {
+    expect(allRules('git -C ../foo reset --hard').git.kind).toBe('deny');
+  });
+  test('denies git clean -fd', () => {
+    expect(allRules('git clean -fd').git.kind).toBe('deny');
+  });
+  test('denies git checkout .', () => {
+    expect(allRules('git checkout .').git.kind).toBe('deny');
+  });
+  test('denies git checkout -- file.ts', () => {
+    expect(allRules('git checkout -- src/foo.ts').git.kind).toBe('deny');
+  });
+  test('allows git checkout -b feature', () => {
+    expect(allRules('git checkout -b feature/foo').git.kind).toBe('allow');
+  });
+  test('allows git checkout main (branch switch)', () => {
+    expect(allRules('git checkout main').git.kind).toBe('allow');
+  });
+  test('denies git switch --discard-changes', () => {
+    expect(allRules('git switch --discard-changes main').git.kind).toBe('deny');
+  });
+  test('denies git restore <path>', () => {
+    expect(allRules('git restore src/foo.ts').git.kind).toBe('deny');
+  });
+  test('allows git restore --staged <path>', () => {
+    expect(allRules('git restore --staged src/foo.ts').git.kind).toBe('allow');
+  });
+  test('denies git rebase -i', () => {
+    expect(allRules('git rebase -i HEAD~3').git.kind).toBe('deny');
+  });
+  test('denies git filter-branch', () => {
+    expect(allRules('git filter-branch --tree-filter rm').git.kind).toBe('deny');
+  });
+  test('denies git push --force', () => {
+    expect(allRules('git push --force origin feature').git.kind).toBe('deny');
+  });
+  test('denies git push origin main', () => {
+    expect(allRules('git push origin main').git.kind).toBe('deny');
+  });
+  test('denies git push origin HEAD:main', () => {
+    expect(allRules('git push origin HEAD:main').git.kind).toBe('deny');
+  });
+  test('denies git push --delete origin foo', () => {
+    expect(allRules('git push --delete origin foo').git.kind).toBe('deny');
+  });
+  test('allows git push origin feature/foo', () => {
+    expect(allRules('git push origin feature/foo').git.kind).toBe('allow');
+  });
+  test('denies git branch -D feature', () => {
+    expect(allRules('git branch -D feature/old').git.kind).toBe('deny');
+  });
+  test('denies git branch -d main', () => {
+    expect(allRules('git branch -d main').git.kind).toBe('deny');
+  });
+  test('asks on git branch -d feature', () => {
+    expect(allRules('git branch -d feature/done').git.kind).toBe('ask');
+  });
+  test('denies git tag -d v1', () => {
+    expect(allRules('git tag -d v1').git.kind).toBe('deny');
+  });
+  test('denies git stash drop', () => {
+    expect(allRules('git stash drop').git.kind).toBe('deny');
+  });
+  test('allows git stash push', () => {
+    expect(allRules('git stash push -m saving').git.kind).toBe('allow');
+  });
+  test('denies git commit --amend', () => {
+    expect(allRules('git commit --amend').git.kind).toBe('deny');
+  });
+  test('denies git commit -m without conventional format', () => {
+    expect(allRules('git commit -m "wip"').git.kind).toBe('deny');
+  });
+  test('allows git commit -m feat: ...', () => {
+    expect(allRules('git commit -m "feat: add bash-git rule"').git.kind).toBe('allow');
+  });
+  test('allows git commit -m fix(scope): ...', () => {
+    expect(allRules('git commit -m "fix(auth): handle expired token refresh"').git.kind).toBe(
+      'allow',
+    );
+  });
+  test('allows git commit -m chore!: breaking', () => {
+    expect(allRules('git commit -m "chore!: drop node 18"').git.kind).toBe('allow');
+  });
+  test('denies git commit (no -m)', () => {
+    expect(allRules('git commit').git.kind).toBe('deny');
+  });
+  test('asks on git commit -am', () => {
+    expect(allRules('git commit -am "feat: x"').git.kind).toBe('ask');
+  });
+  test('denies git gc --prune=now', () => {
+    expect(allRules('git gc --prune=now').git.kind).toBe('deny');
+  });
+  test('denies git update-ref', () => {
+    expect(allRules('git update-ref refs/heads/main HEAD').git.kind).toBe('deny');
+  });
+  test('denies git reflog expire', () => {
+    expect(allRules('git reflog expire --all').git.kind).toBe('deny');
+  });
+  test('asks on git remote add', () => {
+    expect(allRules('git remote add upstream https://example.com').git.kind).toBe('ask');
+  });
+  test('respects bypass marker', () => {
+    expect(allRules('git reset --hard HEAD~1  # tripwire-allow: lab').git.kind).toBe('allow');
   });
 });
 

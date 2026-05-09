@@ -115,13 +115,6 @@ const POLICIES: readonly Policy[] = [
     message: 'Consider `procs` instead of `ps aux`. Better filtering and output.',
     fires: (seg) => seg.head === 'ps',
   },
-  {
-    rule: 'consider-bat',
-    action: 'warn',
-    message:
-      'Consider `bat` instead of `cat` for code/text files (syntax highlighting, line numbers, paging). For piping into another command, plain `cat` is fine — but better still, skip the cat (`rg PATTERN file` instead of `cat file | rg PATTERN`).',
-    fires: (seg) => seg.head === 'cat',
-  },
 ];
 
 const bashToolPolicy = (segments: readonly Segment[], cmd: string): Decision => {

@@ -99,23 +99,45 @@ const getOp = (e: ParseEntry): string | null => {
 };
 const isCommentToken = (e: ParseEntry): boolean => typeof e === 'object' && 'comment' in e;
 
-// Convert one entry to a string for our `tokens` array. Operators and
-// Command-sub markers become opaque sentinel tokens.
-const entryToToken = (e: ParseEntry): string | null => {
+// Glob entries from shell-quote are `{ op: 'glob', pattern: '...' }`. We
+// Expand them against the hook's cwd via `Bun.Glob` so safe-path rules
+// See concrete files (e.g. `.state/foo*` → `.state/foo-1.json`,
+// `.state/foo-2.json`) instead of an opaque `__op_glob__` sentinel that
+// Always fails safe-path checks. If a pattern matches nothing, we keep
+// The literal pattern so the rule can still reason about its prefix
+// (e.g. `.state/foo*` resolves under `.state/` regardless).
+const expandGlob = (pattern: string): string[] => {
+  try {
+    const matches = [...new Bun.Glob(pattern).scanSync({ onlyFiles: false, dot: true })];
+    if (matches.length > 0) {
+      return matches;
+    }
+  } catch {
+    // Fall through to the literal pattern.
+  }
+  return [pattern];
+};
+
+// Convert one entry to one or more string tokens. Operators and
+// Command-sub markers become opaque sentinel tokens; globs expand.
+const entryToTokens = (e: ParseEntry): string[] => {
   if (isStringToken(e)) {
-    return e;
+    return [e];
+  }
+  if (typeof e === 'object' && 'op' in e && e.op === 'glob' && 'pattern' in e) {
+    return expandGlob(String((e as { pattern: unknown }).pattern));
   }
   const op = getOp(e);
   if (op !== null) {
     if (REDIRECT_OPS.has(op) || SEGMENT_OPS.has(op)) {
-      return null;
+      return [];
     }
-    return `__op_${op}__`;
+    return [`__op_${op}__`];
   }
   if (isCommentToken(e)) {
-    return null;
+    return [];
   }
-  return '__tripwire_cmd_sub__';
+  return ['__tripwire_cmd_sub__'];
 };
 
 const parseSegment = (entries: readonly ParseEntry[]): Segment | null => {
@@ -138,8 +160,7 @@ const parseSegment = (entries: readonly ParseEntry[]): Segment | null => {
       i++;
       continue;
     }
-    const t = entryToToken(e);
-    if (t !== null) {
+    for (const t of entryToTokens(e)) {
       tokens.push(t);
     }
     i++;

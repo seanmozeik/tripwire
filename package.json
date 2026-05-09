@@ -10,6 +10,7 @@
   "type": "module",
   "scripts": {
     "build": "bun build src/dispatch.ts --target=bun --minify --bytecode --outdir dist --entry-naming tripwire.js && bun build src/cli.ts --target=bun --minify --bytecode --outdir dist --entry-naming tripwire-cli.js && chmod +x dist/tripwire.js dist/tripwire-cli.js",
+    "install:local": "bun run build && mkdir -p $HOME/.local/bin && cp dist/tripwire.js $HOME/.local/bin/tripwire-hook && cp dist/tripwire.js.jsc $HOME/.local/bin/tripwire-hook.jsc && cp dist/tripwire-cli.js $HOME/.local/bin/tripwire && cp dist/tripwire-cli.js.jsc $HOME/.local/bin/tripwire.jsc && chmod +x $HOME/.local/bin/tripwire-hook $HOME/.local/bin/tripwire && echo \"installed → $HOME/.local/bin/{tripwire-hook,tripwire}\"",
     "check": "bun run format && bun run lint:fix && bun run typecheck",
     "format": "oxfmt --write .",
     "lint": "oxlint --tsconfig tsconfig.oxlint.json .",

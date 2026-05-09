@@ -67,72 +67,8 @@ const SPECS: readonly Spec[] = [
       seg.head === 'chmod' && seg.flags.some((f) => f.includes('R')) && seg.tokens.includes('777'),
   },
 
-  // ── git: Sean handles it himself ──────────────────────────────────────
-  {
-    rule: 'git-force-push',
-    action: 'deny',
-    message: 'Sean handles git himself. tripwire never force-pushes. Stop and explain in chat.',
-    match: (seg) =>
-      seg.head === 'git' &&
-      seg.tokens[1] === 'push' &&
-      seg.flags.some((f) => f === '--force' || f === '-f' || f.startsWith('--force-with-lease')),
-  },
-  {
-    rule: 'git-reset-hard',
-    action: 'deny',
-    message:
-      'git reset --hard discards uncommitted work. Sean handles git; describe intent in chat.',
-    match: (seg) =>
-      seg.head === 'git' && seg.tokens[1] === 'reset' && seg.tokens.includes('--hard'),
-  },
-  {
-    rule: 'git-clean',
-    action: 'deny',
-    message: "git clean -fd deletes untracked files (often Sean's in-progress work). Refuse.",
-    match: (seg) =>
-      seg.head === 'git' && seg.tokens[1] === 'clean' && seg.flags.some((f) => /[df]/.test(f)),
-  },
-  {
-    rule: 'git-config-global',
-    action: 'deny',
-    message:
-      "Modifying global / system git config is off-limits — that is Sean's personal identity. Read-only `git config --get` is fine.",
-    match: (seg) =>
-      seg.head === 'git' &&
-      seg.tokens[1] === 'config' &&
-      seg.tokens.some((t) => t === '--global' || t === '--system') &&
-      !seg.tokens.includes('--get') &&
-      !seg.tokens.includes('-l') &&
-      !seg.tokens.includes('--list'),
-  },
-  {
-    rule: 'git-mutation',
-    action: 'deny',
-    message:
-      'Sean handles all git mutations himself (per CLAUDE.md). Read-only git is fine: status, diff, log, show, blame.',
-    match: (seg) =>
-      seg.head === 'git' &&
-      typeof seg.tokens[1] === 'string' &&
-      [
-        'commit',
-        'push',
-        'stash',
-        'checkout',
-        'reset',
-        'rebase',
-        'merge',
-        'cherry-pick',
-        'rm',
-        'mv',
-        'tag',
-        'branch',
-        'am',
-        'pull',
-        'restore',
-        'switch',
-        'worktree',
-      ].includes(seg.tokens[1]),
-  },
+  // ── git: detailed policy lives in bash-git.ts (smarter, supports
+  // ── `git -C <dir>`, conventional-commit enforcement, etc.) ──────────
 
   // ── verify-skipping & signing-bypass ──────────────────────────────────
   {
@@ -241,6 +177,114 @@ const SPECS: readonly Spec[] = [
     message:
       'rsync --delete removes files at the destination. High blast radius — surface intent to Sean instead.',
     match: (seg) => seg.head === 'rsync' && seg.flags.includes('--delete'),
+  },
+  {
+    rule: 'softwareupdate-install',
+    action: 'deny',
+    message:
+      '`softwareupdate --install / -i / -d` triggers macOS system updates. Refuse — Sean drives system updates himself.',
+    match: (seg) =>
+      seg.head === 'softwareupdate' &&
+      seg.flags.some(
+        (f) => f === '--install' || f === '-i' || f === '-d' || f.startsWith('--download'),
+      ),
+  },
+  {
+    rule: 'pmset-write',
+    action: 'deny',
+    message:
+      '`pmset` (with arguments) writes power-management settings. Read-only `pmset -g` is fine; mutations need Sean.',
+    match: (seg) =>
+      seg.head === 'pmset' &&
+      seg.tokens.length > 1 &&
+      !seg.tokens.includes('-g') &&
+      !seg.tokens.includes('-G'),
+  },
+  {
+    rule: 'dscl-mutate',
+    action: 'deny',
+    message:
+      '`dscl . -create / -delete / -append / -change / -merge` modifies the local directory service (your user account, groups, etc.). Refuse.',
+    match: (seg) =>
+      seg.head === 'dscl' &&
+      seg.tokens.some((t) =>
+        ['-create', '-delete', '-append', '-change', '-merge', '-passwd'].includes(t),
+      ),
+  },
+  {
+    rule: 'xattr-quarantine-bypass',
+    action: 'deny',
+    message:
+      "`xattr -d com.apple.quarantine` removes Gatekeeper's quarantine bit — the macOS protection against running untrusted binaries. Refuse.",
+    match: (seg) =>
+      seg.head === 'xattr' &&
+      seg.tokens.includes('-d') &&
+      seg.tokens.some((t) => t.includes('com.apple.quarantine')),
+  },
+  {
+    rule: 'spctl-disable',
+    action: 'deny',
+    message:
+      '`spctl --master-disable` / `--global-disable` disables Gatekeeper system-wide. Refuse.',
+    match: (seg) =>
+      seg.head === 'spctl' &&
+      seg.flags.some(
+        (f) => f === '--master-disable' || f === '--global-disable' || f === '--disable',
+      ),
+  },
+  {
+    rule: 'kextload',
+    action: 'deny',
+    message:
+      'Loading a kernel extension (`kextload`, `kmutil load`) is a system-level mutation. Refuse — Sean handles this manually.',
+    match: (seg) =>
+      seg.head === 'kextload' ||
+      seg.head === 'kextunload' ||
+      (seg.head === 'kmutil' && (seg.tokens[1] === 'load' || seg.tokens[1] === 'unload')),
+  },
+  {
+    rule: 'security-keychain-destructive',
+    action: 'deny',
+    message:
+      '`security delete-keychain / delete-generic-password / delete-internet-password / set-keychain-settings` mutates your Keychain (where every CLI Sean wrote stores its secrets). Refuse — Sean owns Keychain.',
+    match: (seg) =>
+      seg.head === 'security' &&
+      typeof seg.tokens[1] === 'string' &&
+      [
+        'delete-keychain',
+        'delete-generic-password',
+        'delete-internet-password',
+        'delete-certificate',
+        'delete-identity',
+        'set-keychain-settings',
+        'unlock-keychain',
+        'lock-keychain',
+        'create-keychain',
+      ].includes(seg.tokens[1]),
+  },
+  {
+    rule: 'security-keychain-add-write',
+    action: 'ask',
+    message:
+      "`security add-generic-password / add-internet-password / add-certificate` writes to your Keychain. Sean's tools (`Bun.secrets`, agent-browser-profiles) manage their own entries — confirm this is the right path before adding anything else manually.",
+    match: (seg) =>
+      seg.head === 'security' &&
+      typeof seg.tokens[1] === 'string' &&
+      ['add-generic-password', 'add-internet-password', 'add-certificate'].includes(seg.tokens[1]),
+  },
+  {
+    rule: 'systemsetup',
+    action: 'deny',
+    message:
+      '`systemsetup -set...` writes machine-wide settings (timezone, sleep, network time, restart-on-power-failure). Refuse.',
+    match: (seg) => seg.head === 'systemsetup' && seg.tokens.some((t) => t.startsWith('-set')),
+  },
+  {
+    rule: 'scutil-set',
+    action: 'deny',
+    message:
+      '`scutil --set` writes system configuration (computer name, hostname, LocalHostName). Refuse — read-only `scutil --get` is fine.',
+    match: (seg) => seg.head === 'scutil' && seg.tokens.includes('--set'),
   },
 
   // ── package mutation: ask before installing/removing ──────────────────

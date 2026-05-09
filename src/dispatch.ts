@@ -35,6 +35,7 @@ import {
 import { logError } from './lib/log.ts';
 import { runRtkRewrite } from './lib/rtk.ts';
 import { bashDeny } from './rules/bash-deny.ts';
+import { bashGit } from './rules/bash-git.ts';
 import { bashNetworkInstall } from './rules/bash-network-install.ts';
 import { bashRedirect } from './rules/bash-redirect.ts';
 import { bashScopedRm } from './rules/bash-scoped-rm.ts';
@@ -61,29 +62,48 @@ const writeAllow = (): void => {
   process.stdout.write('{"continue": true}\n');
 };
 
-const writeRewriteAllow = (eventName: string, command: string, reason?: string): void => {
+// Codex's PreToolUse hook rejects `hookSpecificOutput.additionalContext`
+// (openai/codex issue #19385) and `updatedInput` (#18491). Detect Codex
+// Via its `turn_id` extension and downgrade output accordingly. Claude
+// Code accepts both, so we only narrow when we can confirm we're on Codex.
+const isCodex = (event: HookEvent): boolean => event.turn_id !== undefined;
+
+const writeRewriteAllow = (event: HookEvent, command: string, _reason?: string): void => {
+  // Codex's PreToolUse parser strict-rejects `updatedInput` (openai/codex
+  // #18491 — parsed but unimplemented as of codex-cli 0.12x). On Codex we
+  // Can't transparently rewrite, so pass the original command through
+  // Silently. Until #18491 lands, RTK savings are Claude-only.
+  if (isCodex(event)) {
+    writeAllow();
+    return;
+  }
+  // Claude Code: rewrite silently. We deliberately omit
+  // `permissionDecisionReason` so the model's context isn't polluted with
+  // "rtk rewrote your command" chatter every Bash call.
   const out = {
     continue: true,
-    hookSpecificOutput: {
-      hookEventName: eventName,
-      permissionDecisionReason: reason ?? 'tripwire passthrough + rtk rewrite',
-      updatedInput: { command },
-    },
+    hookSpecificOutput: { hookEventName: event.hook_event_name, updatedInput: { command } },
   };
   process.stdout.write(`${JSON.stringify(out)}\n`);
 };
 
 interface WarnOutput {
   hookEventName: string;
-  additionalContext: string;
+  additionalContext?: string;
   updatedInput?: { command: string };
 }
 
-const writeWarn = (eventName: string, decision: Decision): void => {
-  const hookSpecificOutput: WarnOutput = {
-    hookEventName: eventName,
-    additionalContext: `[tripwire:${decision.rule}] ${decision.message}`,
-  };
+const writeWarn = (event: HookEvent, decision: Decision): void => {
+  const eventName = event.hook_event_name;
+  const reason = `[tripwire:${decision.rule}] ${decision.message}`;
+  if (isCodex(event)) {
+    // Codex rejects both `additionalContext` and `updatedInput` on
+    // PreToolUse. Send only `systemMessage`; the rewrite (if any) is
+    // Dropped and the original command runs.
+    process.stdout.write(`${JSON.stringify({ continue: true, systemMessage: reason })}\n`);
+    return;
+  }
+  const hookSpecificOutput: WarnOutput = { hookEventName: eventName, additionalContext: reason };
   if (decision.rewriteCommand !== undefined) {
     hookSpecificOutput.updatedInput = { command: decision.rewriteCommand };
   }
@@ -108,6 +128,31 @@ const writePostToolBlock = (decision: Decision): void => {
     reason: `[tripwire:${decision.rule}] ${decision.message}`,
   };
   process.stdout.write(`${JSON.stringify(out)}\n`);
+};
+
+// Tool names vary across hosts. Claude Code uses `Bash`/`Read`/`Write`/
+// `Edit`/`MultiEdit`. Codex sends `apply_patch` for file edits. Devin sends
+// `exec` for shell. Pi (via pi-hooks) sends lowercase `bash`/`read`/`write`/
+// `edit`. Normalize everything to the Claude vocabulary so the rest of the
+// Dispatcher only deals with one set of names.
+const normalizeToolName = (name: string): string => {
+  const n = name.toLowerCase();
+  if (n === 'bash' || n === 'exec' || n === 'shell' || n === 'run_command') {
+    return 'Bash';
+  }
+  if (n === 'read' || n === 'read_file') {
+    return 'Read';
+  }
+  if (n === 'write' || n === 'write_file') {
+    return 'Write';
+  }
+  if (n === 'edit' || n === 'edit_file' || n === 'multiedit' || n === 'apply_patch') {
+    return 'Edit';
+  }
+  if (n === 'webfetch' || n === 'web_fetch' || n === 'fetch') {
+    return 'WebFetch';
+  }
+  return name;
 };
 
 type RuleFn = () => Decision;
@@ -135,6 +180,7 @@ const collectPreToolUseRules = (tool: string, input: unknown): Rule[] => {
     const i: BashInput = input;
     const segments = parseCommand(i.command);
     rules.push({ name: 'bash-deny', fn: () => bashDeny(segments, i.command) });
+    rules.push({ name: 'bash-git', fn: () => bashGit(segments, i.command) });
     rules.push({ name: 'bash-scoped-rm', fn: () => bashScopedRm(segments, i.command) });
     rules.push({ name: 'bash-redirect', fn: () => bashRedirect(segments, i.command) });
     rules.push({ name: 'bash-network-install', fn: () => bashNetworkInstall(segments, i.command) });
@@ -184,7 +230,6 @@ const runRules = (rules: readonly Rule[], timeoutMs: number): Effect.Effect<Deci
 const handleBashAllow = (event: HookEvent, decision: Decision): void => {
   // After the gate passes (allow or warn), apply rtk command-rewrite. If
   // Rtk doesn't change the command, fall through to normal allow / warn.
-  const eventName = event.hook_event_name;
   const rtk = runRtkRewrite(event);
   const original = (event.tool_input as { command?: string } | undefined)?.command ?? '';
   const rewritten =
@@ -192,23 +237,14 @@ const handleBashAllow = (event: HookEvent, decision: Decision): void => {
 
   if (decision.kind === 'warn') {
     if (rewritten !== null) {
-      const out = {
-        continue: true,
-        hookSpecificOutput: {
-          hookEventName: eventName,
-          additionalContext: `[tripwire:${decision.rule}] ${decision.message}`,
-          updatedInput: { command: rewritten },
-          permissionDecisionReason: rtk.reason ?? 'rtk rewrite',
-        },
-      };
-      process.stdout.write(`${JSON.stringify(out)}\n`);
+      writeWarn(event, { ...decision, rewriteCommand: rewritten });
       return;
     }
-    writeWarn(eventName, decision);
+    writeWarn(event, decision);
     return;
   }
   if (rewritten !== null) {
-    writeRewriteAllow(eventName, rewritten, rtk.reason);
+    writeRewriteAllow(event, rewritten, rtk.reason);
     return;
   }
   writeAllow();
@@ -216,12 +252,13 @@ const handleBashAllow = (event: HookEvent, decision: Decision): void => {
 
 const handleAllow = (event: HookEvent, decision: Decision): void => {
   const eventName = event.hook_event_name;
-  if (eventName === 'PreToolUse' && event.tool_name === 'Bash') {
+  const tool = normalizeToolName(event.tool_name ?? '');
+  if (eventName === 'PreToolUse' && tool === 'Bash') {
     handleBashAllow(event, decision);
     return;
   }
   if (decision.kind === 'warn') {
-    writeWarn(eventName, decision);
+    writeWarn(event, decision);
     return;
   }
   writeAllow();
@@ -248,7 +285,7 @@ const program = Effect.gen(function* () {
     return;
   }
   const event = decodeExit.value;
-  const tool = event.tool_name ?? '';
+  const tool = normalizeToolName(event.tool_name ?? '');
 
   if (event.hook_event_name === 'PreToolUse') {
     const rules = collectPreToolUseRules(tool, event.tool_input);

@@ -7,6 +7,9 @@ const HookEvent = Schema.Struct({
   tool_response: Schema.optional(Schema.Unknown),
   cwd: Schema.optional(Schema.String),
   session_id: Schema.optional(Schema.String),
+  // Codex extension: present on every PreToolUse / PostToolUse event.
+  turn_id: Schema.optional(Schema.String),
+  tool_use_id: Schema.optional(Schema.String),
 });
 type HookEventType = typeof HookEvent.Type;
 
