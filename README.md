@@ -14,11 +14,16 @@ bun install @seanmozeik/tripwire
 tripwire test '<command>'                 # Test a command
 tripwire test --tool=Read --path=.env     # Test Read tool
 tripwire test --post --tool=Bash --stdout='ghp_TOKEN'  # Test PostToolUse
+
+tripwire install claude                   # Install hooks for Claude Code
+tripwire install codex                    # Install hooks for Codex
+tripwire install pi                       # Install hooks for pi-guardrails
+tripwire install all                      # Install hooks for all agents
 ```
 
 ## Hook Configuration
 
-Configure your AI agent to call `tripwire-hook` for hook events:
+Configure your AI agent to call `tripwire-hook` for hook events. You can do this manually, or use the `tripwire install` command to automatically configure hooks for supported agents:
 
 ### Claude Code
 

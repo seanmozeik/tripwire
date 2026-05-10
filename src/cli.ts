@@ -3,12 +3,20 @@
 // Dispatcher and pretty-print the decision. Indispensable for tuning
 // Rules without going through Claude Code.
 //
+// `tripwire install <target>` — install tripwire hooks for AI agents.
+//
 // Usage:
 //   Bun src/cli.ts test 'rm -rf /etc'
 //   Bun src/cli.ts test --tool=Read --path=.env
 //   Bun src/cli.ts test --post --tool=Bash --stdout='ghp_<token>'
+//   Bun src/cli.ts install claude
+//   Bun src/cli.ts install codex
+//   Bun src/cli.ts install pi
+//   Bun src/cli.ts install all
 
 import { spawnSync } from 'node:child_process';
+
+import { installAll, installClaude, installCodex, installPi } from './lib/install';
 
 const DISPATCH_BIN = `${import.meta.dir}/../dist/tripwire.js`;
 
@@ -107,7 +115,7 @@ const buildEvent = (args: CliArgs): BuiltEvent => {
 const printUsage = (): void => {
   process.stdout.write(
     [
-      'tripwire CLI — synthetic-event tester',
+      'tripwire CLI — synthetic-event tester and hook installer',
       '',
       'Usage:',
       "  tripwire test '<command>'                 # PreToolUse Bash",
@@ -115,16 +123,101 @@ const printUsage = (): void => {
       "  tripwire test --tool=Write --path=foo.ts --content='TODO finish'",
       "  tripwire test --post --tool=Bash --stdout='ghp_REAL_TOKEN'  # PostToolUse",
       '',
+      '  tripwire install claude                  # Install hooks for Claude Code',
+      '  tripwire install codex                   # Install hooks for Codex',
+      '  tripwire install pi                      # Install hooks for pi-guardrails',
+      '  tripwire install all                     # Install hooks for all agents',
+      '',
     ].join('\n'),
   );
 };
 
-const main = (): void => {
+const handleInstall = async (argv: readonly string[]): Promise<void> => {
+  if (argv.length < 2) {
+    process.stderr.write('error: install requires a target (claude, codex, pi, or all)\n');
+    printUsage();
+    process.exit(1);
+  }
+
+  const target = argv[1]!;
+  switch (target) {
+    case 'claude': {
+      const result = await installClaude();
+      if (result.success) {
+        const symbol = result.message.startsWith('Already configured') ? '⊙' : '✓';
+        process.stdout.write(`${symbol} ${result.message}\n`);
+      } else {
+        process.stderr.write(`✗ ${result.message}\n`);
+        process.exit(1);
+      }
+      break;
+    }
+    case 'codex': {
+      const result = await installCodex();
+      if (result.success) {
+        const symbol = result.message.startsWith('Already configured') ? '⊙' : '✓';
+        process.stdout.write(`${symbol} ${result.message}\n`);
+      } else {
+        process.stderr.write(`✗ ${result.message}\n`);
+        process.exit(1);
+      }
+      break;
+    }
+    case 'pi': {
+      const result = await installPi();
+      if (result.success) {
+        const symbol = result.message.startsWith('Already configured') ? '⊙' : '✓';
+        process.stdout.write(`${symbol} ${result.message}\n`);
+      } else {
+        process.stderr.write(`✗ ${result.message}\n`);
+        process.exit(1);
+      }
+      break;
+    }
+    case 'all': {
+      const results = await installAll();
+      let hasFailure = false;
+      for (const result of results) {
+        if (result.success) {
+          const symbol = result.message.startsWith('Already configured') ? '⊙' : '✓';
+          process.stdout.write(`${symbol} [${result.target}] ${result.message}\n`);
+        } else {
+          process.stderr.write(`✗ [${result.target}] ${result.message}\n`);
+          hasFailure = true;
+        }
+      }
+      if (hasFailure) {
+        process.exit(1);
+      }
+      break;
+    }
+    default: {
+      process.stderr.write(`error: unknown target "${target}"\n`);
+      process.stderr.write('Valid targets: claude, codex, pi, all\n');
+      process.exit(1);
+    }
+  }
+};
+
+const main = async (): Promise<void> => {
   const argv = process.argv.slice(2);
-  if (argv.length === 0 || argv[0] !== 'test') {
+  if (argv.length === 0) {
     printUsage();
     process.exit(0);
   }
+
+  const command = argv[0];
+
+  if (command === 'install') {
+    await handleInstall(argv);
+    return;
+  }
+
+  if (command !== 'test') {
+    printUsage();
+    process.exit(0);
+  }
+
   const args = parseArgs(argv.slice(1));
   const event = buildEvent(args);
   const result = spawnSync(DISPATCH_BIN, [], {
@@ -145,4 +238,5 @@ const main = (): void => {
   }
 };
 
-main();
+// oxlint-disable-next-line no-void, unicorn/prefer-top-level-await
+void main();

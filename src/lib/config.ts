@@ -89,7 +89,7 @@ export const loadConfig = (): Effect.Effect<Config> =>
     return mergeWithDefaults(config);
   }).pipe(
     Effect.timeout(1000),
-    // eslint-disable-next-line promise/prefer-await-to-then
+    // oxlint-disable-next-line promise/prefer-await-to-then
     Effect.catch(() => {
       // Log error but return defaults to never block the agent
       console.error('[tripwire] Config loading failed, using defaults');
