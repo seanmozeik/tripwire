@@ -14,59 +14,14 @@
 //   Bun src/cli.ts install pi
 //   Bun src/cli.ts install all
 
-import { spawnSync } from 'node:child_process';
+import { BunServices } from '@effect/platform-bun';
+import { Effect, Option } from 'effect';
+import { Argument, Command, Flag } from 'effect/unstable/cli';
 
+import pkg from '../package.json' with { type: 'json' };
 import { installAll, installClaude, installCodex, installPi } from './lib/install';
 
 const DISPATCH_BIN = `${import.meta.dir}/../dist/tripwire.js`;
-
-interface CliArgs {
-  readonly tool: string;
-  readonly post: boolean;
-  readonly path: string | undefined;
-  readonly command: string | undefined;
-  readonly stdout: string | undefined;
-  readonly stderr: string | undefined;
-  readonly content: string | undefined;
-}
-
-const parseArgs = (argv: readonly string[]): CliArgs => {
-  let tool = 'Bash';
-  let post = false;
-  let path: string | undefined;
-  let command: string | undefined;
-  let stdout: string | undefined;
-  let stderr: string | undefined;
-  let content: string | undefined;
-  for (const a of argv) {
-    if (a === '--post') {
-      post = true;
-      continue;
-    }
-    if (a.startsWith('--tool=')) {
-      tool = a.slice('--tool='.length);
-      continue;
-    }
-    if (a.startsWith('--path=')) {
-      path = a.slice('--path='.length);
-      continue;
-    }
-    if (a.startsWith('--stdout=')) {
-      stdout = a.slice('--stdout='.length);
-      continue;
-    }
-    if (a.startsWith('--stderr=')) {
-      stderr = a.slice('--stderr='.length);
-      continue;
-    }
-    if (a.startsWith('--content=')) {
-      content = a.slice('--content='.length);
-      continue;
-    }
-    command ??= a;
-  }
-  return { tool, post, path, command, stdout, stderr, content };
-};
 
 interface BuiltEvent {
   hook_event_name: string;
@@ -77,164 +32,207 @@ interface BuiltEvent {
   tool_response?: unknown;
 }
 
-const buildToolInput = (tool: string, args: CliArgs): unknown => {
+const buildToolInput = (
+  tool: string,
+  command: string | undefined,
+  path: string | undefined,
+  content: string | undefined,
+): unknown => {
   if (tool === 'Bash') {
-    return { command: args.command ?? '' };
+    return { command: command ?? '' };
   }
   if (tool === 'Read') {
-    return { file_path: args.path ?? '' };
+    return { file_path: path ?? '' };
   }
   if (tool === 'Write') {
-    return { file_path: args.path ?? '', content: args.content ?? '' };
+    return { file_path: path ?? '', content: content ?? '' };
   }
   if (tool === 'Edit' || tool === 'MultiEdit') {
-    return { file_path: args.path ?? '', old_string: '', new_string: args.content ?? '' };
+    return { file_path: path ?? '', old_string: '', new_string: content ?? '' };
   }
   return undefined;
 };
 
-const buildEvent = (args: CliArgs): BuiltEvent => {
-  const eventName = args.post ? 'PostToolUse' : 'PreToolUse';
-  const tool = args.tool;
+interface EventParams {
+  readonly tool: string;
+  readonly post: boolean;
+  readonly command: string | undefined;
+  readonly path: string | undefined;
+  readonly stdout: string | undefined;
+  readonly stderr: string | undefined;
+  readonly content: string | undefined;
+}
+
+const buildEvent = (params: EventParams): BuiltEvent => {
+  const { tool, post, command, path, stdout, stderr, content } = params;
+  const eventName = post ? 'PostToolUse' : 'PreToolUse';
   const event: BuiltEvent = {
     hook_event_name: eventName,
     tool_name: tool,
     cwd: process.cwd(),
     session_id: 'tripwire-cli-test',
-    tool_input: buildToolInput(tool, args),
+    tool_input: buildToolInput(tool, command, path, content),
   };
-  if (args.post) {
+  if (post) {
     event.tool_response =
-      tool === 'Bash'
-        ? { stdout: args.stdout ?? '', stderr: args.stderr ?? '' }
-        : { content: args.content ?? '' };
+      tool === 'Bash' ? { stdout: stdout ?? '', stderr: stderr ?? '' } : { content: content ?? '' };
   }
   return event;
 };
 
-const printUsage = (): void => {
-  process.stdout.write(
-    [
-      'tripwire CLI — synthetic-event tester and hook installer',
-      '',
-      'Usage:',
-      "  tripwire test '<command>'                 # PreToolUse Bash",
-      '  tripwire test --tool=Read --path=.env     # PreToolUse Read',
-      "  tripwire test --tool=Write --path=foo.ts --content='TODO finish'",
-      "  tripwire test --post --tool=Bash --stdout='ghp_REAL_TOKEN'  # PostToolUse",
-      '',
-      '  tripwire install claude                  # Install hooks for Claude Code',
-      '  tripwire install codex                   # Install hooks for Codex',
-      '  tripwire install pi                      # Install hooks for pi-guardrails',
-      '  tripwire install all                     # Install hooks for all agents',
-      '',
-    ].join('\n'),
-  );
-};
-
-const handleInstall = async (argv: readonly string[]): Promise<void> => {
-  if (argv.length < 2) {
-    process.stderr.write('error: install requires a target (claude, codex, pi, or all)\n');
-    printUsage();
-    process.exit(1);
-  }
-
-  const target = argv[1]!;
-  switch (target) {
-    case 'claude': {
-      const result = await installClaude();
-      if (result.success) {
-        const symbol = result.message.startsWith('Already configured') ? '⊙' : '✓';
-        process.stdout.write(`${symbol} ${result.message}\n`);
-      } else {
-        process.stderr.write(`✗ ${result.message}\n`);
-        process.exit(1);
-      }
-      break;
-    }
-    case 'codex': {
-      const result = await installCodex();
-      if (result.success) {
-        const symbol = result.message.startsWith('Already configured') ? '⊙' : '✓';
-        process.stdout.write(`${symbol} ${result.message}\n`);
-      } else {
-        process.stderr.write(`✗ ${result.message}\n`);
-        process.exit(1);
-      }
-      break;
-    }
-    case 'pi': {
-      const result = await installPi();
-      if (result.success) {
-        const symbol = result.message.startsWith('Already configured') ? '⊙' : '✓';
-        process.stdout.write(`${symbol} ${result.message}\n`);
-      } else {
-        process.stderr.write(`✗ ${result.message}\n`);
-        process.exit(1);
-      }
-      break;
-    }
-    case 'all': {
-      const results = await installAll();
-      let hasFailure = false;
-      for (const result of results) {
-        if (result.success) {
-          const symbol = result.message.startsWith('Already configured') ? '⊙' : '✓';
-          process.stdout.write(`${symbol} [${result.target}] ${result.message}\n`);
-        } else {
-          process.stderr.write(`✗ [${result.target}] ${result.message}\n`);
-          hasFailure = true;
-        }
-      }
-      if (hasFailure) {
-        process.exit(1);
-      }
-      break;
-    }
-    default: {
-      process.stderr.write(`error: unknown target "${target}"\n`);
-      process.stderr.write('Valid targets: claude, codex, pi, all\n');
+const runTest = (config: {
+  readonly command: string | undefined;
+  readonly content: string | undefined;
+  readonly path: string | undefined;
+  readonly post: boolean;
+  readonly stderr: string | undefined;
+  readonly stdout: string | undefined;
+  readonly tool: string;
+}): Effect.Effect<void> =>
+  Effect.sync(() => {
+    const { command, content, path, post, stderr, stdout, tool } = config;
+    const event = buildEvent({ tool, post, command, path, stdout, stderr, content });
+    const result = Bun.spawnSync([DISPATCH_BIN], {
+      stdin: new TextEncoder().encode(JSON.stringify(event)),
+      timeout: 10_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    if (result.exitCode !== 0) {
+      const errorOutput = new TextDecoder().decode(result.stderr);
+      console.error(`error: ${errorOutput}`);
       process.exit(1);
     }
-  }
-};
+    const output = new TextDecoder().decode(result.stdout);
+    try {
+      const parsed = JSON.parse(output) as unknown;
+      console.log(JSON.stringify(parsed, null, 2));
+    } catch {
+      console.log(output);
+    }
+  });
+
+const testCommand = Command.make(
+  'test',
+  {
+    command: Argument.string('command').pipe(
+      Argument.optional,
+      Argument.withDescription('Command to test (for Bash tool)'),
+    ),
+    content: Flag.string('content').pipe(
+      Flag.optional,
+      Flag.withDescription('Content for Write/Edit tools'),
+    ),
+    path: Flag.string('path').pipe(
+      Flag.optional,
+      Flag.withDescription('File path for Read/Write/Edit tools'),
+    ),
+    post: Flag.boolean('post').pipe(Flag.withDescription('Test PostToolUse instead of PreToolUse')),
+    stderr: Flag.string('stderr').pipe(
+      Flag.optional,
+      Flag.withDescription('Stderr for PostToolUse Bash'),
+    ),
+    stdout: Flag.string('stdout').pipe(
+      Flag.optional,
+      Flag.withDescription('Stdout for PostToolUse Bash'),
+    ),
+    tool: Flag.string('tool').pipe(
+      Flag.withDefault('Bash'),
+      Flag.withDescription('Tool name (Bash, Read, Write, Edit, MultiEdit)'),
+    ),
+  },
+  ({ command, content, path, post, stderr, stdout, tool }) =>
+    runTest({
+      command: Option.getOrUndefined(command),
+      content: Option.getOrUndefined(content),
+      path: Option.getOrUndefined(path),
+      post,
+      stderr: Option.getOrUndefined(stderr),
+      stdout: Option.getOrUndefined(stdout),
+      tool,
+    }),
+).pipe(Command.withDescription('Test a synthetic hook event'));
+
+const runInstall = (target: string): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    if (!['claude', 'codex', 'pi', 'all'].includes(target)) {
+      console.error(`error: unknown target "${target}"`);
+      console.error('Valid targets: claude, codex, pi, all');
+      process.exit(1);
+    }
+
+    let results: {
+      readonly target: string;
+      readonly result: { readonly success: boolean; readonly message: string };
+    }[];
+
+    switch (target) {
+      case 'claude': {
+        const result = yield* Effect.promise(() => installClaude());
+        results = [{ target: 'claude', result }];
+        break;
+      }
+      case 'codex': {
+        const result = yield* Effect.promise(() => installCodex());
+        results = [{ target: 'codex', result }];
+        break;
+      }
+      case 'pi': {
+        const result = yield* Effect.promise(() => installPi());
+        results = [{ target: 'pi', result }];
+        break;
+      }
+      case 'all': {
+        const installResults = yield* Effect.promise(() => installAll());
+        results = installResults.map((r) => ({ target: r.target, result: r }));
+        break;
+      }
+      default: {
+        results = [];
+        break;
+      }
+    }
+
+    let hasFailure = false;
+    for (const { target: t, result: r } of results) {
+      if (r.success) {
+        const symbol = r.message.startsWith('Already configured') ? '⊙' : '✓';
+        console.log(`${symbol} [${t}] ${r.message}`);
+      } else {
+        console.error(`✗ [${t}] ${r.message}`);
+        hasFailure = true;
+      }
+    }
+
+    if (hasFailure) {
+      process.exit(1);
+    }
+  });
+
+const installCommand = Command.make(
+  'install',
+  {
+    target: Argument.string('target').pipe(
+      Argument.withDescription('Target agent (claude, codex, pi, or all)'),
+    ),
+  },
+  ({ target }) => runInstall(target),
+).pipe(Command.withDescription('Install tripwire hooks for AI agents'));
+
+const app = Command.make('tripwire').pipe(
+  Command.withDescription('Opinionated hooks dispatcher for AI coding agents'),
+  Command.withSubcommands([testCommand, installCommand]),
+);
+
+const program = Command.run(app, { version: pkg.version });
 
 const main = async (): Promise<void> => {
-  const argv = process.argv.slice(2);
-  if (argv.length === 0) {
-    printUsage();
-    process.exit(0);
-  }
-
-  const command = argv[0];
-
-  if (command === 'install') {
-    await handleInstall(argv);
-    return;
-  }
-
-  if (command !== 'test') {
-    printUsage();
-    process.exit(0);
-  }
-
-  const args = parseArgs(argv.slice(1));
-  const event = buildEvent(args);
-  const result = spawnSync(DISPATCH_BIN, [], {
-    input: JSON.stringify(event),
-    encoding: 'utf8',
-    timeout: 10_000,
-  });
-  if (result.error !== undefined) {
-    process.stderr.write(`error: ${String(result.error)}\n`);
-    process.exit(1);
-  }
-  const stdout: string = result.stdout;
   try {
-    const parsed = JSON.parse(stdout) as unknown;
-    process.stdout.write(`${JSON.stringify(parsed, null, 2)}\n`);
-  } catch {
-    process.stdout.write(stdout);
+    await Effect.runPromise(program.pipe(Effect.provide(BunServices.layer)));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(message);
+    process.exitCode = 1;
   }
 };
 
