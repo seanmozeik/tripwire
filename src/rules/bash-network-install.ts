@@ -1,5 +1,5 @@
-import { type Segment, hasBypass } from '../lib/bash.ts';
-import { type Decision, allow, ask, deny } from '../lib/decision.ts';
+import { type Segment, hasBypass } from '../lib/bash';
+import { type Decision, allow, ask, deny } from '../lib/decision';
 
 // Block `curl|wget ... | bash|sh|zsh` (the canonical supply-chain footgun).
 // Ask before global installs that pull arbitrary code from a registry.

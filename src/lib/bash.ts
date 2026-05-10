@@ -348,7 +348,11 @@ const parseCommand = (cmd: string): Segment[] => {
 
 const stripLeadingDotSlash = (p: string): string => (p.startsWith('./') ? p.slice(2) : p);
 
-const isSafePathTarget = (raw: string): boolean => {
+const isSafePathTarget = (
+  raw: string,
+  extraRelative: readonly string[] = [],
+  extraAbsolute: readonly string[] = [],
+): boolean => {
   if (raw === '') {
     return false;
   }
@@ -356,12 +360,12 @@ const isSafePathTarget = (raw: string): boolean => {
   if (t === '..' || t.startsWith('../') || t.includes('/../')) {
     return false;
   }
-  for (const abs of SAFE_ABSOLUTE) {
+  for (const abs of [...SAFE_ABSOLUTE, ...extraAbsolute]) {
     if (t === abs || t.startsWith(`${abs}/`)) {
       return true;
     }
   }
-  for (const rel of SAFE_RELATIVE) {
+  for (const rel of [...SAFE_RELATIVE, ...extraRelative]) {
     if (t === rel || t.startsWith(`${rel}/`)) {
       return true;
     }
@@ -369,7 +373,10 @@ const isSafePathTarget = (raw: string): boolean => {
   return false;
 };
 
-const safeScopesSummary = (): string => {
+const safeScopesSummary = (
+  extraRelative: readonly string[] = [],
+  extraAbsolute: readonly string[] = [],
+): string => {
   const groups: Record<string, readonly string[]> = {
     'build outputs': ['dist', 'build', '_build', 'out', 'target'],
     'js framework outputs': [
@@ -404,6 +411,12 @@ const safeScopesSummary = (): string => {
     iac: ['.terraform'],
     'bundler dev': ['.yarn/cache', '.yarn/install-state.gz', '.pnpm-store', '.bun'],
   };
+  if (extraRelative.length > 0) {
+    groups['custom relative'] = extraRelative;
+  }
+  if (extraAbsolute.length > 0) {
+    groups['custom absolute'] = extraAbsolute;
+  }
   return Object.entries(groups)
     .map(([k, v]) => `  ${k}: ${v.join(', ')}`)
     .join('\n');

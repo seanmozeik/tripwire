@@ -1,6 +1,6 @@
-import { type Decision, allow, deny } from '../lib/decision.ts';
-import { extractResponseText } from '../lib/event.ts';
-import { scanAndRedact } from '../lib/secrets.ts';
+import { type Decision, allow, deny } from '../lib/decision';
+import { extractResponseText } from '../lib/event';
+import { scanAndRedact } from '../lib/secrets';
 
 // PostToolUse: scan whatever string content a tool returned (Bash stdout,
 // Read content) for known secret patterns via betterleaks. If anything

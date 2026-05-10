@@ -1,5 +1,5 @@
-import { type Segment, hasBypass } from '../lib/bash.ts';
-import { type Decision, allow, deny } from '../lib/decision.ts';
+import { type Segment, hasBypass } from '../lib/bash';
+import { type Decision, allow, deny } from '../lib/decision';
 
 // Block tar/zip/unzip extractions that would write into / or $HOME
 // (`tar -xf foo.tar.gz -C /` style explosions).

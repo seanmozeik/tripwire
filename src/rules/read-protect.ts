@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 
-import { type Decision, allow, deny } from '../lib/decision.ts';
-import type { ReadInput } from '../lib/event.ts';
+import { type Decision, allow, deny } from '../lib/decision';
+import type { ReadInput } from '../lib/event';
 
 interface Spec {
   readonly rule: string;

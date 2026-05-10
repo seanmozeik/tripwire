@@ -1,200 +1,186 @@
-# tripwire
+# `@seanmozeik/tripwire`
 
-Opinionated hooks dispatcher for Claude Code, Codex CLI, Devin for Terminal, and Pi. One Bun binary, one rule set, four hosts.
+Opinionated hooks dispatcher for AI coding agents (Claude Code, Codex, Devin, etc.) with configurable safety rules. Blocks or rewrites dangerous commands with actionable error messages.
 
-## What it does
-
-Sits in front of every `Bash` / `Read` / `Write` / `Edit` / `WebFetch` tool call across all four agents. On a tool call, tripwire parses the command (real shell-aware tokenizer, not regex), runs the rules, and returns one of four decisions:
-
-- **allow** — silent passthrough (Bash calls additionally get rewritten through `rtk` for token-saver substitutions).
-- **warn** — non-blocking advisory injected into the agent's next turn so it learns over time without hanging on a confirm.
-- **ask** — Claude Code prompts the user before letting the call proceed.
-- **deny** — block with a structured error message that names the safer alternative.
-
-On `PostToolUse`, every Bash / Read / WebFetch output passes through `betterleaks` (Zach Rice's MIT gitleaks successor). If a secret is detected, the original output is withheld from the model and a `[REDACTED:rule-name]` version becomes the hook's block reason.
-
-## Rules
-
-| Rule                   | Action             | What it catches                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| ---------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `bash-deny`            | deny / ask         | Catastrophic deletes (`rm -rf /`, `~`, `$HOME`), fork bomb, `dd of=/dev/disk`, `mkfs`, `kill -9 -1`, `chmod -R 777`, `--no-verify`, `--no-gpg-sign`, `shutdown`/`reboot`, `launchctl bootstrap/load/unload`, `defaults write`, `csrutil`, `nvram`, `diskutil eraseDisk`, `tmutil delete`, `topgrade`, `mackup`, `rsync --delete`, `softwareupdate --install`, `pmset` write, `dscl -delete/-create`, `xattr -d com.apple.quarantine`, `spctl --master-disable`, `kextload`/`kmutil load`, `security delete-keychain`, `systemsetup -set*`, `scutil --set`. Asks on `sudo`, `osascript`, `brew install`, `mas install`, `security add-*-password`.       |
-| `bash-git`             | deny / ask / allow | Smart git policy with `git -C` support. Read-only commands silent. **Conventional Commits enforced** on `git commit -m` (allowed types: `feat`/`fix`/`docs`/`style`/`refactor`/`perf`/`test`/`build`/`ci`/`chore`/`revert`). Blocks: `reset --hard`, `clean -fd`, `checkout .`, `checkout -- <path>`, `restore <path>`, `switch --discard-changes`, `commit --amend`, `rebase -i`, `filter-branch`, `gc --prune=now`, `update-ref`, `reflog expire`, `branch -D`, `branch -d` on `main`/`master`/`develop`/`production`/`release`, force push, `push --delete`, push to a protected branch, `tag -d`, `stash drop`/`clear`, `config --global/--system`. |
-| `bash-scoped-rm`       | deny               | `rm` / `find -delete` outside ephemeral build / cache / state scopes (`dist`, `node_modules`, `.next`, etc.). Message tells the agent to use `trash` / `rip` instead.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `bash-redirect`        | deny               | `>`, `>>`, `tee`, `cp`, `mv` _into_ `.env`, `.dev.vars`, `~/.ssh/`, `*.pem`, `~/.aws/credentials`, `~/.netrc`, `/dev/sd*`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `bash-network-install` | deny / ask         | `curl`/`wget` piped to `bash`/`sh`/`zsh` denied. `cargo install`, `go install`, `gem install` ask.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `bash-tar-explosion`   | deny               | `tar -x -C /` / `~` / `$HOME`, `unzip -d /`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `bash-tool-policy`     | deny / warn        | **Toolchain enforcement.** Denies `npm`, `npx`, `pnpm`, `yarn`, `pip`, `python -m venv`, `uv venv` (use `uv sync`), `patch-package` — each with concrete redirection in the message. Warns on `find` (→ `fd`), `grep` (→ `rg`), `top` (→ `btop`), `du` (→ `dust`), `df` (→ `duf`), `ps` (→ `procs`), `cat` (→ `bat` / `rg` direct).                                                                                                                                                                                                                                                                                                                     |
-| `imsg-deny`            | deny               | Raw `imsg` CLI. Use `send` instead.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `path-protect`         | deny               | Edit/Write on `.env`, `.ssh/`, `*.pem`, `~/.aws/credentials`, secret files.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `read-protect`         | deny               | Read on the same set — keeps secrets out of the model's context window.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `lazy-code`            | warn               | Diff-aware. Newly added lines in code files containing `TODO:` / `FIXME:` / `XXX:` / `HACK:` / `for now` / `not implemented` / `NotImplementedError` / `temp fix` / `fallback` / `placeholder` / `backwards compat` / `for later` / `to be implemented` / `not yet (implemented\|done)` / `stubbed`. Skips test/spec/fixture/mock/stories paths. Code files only — markdown, JSON, YAML, prose exempt.                                                                                                                                                                                                                                                  |
-| `post-secret-scrub`    | deny (PostToolUse) | Pipes Bash/Read/WebFetch output through `betterleaks`. On hits, blocks the original output from reaching the model and surfaces a redacted version.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-
-## Bypass
-
-For genuine edge cases:
-
-- **Bash:** append `# tripwire-allow: <reason>` to the command.
-- **Code files (any language):** put `tripwire-allow: <reason>` in any comment syntax (`//`, `#`, `--`, `/* */`, `<!-- -->`, etc.) on the offending line.
-
-## Install
+## Installation
 
 ```bash
-cd ~/dev/tripwire
-bun install
-bun run install:local      # builds, then copies to ~/.local/bin/
+bun install @seanmozeik/tripwire
 ```
 
-This produces two binaries on PATH (assuming `~/.local/bin` is in your PATH):
+## CLI
 
-- `tripwire-hook` — the hook entry point invoked by all four agents.
-- `tripwire` — the synthetic-event tester (see _CLI_ below).
+```bash
+tripwire test '<command>'                 # Test a command
+tripwire test --tool=Read --path=.env     # Test Read tool
+tripwire test --post --tool=Bash --stdout='ghp_TOKEN'  # Test PostToolUse
+```
 
-## Wiring
+## Hook Configuration
+
+Configure your AI agent to call `tripwire-hook` for hook events:
 
 ### Claude Code
 
 `~/.claude/settings.json`:
 
-```json
+```jsonc
 {
   "hooks": {
-    "PreToolUse": [
-      { "hooks": [{ "type": "command", "command": "/Users/sean/.local/bin/tripwire-hook" }] }
-    ],
-    "PostToolUse": [
-      { "hooks": [{ "type": "command", "command": "/Users/sean/.local/bin/tripwire-hook" }] }
-    ]
-  }
+    "PreToolUse": [{ "hooks": [{ "type": "command", "command": "/path/to/tripwire-hook" }] }],
+    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "/path/to/tripwire-hook" }] }],
+  },
 }
 ```
 
-### Codex CLI
+### Codex
 
-Enable the feature flag in `~/.codex/config.toml`:
+Same as Claude Code — Codex uses the same hook format.
 
-```toml
-[features]
-codex_hooks = true
-```
+### Devin
 
-Drop `~/.codex/hooks.json`:
+Configure in your Devin settings to call `tripwire-hook` for tool events.
+
+## Configuration
+
+Create `~/.config/tripwire/config.json` to customize behavior:
 
 ```json
 {
-  "hooks": {
-    "PreToolUse": [
-      {
-        "hooks": [
-          { "type": "command", "command": "/Users/sean/.local/bin/tripwire-hook", "timeout": 10 }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "hooks": [
-          { "type": "command", "command": "/Users/sean/.local/bin/tripwire-hook", "timeout": 10 }
-        ]
-      }
-    ]
-  }
+  "rtk": { "enabled": true, "path": "/opt/homebrew/bin/rtk" },
+  "git": {
+    "protectedBranches": ["main", "master", "develop", "production", "release"],
+    "enforceConventionalCommits": true
+  },
+  "safePaths": {
+    "relative": ["dist", "build", ".next", "node_modules"],
+    "absolute": ["/tmp", "/var/tmp"]
+  },
+  "blockedCommands": [
+    { "pattern": "dangerous-tool", "message": "Use safer-alternative instead", "action": "deny" }
+  ],
+  "allowedCommands": [
+    {
+      "pattern": "my-custom-tool",
+      "message": "Allowing my-custom-tool per your configuration",
+      "action": "allow"
+    }
+  ]
 }
 ```
 
-Verify with `codex features list | grep hooks` — should report `hooks  stable  true`.
+### Configuration Options
 
-### Devin for Terminal
+#### `rtk`
 
-**No setup needed.** Devin's `read_config_from.claude` defaults to true, so it picks up `~/.claude/settings.json` automatically. To opt out and use a Devin-only config, set `read_config_from.claude = false` in `~/.config/devin/config.json` and add hooks there directly.
+- `enabled` (boolean, default: `false`) — Enable rtk token-saver integration
+- `path` (string, optional) — Path to rtk binary. If not specified, searches common locations.
 
-### Pi (earendil-works)
+#### `git`
 
-Install the [pi-hooks](https://github.com/hsingjui/pi-hooks) plugin once, which adapts Claude-style hook config to Pi's extension API:
+- `protectedBranches` (string[], default: `["main", "master", "develop", "production", "release"]`) — Branches that require PR for push
+- `enforceConventionalCommits` (boolean, default: `true`) — Enforce Conventional Commits format for commit messages
+
+#### `safePaths`
+
+- `relative` (string[], optional) — Additional relative paths considered safe for destructive operations
+- `absolute` (string[], optional) — Additional absolute paths considered safe for destructive operations
+
+Default safe paths include: `dist`, `build`, `.next`, `node_modules`, `/tmp`, `/var/tmp`, and other common build/cache directories.
+
+#### `blockedCommands`
+
+Array of custom command blocks:
+
+- `pattern` (string) — Command pattern to block (uses shell parsing for matching)
+- `message` (string) — Error message shown when blocked
+- `action` (`"deny"` | `"ask"`, default: `"deny"`) — Whether to deny or ask for confirmation
+
+#### `allowedCommands`
+
+Array of custom command allows (overrides blocks):
+
+- `pattern` (string) — Command pattern to allow
+- `message` (string) — Message shown when allowed
+- `action` (string, default: `"allow"`) — Always `"allow"` for this context
+
+### Shell-Based Command Matching
+
+Command patterns in `blockedCommands` and `allowedCommands` use the same shell parsing as the rest of tripwire. This means:
+
+- `rm` matches any `rm` command
+- `git push` matches `git push` with any arguments
+- Patterns are parsed using shell-quote for accurate matching
+- More sophisticated than simple regex
+
+Example:
+
+```json
+{
+  "blockedCommands": [
+    {
+      "pattern": "brew install",
+      "message": "Use brew install with explicit version pinning",
+      "action": "ask"
+    }
+  ]
+}
+```
+
+## Default Behavior
+
+Tripwire comes with opinionated but reasonable defaults:
+
+### Bash Safety
+
+- Blocks catastrophic commands: `rm -rf /`, fork bombs, `dd` to disks
+- Blocks macOS system mutations: `defaults write`, `launchctl`, `diskutil erase`
+- Blocks cloud destructive operations: `gh repo delete`, `flyctl destroy`
+- Scopes `rm` and `find -delete` to safe paths (build outputs, cache directories)
+- Blocks network install scripts: `curl | bash`, `wget | sh`
+- Enforces package manager policy: Bun-only, no npm/pnpm/yarn/pip
+
+### Git Policy
+
+- Read-only operations allowed: `status`, `log`, `diff`, `fetch`, etc.
+- Blocks working-tree destruction: `reset --hard`, `clean -fd`, `checkout .`
+- Blocks history rewriting: `rebase -i`, `filter-branch`, `commit --amend`
+- Blocks force push and protected branch pushes
+- Enforces Conventional Commits format (configurable)
+- Requires `-m "message"` for commits (no editor mode)
+- Asks for confirmation on merge/rebase/cherry-pick
+
+### File Protection
+
+- Blocks reads/writes to `.env`, `.ssh/`, `*.pem`, `id_rsa*`, etc.
+- Warns on TODO/FIXME/placeholder in code (configurable)
+- Scrubs secrets from tool output
+
+## Bypass
+
+Add `# tripwire-allow: <reason>` to bypass any rule:
 
 ```bash
-pi install npm:@hsingjui/pi-hooks
+rm -rf /tmp/test  # tripwire-allow: cleaning test directory
+git reset --hard HEAD~1  # tripwire-allow: undoing mistaken commit
 ```
 
-Then `~/.pi/agent/settings.json`:
+## Library Usage
 
-```json
-{
-  "packages": ["npm:@hsingjui/pi-hooks", "..."],
-  "hooks": {
-    "PreToolUse": [
-      { "hooks": [{ "type": "command", "command": "/Users/sean/.local/bin/tripwire-hook" }] }
-    ],
-    "PostToolUse": [
-      { "hooks": [{ "type": "command", "command": "/Users/sean/.local/bin/tripwire-hook" }] }
-    ]
-  }
-}
+```typescript
+import { allow, deny, ask, warn } from '@seanmozeik/tripwire';
+import type { Decision, Config } from '@seanmozeik/tripwire';
 ```
 
-`/reload` inside Pi to pick it up.
-
-## CLI
-
-`tripwire test` pipes a synthetic event through the hook so you can see what would happen without going through an agent.
+## Development
 
 ```bash
-tripwire test 'rm -rf /etc'
-tripwire test 'git commit -m "wip"'
-tripwire test 'npm install foo'
-tripwire test --tool=Read --path=.env
-tripwire test --tool=Write --path=foo.ts --content='TODO: finish'
-tripwire test --post --tool=Bash --stdout='ghp_REAL_TOKEN_HERE'
+bun install
+bun run build      # Build dist/tripwire.js and dist/tripwire-cli.js
+bun run check      # Format + lint + typecheck
+bun test           # Run tests
 ```
 
-## Cross-host tool-name normalization
+## License
 
-The dispatcher canonicalizes tool names from each host before routing:
-
-| Host           | Bash                                | File edits                                  | Read   |
-| -------------- | ----------------------------------- | ------------------------------------------- | ------ |
-| Claude Code    | `Bash`                              | `Edit` / `Write` / `MultiEdit`              | `Read` |
-| Codex          | `Bash` (also `shell`/`run_command`) | `apply_patch` (with `Edit`/`Write` aliases) | `Read` |
-| Devin          | `exec`                              | `Write` / `Edit`                            | `Read` |
-| Pi (lowercase) | `bash`                              | `write` / `edit`                            | `read` |
-
-All map to a single internal vocabulary, so rule code never branches on host.
-
-## Design rules
-
-- **A buggy or slow rule must never block the agent.** Every rule runs under a 250ms timeout (5s for the betterleaks PostToolUse step). Defects and timeouts collapse to `allow`, logged to `~/.claude/tripwire.log`.
-- **Block messages address the agent in second person and name the concrete alternative.** No vague "denied for safety" output.
-- **Codex compatibility:** Codex rejects `hookSpecificOutput.additionalContext` on `PreToolUse` (openai/codex#19385). Detected via Codex's `turn_id` field; warns degrade to top-level `systemMessage`, which both hosts support.
-- **One bypass token, comment-syntax-agnostic.** `tripwire-allow: <reason>` works in `//`, `#`, `--`, `/* */`, `<!-- -->`, `;`, `%`.
-
-## Stack
-
-- **Bun** runtime, minified + bytecode-cached for ~50ms cold start.
-- **Effect v4** for per-rule timeouts and exit isolation.
-- **shell-quote** for shell tokenization (mature, 12 years, 1.8M weekly DLs).
-- **betterleaks** subprocess for secret scanning (MIT, by the original gitleaks author).
-- **rtk** subprocess for command-rewrite passthrough on allowed Bash calls.
-- Strict oxlint + tsc — no warnings.
-- 114 tests, all green.
-
-## Layout
-
-```
-src/
-  dispatch.ts                # entry — reads stdin, routes, writes JSON decision
-  cli.ts                     # tripwire test ... synthetic-event tester
-  lib/
-    bash.ts                  # shell-quote wrapper, segment + safe-path helpers
-    decision.ts              # Decision type, merge logic
-    diff.ts                  # added-lines diff for lazy-code
-    event.ts                 # HookEvent schema + tool-input type guards
-    log.ts                   # ~/.claude/tripwire.log (errors only)
-    rtk.ts                   # rtk hook claude subprocess wrapper
-    secrets.ts               # betterleaks subprocess wrapper
-  rules/
-    bash-deny.ts             bash-git.ts             bash-network-install.ts
-    bash-redirect.ts         bash-scoped-rm.ts       bash-tar-explosion.ts
-    bash-tool-policy.ts      imsg-deny.ts            lazy-code.ts
-    path-protect.ts          post-secret-scrub.ts    read-protect.ts
-test/
-  dispatch.test.ts           # 114 tests across all rules
-```
+MIT

@@ -1,5 +1,5 @@
-import { type Segment, hasBypass } from '../lib/bash.ts';
-import { type Decision, allow, ask, deny } from '../lib/decision.ts';
+import { type Segment, hasBypass } from '../lib/bash';
+import { type Decision, allow, ask, deny } from '../lib/decision';
 
 interface Spec {
   readonly rule: string;
@@ -74,14 +74,13 @@ const SPECS: readonly Spec[] = [
   {
     rule: 'no-verify',
     action: 'deny',
-    message:
-      "--no-verify skips git hooks. Per Sean's rules: never skip hooks. Fix the underlying issue.",
+    message: '--no-verify skips git hooks. Per policy: never skip hooks. Fix the underlying issue.',
     match: (seg) => seg.tokens.includes('--no-verify'),
   },
   {
     rule: 'no-gpg-sign',
     action: 'deny',
-    message: 'Bypassing GPG signing is off-limits unless Sean explicitly asks for it.',
+    message: 'Bypassing GPG signing is off-limits unless explicitly requested.',
     match: (_seg, raw) => /--no-gpg-sign\b|-c\s+commit\.gpgsign=false/.test(raw),
   },
 
@@ -98,14 +97,15 @@ const SPECS: readonly Spec[] = [
   {
     rule: 'shutdown',
     action: 'deny',
-    message: 'shutdown / reboot / halt control the machine. Refuse — Sean drives that himself.',
+    message:
+      'shutdown / reboot / halt control the machine. Refuse — system control should be done manually.',
     match: (seg) => ['shutdown', 'reboot', 'halt', 'poweroff'].includes(seg.head),
   },
   {
     rule: 'launchctl-mutation',
     action: 'deny',
     message:
-      'launchctl load/unload/bootstrap/bootout/kickstart mutates system services. Refuse — surface the intent to Sean instead.',
+      'launchctl load/unload/bootstrap/bootout/kickstart mutates system services. Refuse — surface the intent instead.',
     match: (seg) =>
       seg.head === 'launchctl' &&
       typeof seg.tokens[1] === 'string' &&
@@ -116,7 +116,7 @@ const SPECS: readonly Spec[] = [
   {
     rule: 'defaults-write',
     action: 'deny',
-    message: '`defaults write` mutates macOS preferences. Refuse — surface the intent to Sean.',
+    message: '`defaults write` mutates macOS preferences. Refuse — surface the intent.',
     match: (seg) => seg.head === 'defaults' && seg.tokens[1] === 'write',
   },
   {
@@ -162,27 +162,21 @@ const SPECS: readonly Spec[] = [
     rule: 'topgrade',
     action: 'deny',
     message:
-      'topgrade upgrades everything (brew, mas, npm globals, rust, mise). Sean controls that himself.',
+      'topgrade upgrades everything (brew, mas, npm globals, rust, mise). System upgrades should be done manually.',
     match: (seg) => seg.head === 'topgrade',
-  },
-  {
-    rule: 'mackup',
-    action: 'deny',
-    message: "Mackup is off-limits per Sean's rules. Never modify mackup config or sync flow.",
-    match: (seg) => seg.head === 'mackup',
   },
   {
     rule: 'rsync-delete',
     action: 'deny',
     message:
-      'rsync --delete removes files at the destination. High blast radius — surface intent to Sean instead.',
+      'rsync --delete removes files at the destination. High blast radius — surface the intent instead.',
     match: (seg) => seg.head === 'rsync' && seg.flags.includes('--delete'),
   },
   {
     rule: 'softwareupdate-install',
     action: 'deny',
     message:
-      '`softwareupdate --install / -i / -d` triggers macOS system updates. Refuse — Sean drives system updates himself.',
+      '`softwareupdate --install / -i / -d` triggers macOS system updates. Refuse — system updates should be done manually.',
     match: (seg) =>
       seg.head === 'softwareupdate' &&
       seg.flags.some(
@@ -246,7 +240,7 @@ const SPECS: readonly Spec[] = [
     rule: 'security-keychain-destructive',
     action: 'deny',
     message:
-      '`security delete-keychain / delete-generic-password / delete-internet-password / set-keychain-settings` mutates your Keychain (where every CLI Sean wrote stores its secrets). Refuse — Sean owns Keychain.',
+      '`security delete-keychain / delete-generic-password / delete-internet-password / set-keychain-settings` mutates your Keychain (where CLIs store their secrets). Refuse — Keychain should be managed manually.',
     match: (seg) =>
       seg.head === 'security' &&
       typeof seg.tokens[1] === 'string' &&
@@ -266,7 +260,7 @@ const SPECS: readonly Spec[] = [
     rule: 'security-keychain-add-write',
     action: 'ask',
     message:
-      "`security add-generic-password / add-internet-password / add-certificate` writes to your Keychain. Sean's tools (`Bun.secrets`, agent-browser-profiles) manage their own entries — confirm this is the right path before adding anything else manually.",
+      '`security add-generic-password / add-internet-password / add-certificate` writes to your Keychain. Other tools manage their own entries — confirm this is the right path before adding anything else manually.',
     match: (seg) =>
       seg.head === 'security' &&
       typeof seg.tokens[1] === 'string' &&
@@ -292,7 +286,7 @@ const SPECS: readonly Spec[] = [
     rule: 'brew-mutation',
     action: 'ask',
     message:
-      "`brew install/uninstall/upgrade/untap` modifies Sean's machine globally. Confirm before running.",
+      '`brew install/uninstall/upgrade/untap` modifies the machine globally. Confirm before running.',
     match: (seg) =>
       seg.head === 'brew' &&
       typeof seg.tokens[1] === 'string' &&

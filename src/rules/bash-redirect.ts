@@ -1,5 +1,5 @@
-import { type Segment, hasBypass } from '../lib/bash.ts';
-import { type Decision, allow, deny } from '../lib/decision.ts';
+import { type Segment, hasBypass } from '../lib/bash';
+import { type Decision, allow, deny } from '../lib/decision';
 
 // Block writes (via shell redirect, tee, cp, mv) that target sensitive
 // Files. Catches the exfil-via-redirect gap that path-protect can't see

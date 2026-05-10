@@ -5,16 +5,65 @@
 
 import { spawnSync } from 'node:child_process';
 
-const RTK_BIN = '/opt/homebrew/bin/rtk';
+import type { RtkConfig } from './config';
 
 interface RtkOutput {
   readonly updatedCommand?: string;
   readonly reason?: string;
 }
 
-const runRtkRewrite = (event: unknown, timeoutMs = 2000): RtkOutput => {
+const findRtkBin = (config: RtkConfig): string | null => {
+  // If config specifies a path, try it first
+  if (config.path !== undefined) {
+    return config.path;
+  }
+
+  // Try common locations
+  const home = process.env['HOME'] ?? '';
+  const commonPaths = ['/opt/homebrew/bin/rtk', '/usr/local/bin/rtk', `${home}/.local/bin/rtk`];
+
+  for (const path of commonPaths) {
+    try {
+      spawnSync('test', ['-x', path], { stdio: 'ignore' });
+      return path;
+    } catch {
+      continue;
+    }
+  }
+
+  // Try searching PATH
+  try {
+    const whichResult = spawnSync('which', ['rtk'], { stdio: 'pipe' });
+    if (whichResult.status === 0) {
+      const stdout = whichResult.stdout as string | Buffer | null;
+      if (stdout !== null) {
+        const path = String(stdout).trim();
+        if (path.length > 0) {
+          return path;
+        }
+      }
+    }
+  } catch {
+    // Ignore errors
+  }
+
+  return null;
+};
+
+const runRtkRewrite = (event: unknown, config: RtkConfig, timeoutMs = 2000): RtkOutput => {
+  // If rtk is disabled, skip it
+  if (!config.enabled) {
+    return {};
+  }
+
+  const rtkBin = findRtkBin(config);
+  if (rtkBin === null) {
+    // Rtk not found, silently continue
+    return {};
+  }
+
   const payload = JSON.stringify(event);
-  const result = spawnSync(RTK_BIN, ['hook', 'claude'], {
+  const result = spawnSync(rtkBin, ['hook', 'claude'], {
     input: payload,
     encoding: 'utf8',
     timeout: timeoutMs,

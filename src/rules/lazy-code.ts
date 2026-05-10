@@ -1,6 +1,6 @@
-import { type Decision, allow, warn } from '../lib/decision.ts';
-import { addedLines, readFileOrEmpty } from '../lib/diff.ts';
-import type { EditInput, WriteInput } from '../lib/event.ts';
+import { type Decision, allow, warn } from '../lib/decision';
+import { addedLines, readFileOrEmpty } from '../lib/diff';
+import type { EditInput, WriteInput } from '../lib/event';
 
 // Phrases that frequently signal incomplete or deferred work. Some — like
 // "fallback" or "placeholder" — are also legitimate product terms (an auth

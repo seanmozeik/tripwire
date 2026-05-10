@@ -6,30 +6,36 @@
 
 import { describe, expect, test } from 'bun:test';
 
-import { parseCommand } from '../src/lib/bash.ts';
-import { bashDeny } from '../src/rules/bash-deny.ts';
-import { bashGit } from '../src/rules/bash-git.ts';
-import { bashNetworkInstall } from '../src/rules/bash-network-install.ts';
-import { bashRedirect } from '../src/rules/bash-redirect.ts';
-import { bashScopedRm } from '../src/rules/bash-scoped-rm.ts';
-import { bashTarExplosion } from '../src/rules/bash-tar-explosion.ts';
-import { bashToolPolicy } from '../src/rules/bash-tool-policy.ts';
-import { imsgDeny } from '../src/rules/imsg-deny.ts';
-import { lazyCode } from '../src/rules/lazy-code.ts';
-import { pathProtect } from '../src/rules/path-protect.ts';
-import { readProtect } from '../src/rules/read-protect.ts';
+import { parseCommand } from '../src/lib/bash';
+import type { GitConfig, SafePathsConfig } from '../src/lib/config';
+import { bashDeny } from '../src/rules/bash-deny';
+import { bashGit } from '../src/rules/bash-git';
+import { bashNetworkInstall } from '../src/rules/bash-network-install';
+import { bashRedirect } from '../src/rules/bash-redirect';
+import { bashScopedRm } from '../src/rules/bash-scoped-rm';
+import { bashTarExplosion } from '../src/rules/bash-tar-explosion';
+import { bashToolPolicy } from '../src/rules/bash-tool-policy';
+import { lazyCode } from '../src/rules/lazy-code';
+import { pathProtect } from '../src/rules/path-protect';
+import { readProtect } from '../src/rules/read-protect';
+
+const defaultGitConfig: GitConfig = {
+  protectedBranches: ['main', 'master', 'develop', 'production', 'release'],
+  enforceConventionalCommits: true,
+};
+
+const defaultSafePathsConfig: SafePathsConfig = {};
 
 const allRules = (cmd: string) => {
   const segs = parseCommand(cmd);
   return {
     deny: bashDeny(segs, cmd),
-    git: bashGit(segs, cmd),
-    rm: bashScopedRm(segs, cmd),
+    git: bashGit(segs, cmd, defaultGitConfig),
+    rm: bashScopedRm(segs, cmd, defaultSafePathsConfig),
     redirect: bashRedirect(segs, cmd),
     netinstall: bashNetworkInstall(segs, cmd),
     tar: bashTarExplosion(segs, cmd),
     policy: bashToolPolicy(segs, cmd),
-    imsg: imsgDeny(segs, cmd),
   };
 };
 
@@ -56,9 +62,6 @@ describe('bash-deny', () => {
   test('blocks topgrade', () => {
     expect(allRules('topgrade').deny.kind).toBe('deny');
   });
-  test('blocks mackup', () => {
-    expect(allRules('mackup backup').deny.kind).toBe('deny');
-  });
   test('blocks softwareupdate --install', () => {
     expect(allRules('softwareupdate --install --all').deny.kind).toBe('deny');
   });
@@ -69,7 +72,7 @@ describe('bash-deny', () => {
     expect(allRules('pmset -g').deny.kind).toBe('allow');
   });
   test('blocks dscl -delete', () => {
-    expect(allRules('dscl . -delete /Users/sean').deny.kind).toBe('deny');
+    expect(allRules('dscl . -delete /Users/testuser').deny.kind).toBe('deny');
   });
   test('blocks xattr quarantine bypass', () => {
     expect(allRules('xattr -d com.apple.quarantine /tmp/foo').deny.kind).toBe('deny');
@@ -402,15 +405,6 @@ describe('bash-git', () => {
   });
   test('respects bypass marker', () => {
     expect(allRules('git reset --hard HEAD~1  # tripwire-allow: lab').git.kind).toBe('allow');
-  });
-});
-
-describe('imsg-deny', () => {
-  test('blocks imsg', () => {
-    expect(allRules('imsg send hi').imsg.kind).toBe('deny');
-  });
-  test('allows send', () => {
-    expect(allRules('send "hi"').imsg.kind).toBe('allow');
   });
 });
 

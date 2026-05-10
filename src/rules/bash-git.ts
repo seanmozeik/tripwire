@@ -1,8 +1,8 @@
-import { type Segment, hasBypass } from '../lib/bash.ts';
-import { type Decision, allow, ask, deny, warn } from '../lib/decision.ts';
+import { type Segment, hasBypass } from '../lib/bash';
+import type { GitConfig } from '../lib/config';
+import { type Decision, allow, ask, deny, warn } from '../lib/decision';
 
-// Smart git policy. Replaces the blanket "Sean handles all git" rule with
-// Intent-based decisions:
+// Smart git policy. Replaces blanket git handling with intent-based decisions:
 //
 //   - Read-only ops (status, log, diff, show, blame, fetch, etc.) — silent allow.
 //   - Working-tree-destroying ops (reset --hard, clean -fd, checkout .,
@@ -25,13 +25,16 @@ import { type Decision, allow, ask, deny, warn } from '../lib/decision.ts';
 // `git -c key=value` are stripped before subcommand dispatch — `git -C ../foo
 // Reset --hard` is handled the same as `git reset --hard`.
 
-const PROTECTED_BRANCHES: readonly string[] = [
+const DEFAULT_PROTECTED_BRANCHES: readonly string[] = [
   'main',
   'master',
   'develop',
   'production',
   'release',
 ];
+
+const getProtectedBranches = (config: GitConfig): readonly string[] =>
+  config.protectedBranches ?? DEFAULT_PROTECTED_BRANCHES;
 
 // Conventional Commits 1.0.0 — type(scope)?(!)?: description
 const CONVENTIONAL_RE =
@@ -122,9 +125,10 @@ const messageOf = (subArgs: readonly string[]): string | null => {
   return null;
 };
 
-const protectedBranchHit = (positional: readonly string[]): string | null => {
+const protectedBranchHit = (positional: readonly string[], config: GitConfig): string | null => {
+  const branches = getProtectedBranches(config);
   for (const arg of positional) {
-    for (const p of PROTECTED_BRANCHES) {
+    for (const p of branches) {
       if (arg === p || arg.endsWith(`:${p}`) || arg.endsWith(`/${p}`)) {
         return p;
       }
@@ -146,6 +150,7 @@ interface HandlerCtx {
   readonly subArgs: readonly string[];
   readonly flags: readonly string[];
   readonly positional: readonly string[];
+  readonly config: GitConfig;
 }
 
 type Handler = (ctx: HandlerCtx) => Decision;
@@ -154,14 +159,14 @@ const handleConfig: Handler = ({ subArgs, positional }) => {
   if (has(subArgs, '--global', '--system')) {
     return deny(
       'git-config-global',
-      "Modifying global / system git config is off-limits — that is Sean's personal identity. Read-only `git config --get` is fine.",
+      'Modifying global / system git config is off-limits — that is your personal identity. Read-only `git config --get` is fine.',
     );
   }
   const isRead = has(subArgs, '--get', '-l', '--list', '--get-all', '--get-regexp');
   if (!isRead && positional.length >= 2) {
     return deny(
       'git-config-write',
-      'Local git config writes go through Sean. To read a value, use `git config --get <key>`.',
+      'Local git config writes should be done explicitly. To read a value, use `git config --get <key>`.',
     );
   }
   return allow('bash-git');
@@ -252,13 +257,13 @@ const handleClean: Handler = ({ flags }) => {
   if (flags.some((f) => /^-[a-zA-Z]*[df]/.test(f) || f === '--force')) {
     return deny(
       'git-clean-fd',
-      "`git clean -fd` deletes untracked files (often Sean's in-progress work). Refuse — inspect with `git clean -dn` (dry run) first. If genuinely needed, append ` # tripwire-allow: <reason>`.",
+      '`git clean -fd` deletes untracked files (often your in-progress work). Refuse — inspect with `git clean -dn` (dry run) first. If genuinely needed, append ` # tripwire-allow: <reason>`.',
     );
   }
   return allow('bash-git');
 };
 
-const handleRebase: Handler = ({ subArgs, positional }) => {
+const handleRebase: Handler = ({ subArgs, positional, config }) => {
   if (has(subArgs, '--abort', '--quit', '--continue', '--skip', '--edit-todo')) {
     return allow('bash-git');
   }
@@ -269,7 +274,8 @@ const handleRebase: Handler = ({ subArgs, positional }) => {
     );
   }
   const onto = positional[0];
-  if (onto !== undefined && PROTECTED_BRANCHES.includes(onto)) {
+  const branches = getProtectedBranches(config);
+  if (onto !== undefined && branches.includes(onto)) {
     return ask(
       'git-rebase-onto-protected',
       `Rebasing onto \`${onto}\` rewrites history of the current branch. \`git merge ${onto}\` is usually safer. Confirm intent.`,
@@ -298,11 +304,11 @@ const handleMerge: Handler = ({ subArgs }) => {
   return ask('git-merge', '`git merge <branch>` may create merge conflicts. Confirm intent.');
 };
 
-const handleCommit: Handler = ({ subArgs }) => {
+const handleCommit: Handler = ({ subArgs, config }) => {
   if (has(subArgs, '--amend')) {
     return deny(
       'git-commit-amend',
-      '`git commit --amend` rewrites the last commit. If it has been pushed, this causes upstream divergence. Refuse — surface intent to Sean.',
+      '`git commit --amend` rewrites the last commit. If it has been pushed, this causes upstream divergence. Refuse — surface the intent.',
     );
   }
   const msg = messageOf(subArgs);
@@ -314,7 +320,7 @@ const handleCommit: Handler = ({ subArgs }) => {
       '`git commit` without `-m "..."` opens an editor and hangs the agent. Use `git commit -m "<conventional message>"`.',
     );
   }
-  if (msg !== null && !CONVENTIONAL_RE.test(msg)) {
+  if (msg !== null && config.enforceConventionalCommits !== false && !CONVENTIONAL_RE.test(msg)) {
     return deny(
       'git-commit-non-conventional',
       [
@@ -338,20 +344,20 @@ const handleCommit: Handler = ({ subArgs }) => {
   return allow('bash-git');
 };
 
-const handlePush: Handler = ({ subArgs, flags, positional }) => {
+const handlePush: Handler = ({ subArgs, flags, positional, config }) => {
   if (flags.some((f) => f === '--force' || f === '-f' || f.startsWith('--force-with-lease'))) {
     return deny(
       'git-force-push',
-      'Force push is forbidden. If a branch needs to be reset upstream, surface the intent to Sean — there is almost always a non-force path.',
+      'Force push is forbidden. If a branch needs to be reset upstream, surface the intent — there is almost always a non-force path.',
     );
   }
   if (has(subArgs, '--delete', '--mirror') || subArgs.some((a) => a.startsWith(':'))) {
     return deny(
       'git-push-delete',
-      'Refusing to delete a remote branch via push. If genuinely needed, surface intent to Sean.',
+      'Refusing to delete a remote branch via push. If genuinely needed, surface the intent.',
     );
   }
-  const hit = protectedBranchHit(positional);
+  const hit = protectedBranchHit(positional, config);
   if (hit !== null) {
     return deny(
       'git-push-protected',
@@ -361,7 +367,7 @@ const handlePush: Handler = ({ subArgs, flags, positional }) => {
   return allow('bash-git');
 };
 
-const handleBranch: Handler = ({ subArgs, flags, positional }) => {
+const handleBranch: Handler = ({ subArgs, flags, positional, config }) => {
   const deleteFlag = flags.find(
     (f) =>
       f === '-D' ||
@@ -372,7 +378,8 @@ const handleBranch: Handler = ({ subArgs, flags, positional }) => {
   );
   if (deleteFlag !== undefined) {
     const targets = positional;
-    const hit = targets.find((t) => PROTECTED_BRANCHES.includes(t));
+    const branches = getProtectedBranches(config);
+    const hit = targets.find((t) => branches.includes(t));
     if (hit !== undefined) {
       return deny('git-branch-delete-protected', `Refusing to delete protected branch \`${hit}\`.`);
     }
@@ -502,7 +509,7 @@ const HANDLERS: ReadonlyMap<string, Handler> = new Map<string, Handler>([
   ],
 ]);
 
-const evalGit = (inv: GitInvocation): Decision | null => {
+const evalGit = (inv: GitInvocation, config: GitConfig): Decision | null => {
   const { subcommand, subArgs } = inv;
   const flags = flagsOf(subArgs);
   const positional = positionalOf(subArgs);
@@ -543,7 +550,7 @@ const evalGit = (inv: GitInvocation): Decision | null => {
     if (subcommand === 'reflog' && (subArgs[0] === 'expire' || has(subArgs, '--expire'))) {
       return deny(
         'git-reflog-expire',
-        "`git reflog expire` destroys git's recovery history. Refuse — surface intent to Sean.",
+        "`git reflog expire` destroys git's recovery history. Refuse — surface the intent.",
       );
     }
     if (subcommand === 'symbolic-ref' && positional.length >= 2) {
@@ -557,15 +564,15 @@ const evalGit = (inv: GitInvocation): Decision | null => {
 
   const handler = HANDLERS.get(subcommand);
   if (handler !== undefined) {
-    return handler({ subcommand, subArgs, flags, positional });
+    return handler({ subcommand, subArgs, flags, positional, config });
   }
   return warn(
     'git-unknown-subcommand',
-    `\`git ${subcommand}\` is not classified by tripwire. Allowing — flag to Sean if this looks like history-rewriting or data-loss territory.`,
+    `\`git ${subcommand}\` is not classified by tripwire. Allowing — flag if this looks like history-rewriting or data-loss territory.`,
   );
 };
 
-const bashGit = (segments: readonly Segment[], cmd: string): Decision => {
+const bashGit = (segments: readonly Segment[], cmd: string, config: GitConfig): Decision => {
   if (hasBypass(cmd)) {
     return allow('bash-git');
   }
@@ -574,7 +581,7 @@ const bashGit = (segments: readonly Segment[], cmd: string): Decision => {
     if (inv === null) {
       continue;
     }
-    const d = evalGit(inv);
+    const d = evalGit(inv, config);
     if (d !== null && d.kind !== 'allow') {
       return d;
     }

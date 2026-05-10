@@ -1,5 +1,5 @@
-import { type Segment, hasBypass } from '../lib/bash.ts';
-import { type Decision, allow, deny, warn } from '../lib/decision.ts';
+import { type Segment, hasBypass } from '../lib/bash';
+import { type Decision, allow, deny, warn } from '../lib/decision';
 
 // Opinionated tooling enforcement. Hard-deny on the package managers and
 // Tools Sean has explicitly replaced (npm/pip/patch-package); soft-warn

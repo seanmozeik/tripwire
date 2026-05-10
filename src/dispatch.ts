@@ -18,8 +18,9 @@
 import { BunRuntime } from '@effect/platform-bun';
 import { Cause, Effect, Exit, Schema } from 'effect';
 
-import { parseCommand } from './lib/bash.ts';
-import { type Decision, allow, merge } from './lib/decision.ts';
+import { parseCommand } from './lib/bash';
+import { loadConfig, type Config } from './lib/config';
+import { type Decision, allow, merge } from './lib/decision';
 import {
   type BashInput,
   type EditInput,
@@ -32,20 +33,20 @@ import {
   isReadInput,
   isWriteInput,
 } from './lib/event.ts';
-import { logError } from './lib/log.ts';
-import { runRtkRewrite } from './lib/rtk.ts';
-import { bashDeny } from './rules/bash-deny.ts';
-import { bashGit } from './rules/bash-git.ts';
-import { bashNetworkInstall } from './rules/bash-network-install.ts';
-import { bashRedirect } from './rules/bash-redirect.ts';
-import { bashScopedRm } from './rules/bash-scoped-rm.ts';
-import { bashTarExplosion } from './rules/bash-tar-explosion.ts';
-import { bashToolPolicy } from './rules/bash-tool-policy.ts';
-import { imsgDeny } from './rules/imsg-deny.ts';
-import { lazyCode } from './rules/lazy-code.ts';
-import { pathProtect } from './rules/path-protect.ts';
-import { postSecretScrub } from './rules/post-secret-scrub.ts';
-import { readProtect } from './rules/read-protect.ts';
+import { logError } from './lib/log';
+import { runRtkRewrite } from './lib/rtk';
+import { bashDeny } from './rules/bash-deny';
+import { bashGit } from './rules/bash-git';
+import { bashNetworkInstall } from './rules/bash-network-install';
+import { bashRedirect } from './rules/bash-redirect';
+import { bashScopedRm } from './rules/bash-scoped-rm';
+import { bashTarExplosion } from './rules/bash-tar-explosion';
+import { bashToolPolicy } from './rules/bash-tool-policy';
+import { configCustom } from './rules/config-custom';
+import { lazyCode } from './rules/lazy-code';
+import { pathProtect } from './rules/path-protect';
+import { postSecretScrub } from './rules/post-secret-scrub';
+import { readProtect } from './rules/read-protect';
 
 const RULE_TIMEOUT_MS = 250;
 const POST_RULE_TIMEOUT_MS = 5000; // Betterleaks subprocess can take longer
@@ -174,19 +175,34 @@ interface Rule {
   readonly fn: RuleFn;
 }
 
-const collectPreToolUseRules = (tool: string, input: unknown): Rule[] => {
+const collectPreToolUseRules = (tool: string, input: unknown, config: Config): Rule[] => {
   const rules: Rule[] = [];
   if (tool === 'Bash' && isBashInput(input)) {
     const i: BashInput = input;
     const segments = parseCommand(i.command);
     rules.push({ name: 'bash-deny', fn: () => bashDeny(segments, i.command) });
-    rules.push({ name: 'bash-git', fn: () => bashGit(segments, i.command) });
-    rules.push({ name: 'bash-scoped-rm', fn: () => bashScopedRm(segments, i.command) });
+    rules.push({
+      name: 'bash-git',
+      fn: () => bashGit(segments, i.command, config.git ?? { enforceConventionalCommits: true }),
+    });
+    rules.push({
+      name: 'bash-scoped-rm',
+      fn: () => bashScopedRm(segments, i.command, config.safePaths ?? {}),
+    });
     rules.push({ name: 'bash-redirect', fn: () => bashRedirect(segments, i.command) });
     rules.push({ name: 'bash-network-install', fn: () => bashNetworkInstall(segments, i.command) });
     rules.push({ name: 'bash-tar-explosion', fn: () => bashTarExplosion(segments, i.command) });
     rules.push({ name: 'bash-tool-policy', fn: () => bashToolPolicy(segments, i.command) });
-    rules.push({ name: 'imsg-deny', fn: () => imsgDeny(segments, i.command) });
+    rules.push({
+      name: 'config-custom',
+      fn: () =>
+        configCustom(
+          segments,
+          i.command,
+          config.blockedCommands ?? [],
+          config.allowedCommands ?? [],
+        ),
+    });
     return rules;
   }
   if (tool === 'Read' && isReadInput(input)) {
@@ -227,10 +243,10 @@ const runRules = (rules: readonly Rule[], timeoutMs: number): Effect.Effect<Deci
     return merge(decisions);
   });
 
-const handleBashAllow = (event: HookEvent, decision: Decision): void => {
+const handleBashAllow = (event: HookEvent, decision: Decision, config: Config): void => {
   // After the gate passes (allow or warn), apply rtk command-rewrite. If
   // Rtk doesn't change the command, fall through to normal allow / warn.
-  const rtk = runRtkRewrite(event);
+  const rtk = runRtkRewrite(event, config.rtk ?? { enabled: false });
   const original = (event.tool_input as { command?: string } | undefined)?.command ?? '';
   const rewritten =
     rtk.updatedCommand !== undefined && rtk.updatedCommand !== original ? rtk.updatedCommand : null;
@@ -250,11 +266,11 @@ const handleBashAllow = (event: HookEvent, decision: Decision): void => {
   writeAllow();
 };
 
-const handleAllow = (event: HookEvent, decision: Decision): void => {
+const handleAllow = (event: HookEvent, decision: Decision, config: Config): void => {
   const eventName = event.hook_event_name;
   const tool = normalizeToolName(event.tool_name ?? '');
   if (eventName === 'PreToolUse' && tool === 'Bash') {
-    handleBashAllow(event, decision);
+    handleBashAllow(event, decision, config);
     return;
   }
   if (decision.kind === 'warn') {
@@ -265,6 +281,7 @@ const handleAllow = (event: HookEvent, decision: Decision): void => {
 };
 
 const program = Effect.gen(function* () {
+  const config = yield* loadConfig();
   const raw = yield* Effect.promise(readStdin);
 
   const parseExit = yield* Effect.exit(
@@ -288,13 +305,13 @@ const program = Effect.gen(function* () {
   const tool = normalizeToolName(event.tool_name ?? '');
 
   if (event.hook_event_name === 'PreToolUse') {
-    const rules = collectPreToolUseRules(tool, event.tool_input);
+    const rules = collectPreToolUseRules(tool, event.tool_input, config);
     const decision = yield* runRules(rules, RULE_TIMEOUT_MS);
     if (decision.kind === 'deny' || decision.kind === 'ask') {
       writePreToolGate(event.hook_event_name, decision);
       return;
     }
-    handleAllow(event, decision);
+    handleAllow(event, decision, config);
     return;
   }
 
