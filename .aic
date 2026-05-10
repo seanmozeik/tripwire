@@ -1,0 +1,11 @@
+# AICommit Release Configuration
+# Commands run during release process
+
+[ignore]
+# Files or globs to omit from AI diff context
+
+[release]
+bun run build
+
+[publish]
+npm publish

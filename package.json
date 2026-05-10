@@ -1,6 +1,6 @@
 {
   "name": "@seanmozeik/tripwire",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "description": "Opinionated hooks dispatcher for AI coding agents with configurable safety rules",
   "license": "MIT",
   "bin": {
@@ -31,14 +31,14 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@effect/platform-bun": "^4.0.0-beta.64",
-    "effect": "^4.0.0-beta.64",
+    "@effect/platform-bun": "^4.0.0-beta.65",
+    "effect": "^4.0.0-beta.65",
     "shell-quote": "^1.8.3"
   },
   "devDependencies": {
     "@types/bun": "^1.3.13",
     "@types/shell-quote": "^1.7.5",
-    "oxfmt": "^0.47.0",
+    "oxfmt": "^0.48.0",
     "oxlint": "^1.61.0",
     "oxlint-tsgolint": "^0.22.1",
     "typescript": "^6.0.3"
