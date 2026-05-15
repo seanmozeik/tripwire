@@ -11,6 +11,10 @@ const BlockRuleSchema = Schema.Struct({
   pattern: Schema.String,
   message: Schema.String,
   action: Schema.optional(Schema.Union([Schema.Literal('deny'), Schema.Literal('ask')])),
+  requiresFlags: Schema.optional(Schema.Array(Schema.String)),
+  forbidsFlagValues: Schema.optional(
+    Schema.Array(Schema.Struct({ flag: Schema.String, values: Schema.Array(Schema.String) })),
+  ),
 });
 
 const RtkConfigSchema = Schema.Struct({
@@ -103,4 +107,4 @@ export type GitConfig = typeof GitConfigSchema.Type;
 export type SafePathsConfig = typeof SafePathsConfigSchema.Type;
 export type Config = typeof ConfigSchema.Type;
 
-export { CONFIG_PATH, ConfigSchema };
+export { CONFIG_PATH, ConfigSchema, getDefaultConfig, mergeWithDefaults };

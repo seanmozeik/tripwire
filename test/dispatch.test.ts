@@ -6,8 +6,10 @@
 
 import { describe, expect, test } from 'bun:test';
 
+import { decide } from '../src';
 import { parseCommand } from '../src/lib/bash';
-import type { GitConfig, SafePathsConfig } from '../src/lib/config';
+import type { Config, GitConfig, SafePathsConfig } from '../src/lib/config';
+import type { HookEvent } from '../src/lib/event';
 import { bashDeny } from '../src/rules/bash-deny';
 import { bashGit } from '../src/rules/bash-git';
 import { bashNetworkInstall } from '../src/rules/bash-network-install';
@@ -26,6 +28,12 @@ const defaultGitConfig: GitConfig = {
 
 const defaultSafePathsConfig: SafePathsConfig = {};
 
+const bashEvent = (command: string): HookEvent => ({
+  hook_event_name: 'PreToolUse',
+  tool_name: 'Bash',
+  tool_input: { command },
+});
+
 const allRules = (cmd: string) => {
   const segs = parseCommand(cmd);
   return {
@@ -38,6 +46,38 @@ const allRules = (cmd: string) => {
     policy: bashToolPolicy(segs, cmd),
   };
 };
+
+const configDecision = (command: string, config: Config) => decide(bashEvent(command), config);
+
+describe('decide API', () => {
+  test('denies destructive git push to a protected branch', () => {
+    const decision = decide(bashEvent('git push origin main'));
+    expect(decision.kind).toBe('deny');
+    expect(decision.rule).toBe('git-push-protected');
+  });
+
+  test('allows git status', () => {
+    expect(decide(bashEvent('git status')).kind).toBe('allow');
+  });
+
+  test('allows a command matched by custom allow config', () => {
+    const config: Config = {
+      blockedCommands: [{ pattern: 'tripwire-local-ok', message: 'blocked', action: 'deny' }],
+      allowedCommands: [{ pattern: 'tripwire-local-ok', message: 'allowed', action: 'deny' }],
+    };
+    expect(decide(bashEvent('tripwire-local-ok --flag'), config).kind).toBe('allow');
+  });
+
+  test('denies a command matched by custom block config', () => {
+    const config: Config = {
+      blockedCommands: [{ pattern: 'tripwire-local-block', message: 'blocked', action: 'deny' }],
+      allowedCommands: [],
+    };
+    const decision = decide(bashEvent('tripwire-local-block --flag'), config);
+    expect(decision.kind).toBe('deny');
+    expect(decision.rule).toBe('config-custom');
+  });
+});
 
 describe('bash-deny', () => {
   test('blocks rm -rf /', () => {
@@ -220,6 +260,105 @@ describe('bash-network-install', () => {
   });
   test('allows cargo build', () => {
     expect(allRules('cargo build').netinstall.kind).toBe('allow');
+  });
+});
+
+describe('config-custom', () => {
+  const calendarInviteConfig: Config = {
+    blockedCommands: [
+      {
+        pattern: 'gog calendar create',
+        requiresFlags: ['--attendees'],
+        message:
+          "Calendar invite with attendees fires an email to a third party. Draft the invite description and recipient list in chat first, get Sean's explicit go-ahead this turn, then re-run.",
+      },
+    ],
+    allowedCommands: [],
+  };
+
+  const calendarDeleteConfig: Config = {
+    blockedCommands: [
+      {
+        pattern: 'gog calendar delete',
+        forbidsFlagValues: [{ flag: '--send-updates', values: ['all', 'externalOnly'] }],
+        message:
+          'Cancellation fires an email to attendees. Pass `--send-updates none` if cancelling silently, or surface to Sean first.',
+      },
+    ],
+    allowedCommands: [],
+  };
+
+  test('denies gog calendar create when attendees flag is present', () => {
+    const decision = configDecision(
+      'gog calendar create --attendees vb@openai.com --summary "Meet"',
+      calendarInviteConfig,
+    );
+    expect(decision.kind).toBe('deny');
+    expect(decision.rule).toBe('config-custom');
+  });
+
+  test('allows gog calendar create personal hold without attendees', () => {
+    expect(
+      configDecision(
+        'gog calendar create --summary "personal hold" --from 2026-05-15T12:00',
+        calendarInviteConfig,
+      ).kind,
+    ).toBe('allow');
+  });
+
+  test('allows gog calendar events when create is configured', () => {
+    expect(configDecision('gog calendar events', calendarInviteConfig).kind).toBe('allow');
+  });
+
+  test('denies gog calendar delete when send-updates has a blocked value', () => {
+    expect(
+      configDecision('gog calendar delete primary EVENTID --send-updates all', calendarDeleteConfig)
+        .kind,
+    ).toBe('deny');
+    expect(
+      configDecision(
+        'gog calendar delete primary EVENTID --send-updates=externalOnly',
+        calendarDeleteConfig,
+      ).kind,
+    ).toBe('deny');
+  });
+
+  test('allows gog calendar delete when send-updates is none', () => {
+    expect(
+      configDecision(
+        'gog calendar delete primary EVENTID --send-updates none',
+        calendarDeleteConfig,
+      ).kind,
+    ).toBe('allow');
+  });
+
+  test('allows gog calendar delete when send-updates is absent', () => {
+    expect(configDecision('gog calendar delete primary EVENTID', calendarDeleteConfig).kind).toBe(
+      'allow',
+    );
+  });
+
+  test('denies gog gmail send by subcommand path', () => {
+    const decision = configDecision('gog gmail send --to a@example.com', {
+      blockedCommands: [
+        {
+          pattern: 'gog gmail send',
+          message:
+            "Mail send fires from one of Sean's identities to a third party. Draft the body in chat and get Sean's explicit go-ahead.",
+        },
+      ],
+      allowedCommands: [],
+    });
+    expect(decision.kind).toBe('deny');
+  });
+
+  test('respects bypass marker before config-custom blocks', () => {
+    expect(
+      configDecision(
+        'gog calendar create --attendees X # tripwire-allow: vb-meeting-2026-05-15',
+        calendarInviteConfig,
+      ).kind,
+    ).toBe('allow');
   });
 });
 

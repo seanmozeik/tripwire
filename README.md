@@ -65,11 +65,7 @@ Create `~/.config/tripwire/config.json` to customize behavior:
     { "pattern": "dangerous-tool", "message": "Use safer-alternative instead", "action": "deny" }
   ],
   "allowedCommands": [
-    {
-      "pattern": "my-custom-tool",
-      "message": "Allowing my-custom-tool per your configuration",
-      "action": "allow"
-    }
+    { "pattern": "my-custom-tool", "message": "Allowing my-custom-tool per your configuration" }
   ]
 }
 ```
@@ -100,6 +96,8 @@ Array of custom command blocks:
 - `pattern` (string) — Command pattern to block (uses shell parsing for matching)
 - `message` (string) — Error message shown when blocked
 - `action` (`"deny"` | `"ask"`, default: `"deny"`) — Whether to deny or ask for confirmation
+- `requiresFlags` (string[], optional) — Match only when every listed flag is present, including `--flag=value` form
+- `forbidsFlagValues` (array, optional) — Match only when each listed flag is present with one of the listed values
 
 #### `allowedCommands`
 
@@ -107,7 +105,8 @@ Array of custom command allows (overrides blocks):
 
 - `pattern` (string) — Command pattern to allow
 - `message` (string) — Message shown when allowed
-- `action` (string, default: `"allow"`) — Always `"allow"` for this context
+- `requiresFlags` (string[], optional) — Same matching condition as `blockedCommands`
+- `forbidsFlagValues` (array, optional) — Same matching condition as `blockedCommands`
 
 ### Shell-Based Command Matching
 
@@ -115,6 +114,9 @@ Command patterns in `blockedCommands` and `allowedCommands` use the same shell p
 
 - `rm` matches any `rm` command
 - `git push` matches `git push` with any arguments
+- `gog calendar create` matches that head + subcommand path, not every `gog` command
+- `requiresFlags: ["--attendees"]` matches `--attendees X` and `--attendees=X`
+- `forbidsFlagValues: [{ "flag": "--send-updates", "values": ["all"] }]` matches `--send-updates all` and `--send-updates=all`
 - Patterns are parsed using shell-quote for accurate matching
 - More sophisticated than simple regex
 
@@ -127,6 +129,17 @@ Example:
       "pattern": "brew install",
       "message": "Use brew install with explicit version pinning",
       "action": "ask"
+    },
+    {
+      "pattern": "gog calendar create",
+      "requiresFlags": ["--attendees"],
+      "message": "Calendar invite sends email; draft it in chat first.",
+      "action": "deny"
+    },
+    {
+      "pattern": "gog calendar delete",
+      "forbidsFlagValues": [{ "flag": "--send-updates", "values": ["all", "externalOnly"] }],
+      "message": "Cancellation sends email; use --send-updates none or ask first."
     }
   ]
 }

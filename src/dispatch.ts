@@ -19,7 +19,7 @@ import { BunRuntime } from '@effect/platform-bun';
 import { Cause, Effect, Exit, Schema } from 'effect';
 
 import { parseCommand } from './lib/bash';
-import { loadConfig, type Config } from './lib/config';
+import { getDefaultConfig, loadConfig, mergeWithDefaults, type Config } from './lib/config';
 import { type Decision, allow, merge } from './lib/decision';
 import {
   type BashInput,
@@ -47,9 +47,6 @@ import { lazyCode } from './rules/lazy-code';
 import { pathProtect } from './rules/path-protect';
 import { postSecretScrub } from './rules/post-secret-scrub';
 import { readProtect } from './rules/read-protect';
-
-const RULE_TIMEOUT_MS = 250;
-const POST_RULE_TIMEOUT_MS = 5000; // Betterleaks subprocess can take longer
 
 const readStdin = async (): Promise<string> => {
   const chunks: Buffer[] = [];
@@ -243,6 +240,25 @@ const runRules = (rules: readonly Rule[], timeoutMs: number): Effect.Effect<Deci
     return merge(decisions);
   });
 
+const runRulesSync = (rules: readonly Rule[]): Decision => {
+  if (rules.length === 0) {
+    return allow('no-rules');
+  }
+  return merge(rules.map((r) => r.fn()));
+};
+
+const decide = (event: HookEvent, config: Config = getDefaultConfig()): Decision => {
+  const mergedConfig = mergeWithDefaults(config);
+  const tool = normalizeToolName(event.tool_name ?? '');
+  if (event.hook_event_name === 'PreToolUse') {
+    return runRulesSync(collectPreToolUseRules(tool, event.tool_input, mergedConfig));
+  }
+  if (event.hook_event_name === 'PostToolUse') {
+    return runRulesSync(collectPostToolUseRules(tool, event.tool_response));
+  }
+  return allow('no-rules');
+};
+
 const handleBashAllow = (event: HookEvent, decision: Decision, config: Config): void => {
   // After the gate passes (allow or warn), apply rtk command-rewrite. If
   // Rtk doesn't change the command, fall through to normal allow / warn.
@@ -302,11 +318,9 @@ const program = Effect.gen(function* () {
     return;
   }
   const event = decodeExit.value;
-  const tool = normalizeToolName(event.tool_name ?? '');
 
   if (event.hook_event_name === 'PreToolUse') {
-    const rules = collectPreToolUseRules(tool, event.tool_input, config);
-    const decision = yield* runRules(rules, RULE_TIMEOUT_MS);
+    const decision = decide(event, config);
     if (decision.kind === 'deny' || decision.kind === 'ask') {
       writePreToolGate(event.hook_event_name, decision);
       return;
@@ -316,8 +330,7 @@ const program = Effect.gen(function* () {
   }
 
   if (event.hook_event_name === 'PostToolUse') {
-    const rules = collectPostToolUseRules(tool, event.tool_response);
-    const decision = yield* runRules(rules, POST_RULE_TIMEOUT_MS);
+    const decision = decide(event, config);
     if (decision.kind === 'deny') {
       writePostToolBlock(decision);
       return;
@@ -337,4 +350,15 @@ const handled = program.pipe(
   }),
 );
 
-BunRuntime.runMain(handled);
+if (import.meta.main) {
+  BunRuntime.runMain(handled);
+}
+
+export {
+  collectPostToolUseRules,
+  collectPreToolUseRules,
+  decide,
+  normalizeToolName,
+  runRules,
+  runRulesSync,
+};
