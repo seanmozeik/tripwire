@@ -8,11 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.4.0] - 2026-05-15
 
 ### Added
+
 - Synchronous rule engine execution for reliable and consistent CLI operation.
 - New flag matching capabilities allowing rules to dynamically respond to command-line flags and their values.
 - Documentation for known host-specific quirks and recommended configurations.
 
 ### Changed
+
 - Updated the configuration decision process to utilize synchronous evaluation and pattern matching.
 - Expanded README with new usage examples and setup guidelines.
 

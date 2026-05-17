@@ -304,6 +304,220 @@ const extractInnerCommands = (cmd: string): string[] => {
   return inner;
 };
 
+// ── Exec-flag extraction (fd -x, find -exec, etc.) ───────────────────
+// Tools that take a subcommand on the same arg vector hide that
+// Subcommand from rule analysis. Pull it out, substitute the user-
+// Provided search root into the placeholder(s), and feed the
+// Reconstructed command back through parseCommand so every existing
+// Bash rule (deny / scoped-rm / redirect / etc.) sees it.
+
+const HOME_VAR_RE = /^\$\{?HOME\}?(?:\/|$)/;
+
+const pathLikeToken = (t: string): boolean => {
+  if (t === '' || t === '-') {
+    return false;
+  }
+  if (t === '/' || t === '~' || t === '.' || t === '..') {
+    return true;
+  }
+  if (
+    t.startsWith('/') ||
+    t.startsWith('~') ||
+    t.startsWith('./') ||
+    t.startsWith('../') ||
+    HOME_VAR_RE.test(t)
+  ) {
+    return true;
+  }
+  return false;
+};
+
+// Rank candidate search roots by how dangerous a `cmd <root>` invocation
+// Would be. Higher wins.
+const pathDangerScore = (t: string): number => {
+  if (t === '/') {
+    return 100;
+  }
+  if (t === '~' || HOME_VAR_RE.test(t)) {
+    return 90;
+  }
+  if (/^\/(etc|usr|bin|sbin|System|Library|var|boot|root|home)(\/|$)/.test(t)) {
+    return 80;
+  }
+  if (t.startsWith('/Users/')) {
+    return 70;
+  }
+  if (t.startsWith('/') || t.startsWith('~')) {
+    return 60;
+  }
+  if (t.startsWith('../')) {
+    return 40;
+  }
+  if (t === '..' || t === '.' || t.startsWith('./')) {
+    return 10;
+  }
+  return 50;
+};
+
+interface ExecSpec {
+  // Flag tokens that introduce a nested command, e.g. `-x` / `-exec`.
+  readonly execFlags: ReadonlySet<string>;
+  // Placeholder tokens the tool substitutes with each match path.
+  readonly placeholders: ReadonlySet<string>;
+  // Walk tokens[1..execFlagIdx) and return the most-suspicious search root
+  // The tool would feed into placeholders, or `.` if nothing path-shaped
+  // Is present.
+  readonly pickRoot: (tokens: readonly string[], execFlagIdx: number) => string;
+}
+
+// Fd's flag layout: flags can appear before or after the pattern/path
+// Positionals, and some flags consume a value (-e ts, -t f, -d 3). We
+// Need to skip those value tokens, otherwise `ts` is misread as a path.
+const FD_VALUE_FLAGS: ReadonlySet<string> = new Set([
+  '-e',
+  '--extension',
+  '-t',
+  '--type',
+  '-E',
+  '--exclude',
+  '-d',
+  '--max-depth',
+  '--min-depth',
+  '--exact-depth',
+  '-c',
+  '--color',
+  '--changed-within',
+  '--changed-before',
+  '-S',
+  '--size',
+  '-o',
+  '--owner',
+  '-j',
+  '--threads',
+  '-g',
+  '--glob',
+  '--format',
+  '--max-results',
+  '--ignore-file',
+  '--search-path',
+  '--base-directory',
+  '--path-separator',
+  '--and',
+]);
+
+const pickFdSearchRoot = (tokens: readonly string[], execFlagIdx: number): string => {
+  const candidates: string[] = [];
+  let i = 1;
+  while (i < execFlagIdx) {
+    const t = tokens[i]!;
+    if (FD_VALUE_FLAGS.has(t)) {
+      i += 2;
+      continue;
+    }
+    if (t.startsWith('-')) {
+      i++;
+      continue;
+    }
+    if (pathLikeToken(t)) {
+      candidates.push(t);
+    }
+    i++;
+  }
+  if (candidates.length === 0) {
+    return '.';
+  }
+  candidates.sort((a, b) => pathDangerScore(b) - pathDangerScore(a));
+  return candidates[0]!;
+};
+
+// Find's grammar: PATHs come first, before any flag-shaped token. Once we
+// Hit a `-`-prefixed token (a test predicate or action), no more paths.
+// `find` defaults to cwd if no path is given. We collect everything
+// Path-shaped in the prefix region as candidates.
+const pickFindSearchRoot = (tokens: readonly string[], execFlagIdx: number): string => {
+  const candidates: string[] = [];
+  for (let i = 1; i < execFlagIdx; i++) {
+    const t = tokens[i]!;
+    if (t.startsWith('-')) {
+      break;
+    }
+    if (pathLikeToken(t)) {
+      candidates.push(t);
+    }
+  }
+  if (candidates.length === 0) {
+    return '.';
+  }
+  candidates.sort((a, b) => pathDangerScore(b) - pathDangerScore(a));
+  return candidates[0]!;
+};
+
+const FD_SPEC: ExecSpec = {
+  execFlags: new Set(['-x', '-X', '--exec', '--exec-batch']),
+  placeholders: new Set(['{}', '{/}', '{//}', '{.}', '{/.}']),
+  pickRoot: pickFdSearchRoot,
+};
+
+const FIND_SPEC: ExecSpec = {
+  // `-ok` / `-okdir` prompt interactively per-match, but the executed
+  // Command is still constructed from agent-controlled input, so treat
+  // It the same as `-exec`.
+  execFlags: new Set(['-exec', '-execdir', '-ok', '-okdir']),
+  placeholders: new Set(['{}']),
+  pickRoot: pickFindSearchRoot,
+};
+
+const EXEC_SPECS: Readonly<Record<string, ExecSpec>> = {
+  fd: FD_SPEC,
+  fdfind: FD_SPEC,
+  find: FIND_SPEC,
+  gfind: FIND_SPEC,
+};
+
+const substitutePlaceholders = (
+  tokens: readonly string[],
+  spec: ExecSpec,
+  root: string,
+): string[] => tokens.map((t) => (spec.placeholders.has(t) ? root : t));
+
+const extractExecCommands = (seg: Segment): string[] => {
+  const spec = EXEC_SPECS[seg.head];
+  if (spec === undefined) {
+    return [];
+  }
+  const out: string[] = [];
+  const tokens = seg.tokens;
+  for (let i = 1; i < tokens.length; i++) {
+    if (!spec.execFlags.has(tokens[i]!)) {
+      continue;
+    }
+    // Collect tokens until the exec terminator (`;` or `+`, both shared
+    // By fd and find) or end of segment. shell-quote turns `\;` into the
+    // Literal string token `;`.
+    const inner: string[] = [];
+    let j = i + 1;
+    while (j < tokens.length) {
+      const t = tokens[j]!;
+      if (t === ';' || t === '+') {
+        break;
+      }
+      inner.push(t);
+      j++;
+    }
+    if (inner.length === 0) {
+      continue;
+    }
+    const head = inner[0]!;
+    if (spec.placeholders.has(head)) {
+      continue;
+    }
+    const root = spec.pickRoot(tokens, i);
+    out.push(substitutePlaceholders(inner, spec, root).join(' '));
+    i = j;
+  }
+  return out;
+};
+
 const parseCommand = (cmd: string): Segment[] => {
   let entries: ParseEntry[];
   try {
@@ -340,6 +554,24 @@ const parseCommand = (cmd: string): Segment[] => {
   for (const sub of extractInnerCommands(cmd)) {
     for (const innerSeg of parseCommand(sub)) {
       out.push(innerSeg);
+    }
+  }
+
+  // Tools like `fd -x …` and `find -exec …` carry an inner subcommand
+  // On the same arg vector. Without extraction the executed command is
+  // Hidden and slips past every rule. Pull it out (with the user's
+  // Search root substituted into placeholders) and parse it as its own
+  // Segments so bash-deny et al. see it.
+  // Snapshot length: we push new segments into `out` from within the
+  // Loop, but should only scan the segments that existed pre-extraction
+  // To avoid re-processing extracted ones.
+  const preExtractLen = out.length;
+  for (let k = 0; k < preExtractLen; k++) {
+    const seg = out[k]!;
+    for (const sub of extractExecCommands(seg)) {
+      for (const innerSeg of parseCommand(sub)) {
+        out.push(innerSeg);
+      }
     }
   }
 

@@ -86,6 +86,57 @@ describe('bash-deny', () => {
   test('blocks rm -rf $HOME', () => {
     expect(allRules('rm -rf $HOME').deny.kind).toBe('deny');
   });
+  test('blocks fd -x running an rm -rf /', () => {
+    expect(allRules('fd -e ts -x rm -rf /').deny.kind).toBe('deny');
+  });
+  test('blocks fd -X running an rm -rf /', () => {
+    expect(allRules('fd -e ts -X rm -rf /').deny.kind).toBe('deny');
+  });
+  test('blocks fd --exec running shutdown', () => {
+    expect(allRules('fd . --exec shutdown -h now').deny.kind).toBe('deny');
+  });
+  test(String.raw`blocks fd -x with a \; terminator hiding rm -rf /`, () => {
+    expect(allRules(String.raw`fd -e ts -x rm -rf / \;`).deny.kind).toBe('deny');
+  });
+  test('allows fd -x echo {}', () => {
+    expect(allRules('fd -e ts -x echo {}').deny.kind).toBe('allow');
+  });
+  test('allows bare fd with no -x', () => {
+    expect(allRules('fd -e ts /Users/sean/dev').deny.kind).toBe('allow');
+  });
+  test('blocks fd / -x rm -rf {} (placeholder resolves to /)', () => {
+    expect(allRules('fd -e ts / -x rm -rf {}').deny.kind).toBe('deny');
+  });
+  test('blocks fd ~ -x rm -rf {} (placeholder resolves to ~)', () => {
+    expect(allRules('fd -e ts ~ -x rm -rf {}').deny.kind).toBe('deny');
+  });
+  test('blocks fd $HOME -x rm -rf {}', () => {
+    expect(allRules('fd -e ts $HOME -x rm -rf {}').deny.kind).toBe('deny');
+  });
+  test('value-taking flag -e ts is not treated as a search-root path', () => {
+    // If `ts` were misread as a root, this would not be the deny we expect
+    // From the literal `/` token; both happen to deny here, so we also
+    // Assert the fallback case below where there is no dangerous path.
+    expect(allRules('fd -e ts /tmp/scratch -x echo {}').deny.kind).toBe('allow');
+  });
+  test(String.raw`blocks find / -exec rm -rf {} \;`, () => {
+    expect(allRules(String.raw`find / -name '*.log' -exec rm -rf {} \;`).deny.kind).toBe('deny');
+  });
+  test('blocks find ~ -exec rm -rf {} +', () => {
+    expect(allRules('find ~ -type f -exec rm -rf {} +').deny.kind).toBe('deny');
+  });
+  test('blocks find -execdir running shutdown', () => {
+    expect(allRules(String.raw`find / -execdir shutdown -h now \;`).deny.kind).toBe('deny');
+  });
+  test('blocks find -ok rm -rf / (interactive variant still flagged)', () => {
+    expect(allRules(String.raw`find / -ok rm -rf {} \;`).deny.kind).toBe('deny');
+  });
+  test(String.raw`allows find /tmp/scratch -exec echo {} \;`, () => {
+    expect(allRules(String.raw`find /tmp/scratch -exec echo {} \;`).deny.kind).toBe('allow');
+  });
+  test('allows bare find with no -exec', () => {
+    expect(allRules("find /Users/sean/dev -name '*.ts'").deny.kind).toBe('allow');
+  });
   test('blocks rm -rf ~', () => {
     expect(allRules('rm -rf ~').deny.kind).toBe('deny');
   });
