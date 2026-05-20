@@ -83,6 +83,20 @@ describe('bash-deny', () => {
   test('blocks rm -rf /', () => {
     expect(allRules('rm -rf /').deny.kind).toBe('deny');
   });
+  test('rm -rf / stays denied even with # tripwire-allow bypass', () => {
+    expect(allRules('rm -rf / # tripwire-allow: yolo').deny.kind).toBe('deny');
+  });
+  test('shutdown stays denied even with bypass', () => {
+    expect(allRules('shutdown -h now # tripwire-allow: I know').deny.kind).toBe('deny');
+  });
+  test('no-verify stays denied even with bypass', () => {
+    expect(allRules('git commit --no-verify -m foo # tripwire-allow').deny.kind).toBe('deny');
+  });
+  test('bypass still works for non-listed deny rules (sudo asks anyway)', () => {
+    // Sudo is `ask`, not `deny`, but more relevant: rsync --delete is `deny`
+    // And NOT on the unbypassable list, so bypass should lift it.
+    expect(allRules('rsync --delete src/ dst/ # tripwire-allow: mirror').deny.kind).toBe('allow');
+  });
   test('blocks rm -rf $HOME', () => {
     expect(allRules('rm -rf $HOME').deny.kind).toBe('deny');
   });
@@ -206,8 +220,9 @@ describe('bash-deny', () => {
   test('allows ls', () => {
     expect(allRules('ls -la').deny.kind).toBe('allow');
   });
-  test('respects bypass marker', () => {
-    expect(allRules('rm -rf /  # tripwire-allow: lab').deny.kind).toBe('allow');
+  test('respects bypass marker on a bypassable deny rule', () => {
+    // `rsync --delete` is `deny` but not in the unbypassable set.
+    expect(allRules('rsync --delete src/ dst/  # tripwire-allow: lab').deny.kind).toBe('allow');
   });
 });
 

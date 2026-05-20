@@ -518,6 +518,56 @@ const extractExecCommands = (seg: Segment): string[] => {
   return out;
 };
 
+// Recover commands hidden inside a `sh -c '...'` / `bash -c '...'` wrapper.
+// Without this, every redirect / deny / scoped-rm rule can be trivially
+// Bypassed by wrapping the offending command in `sh -c`. The shell parser
+// Otherwise sees `sh` as the head and the script as an opaque positional
+// Arg. We pull the script out and feed it back through `parseCommand` so
+// All existing rules apply.
+const SHELL_WRAPPER_HEADS: ReadonlySet<string> = new Set([
+  'sh',
+  'bash',
+  'zsh',
+  'dash',
+  'ksh',
+  'ash',
+  '/bin/sh',
+  '/bin/bash',
+  '/bin/zsh',
+  '/bin/dash',
+  '/bin/ksh',
+  '/usr/bin/sh',
+  '/usr/bin/bash',
+  '/usr/bin/zsh',
+  '/usr/local/bin/bash',
+  '/opt/homebrew/bin/bash',
+]);
+
+const extractShellWrappedCommands = (seg: Segment): string[] => {
+  if (!SHELL_WRAPPER_HEADS.has(seg.head)) {
+    return [];
+  }
+  const tokens = seg.tokens;
+  for (let i = 1; i < tokens.length; i++) {
+    const t = tokens[i]!;
+    if (t === '-c' && i + 1 < tokens.length) {
+      return [tokens[i + 1]!];
+    }
+    // Combined short flags that include `c`: `-ec`, `-xc`, `-eu c` won't —
+    // Only treat `c` as the last char so the next token is the script.
+    if (
+      t.startsWith('-') &&
+      !t.startsWith('--') &&
+      t.endsWith('c') &&
+      t.length > 2 &&
+      i + 1 < tokens.length
+    ) {
+      return [tokens[i + 1]!];
+    }
+  }
+  return [];
+};
+
 const parseCommand = (cmd: string): Segment[] => {
   let entries: ParseEntry[];
   try {
@@ -569,6 +619,11 @@ const parseCommand = (cmd: string): Segment[] => {
   for (let k = 0; k < preExtractLen; k++) {
     const seg = out[k]!;
     for (const sub of extractExecCommands(seg)) {
+      for (const innerSeg of parseCommand(sub)) {
+        out.push(innerSeg);
+      }
+    }
+    for (const sub of extractShellWrappedCommands(seg)) {
       for (const innerSeg of parseCommand(sub)) {
         out.push(innerSeg);
       }

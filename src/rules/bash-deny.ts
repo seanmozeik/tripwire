@@ -329,18 +329,52 @@ const SPECS: readonly Spec[] = [
   },
 ];
 
+// Rules in this set ignore `# tripwire-allow` on the command line. They
+// Are catastrophic / irreversible operations and hard policy rules that
+// Have no legitimate prompt-line override. If the user genuinely needs
+// One of these to run, they should do it in a terminal themselves.
+const UNBYPASSABLE_RULES: ReadonlySet<string> = new Set([
+  // Catastrophic / irreversible
+  'rm-rf-root',
+  'rm-rf-home',
+  'fork-bomb',
+  'dd-raw-device',
+  'mkfs',
+  'kill-all',
+  'diskutil-destructive',
+  'tmutil-destructive',
+  // System control
+  'shutdown',
+  'csrutil',
+  'nvram',
+  'kextload',
+  'spctl-disable',
+  'xattr-quarantine-bypass',
+  'topgrade',
+  'softwareupdate-install',
+  'systemsetup',
+  'scutil-set',
+  'security-keychain-destructive',
+  // Hard policy rules
+  'no-verify',
+  'no-gpg-sign',
+]);
+
 const bashDeny = (segments: readonly Segment[], cmd: string): Decision => {
-  if (hasBypass(cmd)) {
-    return allow('bash-deny');
-  }
+  const bypass = hasBypass(cmd);
   for (const seg of segments) {
     for (const s of SPECS) {
-      if (s.match(seg, cmd)) {
-        return s.action === 'deny' ? deny(s.rule, s.message) : ask(s.rule, s.message);
+      if (!s.match(seg, cmd)) {
+        continue;
       }
+      if (bypass && !UNBYPASSABLE_RULES.has(s.rule)) {
+        // Caller asserted in-turn approval; honor it for this rule.
+        continue;
+      }
+      return s.action === 'deny' ? deny(s.rule, s.message) : ask(s.rule, s.message);
     }
   }
   return allow('bash-deny');
 };
 
-export { bashDeny };
+export { bashDeny, UNBYPASSABLE_RULES };
