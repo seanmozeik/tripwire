@@ -518,6 +518,42 @@ const extractExecCommands = (seg: Segment): string[] => {
   return out;
 };
 
+// ── Substitution unwrappers ──────────────────────────────────────────
+//
+// Bash hides agent-controlled content inside command substitutions and
+// Shell wrappers two different ways, and rules need two different shapes
+// Of unwrap:
+//
+//   1. `sh -c '<script>'` and `bash -c '<script>'` carry a script the
+//      Outer parser can't see into. Extracted with
+//      `extractShellWrappedCommands(seg)` and re-parsed as bash segments
+//      So every existing rule applies. Used by `parseCommand`.
+//
+//   2. `$(cat <<'TAG' ... TAG)` and `$(echo '...')` / `$(printf '...')`
+//      Compute a static string value at runtime. Rules that inspect arg
+//      Values (commit-message convention, redirect targets, etc.) need
+//      The string, not a re-parse. `unwrapStaticString(token)` returns
+//      It; pass-through if the token isn't a recognised substitution.
+//
+// Both layers cover the same underlying gap — the shell-quote parser
+// Treats substitutions as opaque sentinels — and any rule that touches
+// Agent-controlled content should route through one of them.
+
+const HEREDOC_SUBST_RE = /\$\(\s*cat\s+<<-?\s*['"]?(\w+)['"]?\s*\n([\s\S]*?)\n\s*\1\s*\)/u;
+const ECHO_PRINTF_SUBST_RE = /\$\(\s*(?:printf|echo)\s+(?:-[a-zA-Z]+\s+)*'([^']*)'/u;
+
+const unwrapStaticString = (value: string): string => {
+  const heredoc = HEREDOC_SUBST_RE.exec(value);
+  if (heredoc !== null) {
+    return heredoc[2] ?? value;
+  }
+  const printf = ECHO_PRINTF_SUBST_RE.exec(value);
+  if (printf !== null) {
+    return printf[1] ?? value;
+  }
+  return value;
+};
+
 // Recover commands hidden inside a `sh -c '...'` / `bash -c '...'` wrapper.
 // Without this, every redirect / deny / scoped-rm rule can be trivially
 // Bypassed by wrapping the offending command in `sh -c`. The shell parser
@@ -712,4 +748,4 @@ const safeScopesSummary = (
 const hasBypass = (cmd: string): boolean => /(^|\s)#\s*tripwire-allow\b/.test(cmd);
 
 export type { Redirect, Segment };
-export { hasBypass, isSafePathTarget, parseCommand, safeScopesSummary };
+export { hasBypass, isSafePathTarget, parseCommand, safeScopesSummary, unwrapStaticString };

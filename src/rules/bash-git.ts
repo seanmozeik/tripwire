@@ -1,4 +1,4 @@
-import { type Segment, hasBypass } from '../lib/bash';
+import { type Segment, hasBypass, unwrapStaticString } from '../lib/bash';
 import type { GitConfig } from '../lib/config';
 import { type Decision, allow, ask, deny, warn } from '../lib/decision';
 
@@ -111,15 +111,17 @@ const messageOf = (subArgs: readonly string[]): string | null => {
   for (let i = 0; i < subArgs.length; i++) {
     const t = subArgs[i]!;
     if (t === '-m' || t === '--message') {
-      return subArgs[i + 1] ?? null;
+      const raw = subArgs[i + 1];
+      return raw === undefined ? null : unwrapStaticString(raw);
     }
     if (t.startsWith('--message=')) {
-      return t.slice('--message='.length);
+      return unwrapStaticString(t.slice('--message='.length));
     }
     // Combined short flags like `-am`, `-ma`, `-amS` carry the message
     // In the next positional arg — same as `-m` alone.
     if (/^-[a-zA-Z]*m[a-zA-Z]*$/.test(t)) {
-      return subArgs[i + 1] ?? null;
+      const raw = subArgs[i + 1];
+      return raw === undefined ? null : unwrapStaticString(raw);
     }
   }
   return null;
