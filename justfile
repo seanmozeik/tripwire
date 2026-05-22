@@ -1,0 +1,2 @@
+check:
+	bun run check

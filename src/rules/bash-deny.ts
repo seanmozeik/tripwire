@@ -41,6 +41,13 @@ const SPECS: readonly Spec[] = [
     match: (_seg, raw) => /:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;/.test(raw),
   },
   {
+    rule: 'source-script',
+    action: 'deny',
+    message:
+      '`source` / `.` executes a file in the current shell. Refuse arbitrary sourced scripts.',
+    match: (seg) => (seg.head === 'source' || seg.head === '.') && seg.tokens.length > 1,
+  },
+  {
     rule: 'dd-raw-device',
     action: 'deny',
     message: 'dd writing to a raw block device wipes the disk. Refuse.',

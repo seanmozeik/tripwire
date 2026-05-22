@@ -256,6 +256,60 @@ const countFdPrefixRedirects = (cmd: string): number => {
   return matches?.length ?? 0;
 };
 
+const heredocDelimiterFromLine = (line: string): string | null => {
+  const match = /<<-?\s*(?:"([^"]+)"|'([^']+)'|([A-Za-z_][A-Za-z0-9_]*))/u.exec(line);
+  return match?.[1] ?? match?.[2] ?? match?.[3] ?? null;
+};
+
+const SHELL_STDIN_HEAD_RE =
+  /(?:^|[|;&]\s*)(?:\/(?:usr\/bin|bin|usr\/local\/bin|opt\/homebrew\/bin)\/)?(?:sh|bash|zsh|dash|ksh|ash)(?:\s|$)/u;
+
+const heredocFeedsShell = (line: string): boolean => SHELL_STDIN_HEAD_RE.test(line);
+
+const maskLiteralHeredocBodies = (cmd: string): string => {
+  const lines = cmd.split('\n');
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    out.push(line);
+    const delimiter = heredocDelimiterFromLine(line);
+    if (delimiter === null || heredocFeedsShell(line)) {
+      continue;
+    }
+    i++;
+    while (i < lines.length && lines[i]!.trim() !== delimiter) {
+      i++;
+    }
+    if (i < lines.length) {
+      out.push('__HEREDOC_BODY__');
+      out.push(lines[i]!);
+    }
+  }
+  return out.join('\n');
+};
+
+const extractShellHeredocCommands = (cmd: string): string[] => {
+  const lines = cmd.split('\n');
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    const delimiter = heredocDelimiterFromLine(line);
+    if (delimiter === null || !heredocFeedsShell(line)) {
+      continue;
+    }
+    const body: string[] = [];
+    i++;
+    while (i < lines.length && lines[i]!.trim() !== delimiter) {
+      body.push(lines[i]!);
+      i++;
+    }
+    if (body.length > 0) {
+      out.push(body.join('\n'));
+    }
+  }
+  return out;
+};
+
 // Extract inner commands from `$(...)`, `<(...)`, `>(...)`, and `` `...` ``.
 // Shell-quote collapses these into opaque sentinel tokens (which is correct
 // For safe-path checks — substituted output is unknown), but it also hides
@@ -661,15 +715,107 @@ const extractShellWrappedCommands = (seg: Segment): string[] => {
   return [];
 };
 
+const HEAD_RENAMING_HEADS: ReadonlySet<string> = new Set([
+  'command',
+  'exec',
+  'env',
+  'time',
+  'nohup',
+  'setsid',
+  'nice',
+  'ionice',
+  'chronic',
+  'stdbuf',
+  'unbuffer',
+  'script',
+  'taskset',
+]);
+
+const HEAD_RENAMING_VALUE_FLAGS: Readonly<Record<string, ReadonlySet<string>>> = {
+  command: new Set(),
+  env: new Set(['-u', '--unset', '-C', '--chdir', '-S', '--split-string', '--block-signal']),
+  time: new Set(['-f', '--format', '-o', '--output']),
+  nice: new Set(['-n', '--adjustment']),
+  ionice: new Set(['-c', '--class', '-n', '--classdata', '-p', '--pid']),
+  stdbuf: new Set(['-i', '--input', '-o', '--output', '-e', '--error']),
+  script: new Set(['-c', '--command']),
+  taskset: new Set(),
+};
+
+const tokenLooksLikeEnvAssignment = (token: string): boolean =>
+  /^[A-Za-z_][A-Za-z0-9_]*=.*/u.test(token);
+
+const skipHeadRenamingPrefix = (tokens: readonly string[]): number => {
+  const head = tokens[0]!;
+  const valueFlags = HEAD_RENAMING_VALUE_FLAGS[head] ?? new Set<string>();
+  let i = 1;
+  while (i < tokens.length) {
+    const token = tokens[i]!;
+    if (head === 'env' && tokenLooksLikeEnvAssignment(token)) {
+      i++;
+      continue;
+    }
+    if (valueFlags.has(token)) {
+      i += 2;
+      continue;
+    }
+    if (token.includes('=') && valueFlags.has(token.slice(0, token.indexOf('=')))) {
+      i++;
+      continue;
+    }
+    if (token.startsWith('--') && token !== '--') {
+      i++;
+      continue;
+    }
+    if (token.startsWith('-') && token !== '-') {
+      i++;
+      continue;
+    }
+    break;
+  }
+  return i;
+};
+
+const extractHeadRenamingCommands = (seg: Segment): string[] => {
+  if (!HEAD_RENAMING_HEADS.has(seg.head)) {
+    return [];
+  }
+  if (seg.head === 'script') {
+    for (let i = 1; i < seg.tokens.length - 1; i++) {
+      const token = seg.tokens[i]!;
+      if (token === '-c' || token === '--command') {
+        return [seg.tokens[i + 1]!];
+      }
+      if (token.startsWith('--command=')) {
+        return [token.slice('--command='.length)];
+      }
+    }
+  }
+  const start = skipHeadRenamingPrefix(seg.tokens);
+  const inner = seg.tokens.slice(start).join(' ');
+  return inner === '' ? [] : [inner];
+};
+
+const EVAL_HEADS: ReadonlySet<string> = new Set(['eval']);
+
+const extractEvalCommands = (seg: Segment): string[] => {
+  if (!EVAL_HEADS.has(seg.head)) {
+    return [];
+  }
+  const sub = seg.tokens.slice(1).join(' ');
+  return sub === '' ? [] : [sub];
+};
+
 const parseCommand = (cmd: string): Segment[] => {
   let entries: ParseEntry[];
+  const cmdForParsing = maskLiteralHeredocBodies(cmd);
   try {
-    entries = parse(cmd, PRESERVE_ENV);
+    entries = parse(cmdForParsing, PRESERVE_ENV);
   } catch {
     return [];
   }
   entries = mergeAmpRedirects(entries);
-  const fdBudget: FdBudget = { remaining: countFdPrefixRedirects(cmd) };
+  const fdBudget: FdBudget = { remaining: countFdPrefixRedirects(cmdForParsing) };
 
   const out: Segment[] = [];
   let buf: ParseEntry[] = [];
@@ -694,7 +840,7 @@ const parseCommand = (cmd: string): Segment[] => {
   // Outer segment's args are already opaque sentinels (safe-path-failing);
   // This catches dangerous inner commands the outer call would otherwise
   // Hide.
-  for (const sub of extractInnerCommands(cmd)) {
+  for (const sub of [...extractInnerCommands(cmd), ...extractShellHeredocCommands(cmd)]) {
     for (const innerSeg of parseCommand(sub)) {
       out.push(innerSeg);
     }
@@ -717,6 +863,16 @@ const parseCommand = (cmd: string): Segment[] => {
       }
     }
     for (const sub of extractShellWrappedCommands(seg)) {
+      for (const innerSeg of parseCommand(sub)) {
+        out.push(innerSeg);
+      }
+    }
+    for (const sub of extractHeadRenamingCommands(seg)) {
+      for (const innerSeg of parseCommand(sub)) {
+        out.push(innerSeg);
+      }
+    }
+    for (const sub of extractEvalCommands(seg)) {
       for (const innerSeg of parseCommand(sub)) {
         out.push(innerSeg);
       }

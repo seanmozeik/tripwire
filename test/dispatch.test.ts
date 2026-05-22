@@ -83,6 +83,69 @@ describe('bash-deny', () => {
   test('blocks rm -rf /', () => {
     expect(allRules('rm -rf /').deny.kind).toBe('deny');
   });
+  test('blocks eval wrapping rm -rf / in single quotes', () => {
+    expect(allRules("eval 'rm -rf /'").deny.kind).toBe('deny');
+  });
+  test('blocks eval wrapping rm -rf / in double quotes', () => {
+    expect(allRules('eval "rm -rf /"').deny.kind).toBe('deny');
+  });
+  test('blocks eval running rm -rf / from argv', () => {
+    expect(allRules('eval rm -rf /').deny.kind).toBe('deny');
+  });
+  test('blocks source of an arbitrary script', () => {
+    expect(allRules('source /tmp/whatever.sh').deny.kind).toBe('deny');
+  });
+  test('blocks dot-source of an arbitrary script', () => {
+    expect(allRules('. /tmp/whatever.sh').deny.kind).toBe('deny');
+  });
+  test('blocks env wrapping rm -rf /', () => {
+    expect(allRules('env rm -rf /').deny.kind).toBe('deny');
+  });
+  test('blocks exec wrapping rm -rf /', () => {
+    expect(allRules('exec rm -rf /').deny.kind).toBe('deny');
+  });
+  test('blocks nohup wrapping rm -rf / in background', () => {
+    expect(allRules('nohup rm -rf / &').deny.kind).toBe('deny');
+  });
+  test('blocks command wrapping rm -rf /', () => {
+    expect(allRules('command rm -rf /').deny.kind).toBe('deny');
+  });
+  test('blocks command wrapping rm -rf / after command flags', () => {
+    expect(allRules('command -p rm -rf /').deny.kind).toBe('deny');
+  });
+  test('blocks time wrapping rm -rf /', () => {
+    expect(allRules('time rm -rf /').deny.kind).toBe('deny');
+  });
+  test('blocks setsid wrapping rm -rf /', () => {
+    expect(allRules('setsid rm -rf /').deny.kind).toBe('deny');
+  });
+  test('blocks env wrapping rm -rf / after env flags and assignments', () => {
+    expect(allRules('env -i FOO=bar rm -rf /').deny.kind).toBe('deny');
+  });
+  test('blocks nice wrapping rm -rf / after priority flags', () => {
+    expect(allRules('nice -n 10 rm -rf /').deny.kind).toBe('deny');
+  });
+  test('blocks time wrapping rm -rf / after builtin flags', () => {
+    expect(allRules('time -p rm -rf /').deny.kind).toBe('deny');
+  });
+  test('allows rm -rf / as literal heredoc text redirected to a file', () => {
+    expect(allRules("cat > /tmp/x.md <<'EOF'\nrm -rf /\nEOF").deny.kind).toBe('allow');
+  });
+  test('allows rm -rf / as literal heredoc text with redirect after heredoc', () => {
+    expect(allRules("cat <<'EOF' > /tmp/x.md\nrm -rf /\nEOF").deny.kind).toBe('allow');
+  });
+  test('allows tee writing rm -rf / as literal heredoc text', () => {
+    expect(allRules("tee /tmp/x.md <<'EOF'\nrm -rf /\nEOF").deny.kind).toBe('allow');
+  });
+  test('allows printf writing rm -rf / as literal text', () => {
+    expect(allRules(String.raw`printf '%s\n' 'rm -rf /' > /tmp/x.md`).deny.kind).toBe('allow');
+  });
+  test('blocks heredoc body piped into sh', () => {
+    expect(allRules("cat <<'EOF' | sh\nrm -rf /\nEOF").deny.kind).toBe('deny');
+  });
+  test('blocks unquoted heredoc body piped into bash', () => {
+    expect(allRules('cat <<EOF | bash\nrm -rf /\nEOF').deny.kind).toBe('deny');
+  });
   test('rm -rf / stays denied even with # tripwire-allow bypass', () => {
     expect(allRules('rm -rf / # tripwire-allow: yolo').deny.kind).toBe('deny');
   });
