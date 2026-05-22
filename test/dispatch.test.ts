@@ -7,7 +7,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import { decide } from '../src';
-import { parseCommand } from '../src/lib/bash';
+import { EXEC_SPECS, parseCommand } from '../src/lib/bash';
 import type { Config, GitConfig, SafePathsConfig } from '../src/lib/config';
 import type { HookEvent } from '../src/lib/event';
 import { bashDeny } from '../src/rules/bash-deny';
@@ -283,6 +283,36 @@ describe('bash-scoped-rm', () => {
   });
   test('inner command in backticks is analyzed', () => {
     expect(allRules('echo `rm -rf /etc`').rm.kind).toBe('deny');
+  });
+  test('unquoted backtick substitution is analyzed', () => {
+    expect(parseCommand('echo `whoami`').map((seg) => seg.head)).toEqual(['echo', 'whoami']);
+  });
+  test('double-quoted dollar substitution is analyzed', () => {
+    expect(parseCommand('echo "result: $(date)"').map((seg) => seg.head)).toEqual(['echo', 'date']);
+  });
+  test('single-quoted backtick text is not analyzed', () => {
+    expect(parseCommand("echo 'literal `whoami`'").map((seg) => seg.head)).toEqual(['echo']);
+  });
+  test('double-quoted backtick text is analyzed', () => {
+    expect(parseCommand('cmd "with embedded `tick` text"').map((seg) => seg.head)).toEqual([
+      'cmd',
+      'tick',
+    ]);
+  });
+  test('single-quoted embedded backtick text is not analyzed', () => {
+    expect(parseCommand("cmd 'with embedded `tick` text'").map((seg) => seg.head)).toEqual(['cmd']);
+  });
+  test('single-quoted prompt data is not reparsed as nested commands', () => {
+    const segs = parseCommand("cdx run /repo 'class X { `constructor --fake` }'");
+
+    expect(segs.map((seg) => seg.head)).toEqual(['cdx']);
+  });
+  test('exec spec lookup does not resolve prototype keys', () => {
+    const protoKey = '__proto__';
+
+    expect(EXEC_SPECS['constructor']).toBeUndefined();
+    expect(EXEC_SPECS['toString']).toBeUndefined();
+    expect(EXEC_SPECS[protoKey]).toBeUndefined();
   });
   test('nested $(...) substitutions are analyzed', () => {
     expect(allRules('echo $(echo $(rm -rf /etc))').rm.kind).toBe('deny');

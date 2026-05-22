@@ -266,39 +266,98 @@ const countFdPrefixRedirects = (cmd: string): number => {
 // Backticks don't nest (bash needs `\` escaping for that, which we treat as
 // A literal). Process/command substitutions can nest arbitrarily — a depth
 // Counter handles the balanced parens.
-const extractInnerCommands = (cmd: string): string[] => {
-  const inner: string[] = [];
-  // Backticks: simple, non-nesting.
-  const bt = cmd.match(/`([^`]+)`/g);
-  if (bt !== null) {
-    for (const m of bt) {
-      inner.push(m.slice(1, -1));
-    }
-  }
-  // $( ), <( ), >( ) with balanced parens.
-  for (let i = 0; i < cmd.length - 1; i++) {
+const findBacktickEnd = (cmd: string, start: number): number | null => {
+  for (let i = start; i < cmd.length; i++) {
     const ch = cmd[i]!;
-    const next = cmd[i + 1]!;
-    const isSubStart = (ch === '$' || ch === '<' || ch === '>') && next === '(';
-    if (!isSubStart) {
+    if (ch === '\\') {
+      i++;
       continue;
     }
-    let depth = 1;
-    let j = i + 2;
-    while (j < cmd.length && depth > 0) {
-      const cj = cmd[j]!;
-      if (cj === '(') {
-        depth++;
-      } else if (cj === ')') {
-        depth--;
+    if (ch === '`') {
+      return i;
+    }
+  }
+  return null;
+};
+
+const findSubstitutionEnd = (cmd: string, start: number): number | null => {
+  let depth = 1;
+  let quote: 'single' | 'double' | null = null;
+  for (let j = start; j < cmd.length; j++) {
+    const cj = cmd[j]!;
+    if (cj === '\\') {
+      j++;
+      continue;
+    }
+    if (quote === 'single') {
+      if (cj === "'") {
+        quote = null;
       }
-      if (depth > 0) {
-        j++;
+      continue;
+    }
+    if (cj === "'") {
+      quote ??= 'single';
+      continue;
+    }
+    if (cj === '"') {
+      quote = quote === 'double' ? null : 'double';
+      continue;
+    }
+    if (cj === '(') {
+      depth++;
+      continue;
+    }
+    if (cj === ')') {
+      depth--;
+      if (depth === 0) {
+        return j;
       }
     }
-    if (depth === 0) {
-      inner.push(cmd.slice(i + 2, j));
-      i = j;
+  }
+  return null;
+};
+
+const extractInnerCommands = (cmd: string): string[] => {
+  const inner: string[] = [];
+  let quote: 'single' | 'double' | null = null;
+  for (let i = 0; i < cmd.length; i++) {
+    const ch = cmd[i]!;
+    if (ch === '\\') {
+      i++;
+      continue;
+    }
+    if (quote === 'single') {
+      if (ch === "'") {
+        quote = null;
+      }
+      continue;
+    }
+    if (ch === "'") {
+      quote ??= 'single';
+      continue;
+    }
+    if (ch === '"') {
+      quote = quote === 'double' ? null : 'double';
+      continue;
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(cmd, i + 1);
+      if (end !== null) {
+        inner.push(cmd.slice(i + 1, end));
+        i = end;
+      }
+      continue;
+    }
+    const next = cmd[i + 1];
+    const isCommandSubStart = ch === '$' && next === '(';
+    const isProcessSubStart = quote === null && (ch === '<' || ch === '>') && next === '(';
+    if (!isCommandSubStart && !isProcessSubStart) {
+      continue;
+    }
+    const end = findSubstitutionEnd(cmd, i + 2);
+    if (end !== null) {
+      inner.push(cmd.slice(i + 2, end));
+      i = end;
     }
   }
   return inner;
@@ -467,12 +526,10 @@ const FIND_SPEC: ExecSpec = {
   pickRoot: pickFindSearchRoot,
 };
 
-const EXEC_SPECS: Readonly<Record<string, ExecSpec>> = {
-  fd: FD_SPEC,
-  fdfind: FD_SPEC,
-  find: FIND_SPEC,
-  gfind: FIND_SPEC,
-};
+const EXEC_SPECS: Readonly<Record<string, ExecSpec>> = Object.assign(
+  Object.create(null) as Record<string, ExecSpec>,
+  { fd: FD_SPEC, fdfind: FD_SPEC, find: FIND_SPEC, gfind: FIND_SPEC },
+);
 
 const substitutePlaceholders = (
   tokens: readonly string[],
@@ -748,4 +805,11 @@ const safeScopesSummary = (
 const hasBypass = (cmd: string): boolean => /(^|\s)#\s*tripwire-allow\b/.test(cmd);
 
 export type { Redirect, Segment };
-export { hasBypass, isSafePathTarget, parseCommand, safeScopesSummary, unwrapStaticString };
+export {
+  EXEC_SPECS,
+  hasBypass,
+  isSafePathTarget,
+  parseCommand,
+  safeScopesSummary,
+  unwrapStaticString,
+};
