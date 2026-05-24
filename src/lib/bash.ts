@@ -288,6 +288,35 @@ const maskLiteralHeredocBodies = (cmd: string): string => {
   return out.join('\n');
 };
 
+// Side-channel for static-string lookup. Mask-protected rules (hasBypass,
+// Bash-deny scanning) must never see heredoc body characters — a body
+// Containing `# tripwire-allow` or `rm -rf /` would slip past them.
+// `unwrapStaticString` still needs the original body of `$(cat <<EOF ... EOF)`
+// To validate the wrapped commit message. Keep masking universal, and pass
+// The original-body lookup through a separate channel only the static-string
+// Extractor consults.
+const collectHeredocBodies = (cmd: string): ReadonlyMap<string, string> => {
+  const map = new Map<string, string>();
+  const lines = cmd.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    const delimiter = heredocDelimiterFromLine(line);
+    if (delimiter === null || heredocFeedsShell(line)) {
+      continue;
+    }
+    const body: string[] = [];
+    i++;
+    while (i < lines.length && lines[i]!.trim() !== delimiter) {
+      body.push(lines[i]!);
+      i++;
+    }
+    if (!map.has(delimiter)) {
+      map.set(delimiter, body.join('\n'));
+    }
+  }
+  return map;
+};
+
 const extractShellHeredocCommands = (cmd: string): string[] => {
   const lines = cmd.split('\n');
   const out: string[] = [];
@@ -653,10 +682,18 @@ const extractExecCommands = (seg: Segment): string[] => {
 const HEREDOC_SUBST_RE = /\$\(\s*cat\s+<<-?\s*['"]?(\w+)['"]?\s*\n([\s\S]*?)\n\s*\1\s*\)/u;
 const ECHO_PRINTF_SUBST_RE = /\$\(\s*(?:printf|echo)\s+(?:-[a-zA-Z]+\s+)*'([^']*)'/u;
 
-const unwrapStaticString = (value: string): string => {
+const unwrapStaticString = (value: string, heredocBodies?: ReadonlyMap<string, string>): string => {
   const heredoc = HEREDOC_SUBST_RE.exec(value);
   if (heredoc !== null) {
-    return heredoc[2] ?? value;
+    const captured = heredoc[2] ?? value;
+    if (heredocBodies !== undefined && captured.trim() === '__HEREDOC_BODY__') {
+      const delimiter = heredoc[1];
+      const real = delimiter === undefined ? undefined : heredocBodies.get(delimiter);
+      if (real !== undefined) {
+        return real;
+      }
+    }
+    return captured;
   }
   const printf = ECHO_PRINTF_SUBST_RE.exec(value);
   if (printf !== null) {
@@ -958,11 +995,18 @@ const safeScopesSummary = (
     .join('\n');
 };
 
-const hasBypass = (cmd: string): boolean => /(^|\s)#\s*tripwire-allow\b/.test(cmd);
+// Mask heredoc bodies before scanning, otherwise a `# tripwire-allow`
+// Smuggled inside a heredoc body (e.g. a commit message piped via
+// `$(cat <<EOF ... EOF)`) disarms every rule for the surrounding command.
+// A legitimate bypass marker sits on the actual command line, which the
+// Mask leaves intact.
+const hasBypass = (cmd: string): boolean =>
+  /(^|\s)#\s*tripwire-allow\b/.test(maskLiteralHeredocBodies(cmd));
 
 export type { Redirect, Segment };
 export {
   EXEC_SPECS,
+  collectHeredocBodies,
   hasBypass,
   isSafePathTarget,
   parseCommand,

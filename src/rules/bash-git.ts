@@ -1,4 +1,4 @@
-import { type Segment, hasBypass, unwrapStaticString } from '../lib/bash';
+import { type Segment, collectHeredocBodies, hasBypass, unwrapStaticString } from '../lib/bash';
 import type { GitConfig } from '../lib/config';
 import { type Decision, allow, ask, deny, warn } from '../lib/decision';
 
@@ -107,21 +107,24 @@ const parseGit = (seg: Segment): GitInvocation | null => {
   return null;
 };
 
-const messageOf = (subArgs: readonly string[]): string | null => {
+const messageOf = (
+  subArgs: readonly string[],
+  heredocBodies?: ReadonlyMap<string, string>,
+): string | null => {
   for (let i = 0; i < subArgs.length; i++) {
     const t = subArgs[i]!;
     if (t === '-m' || t === '--message') {
       const raw = subArgs[i + 1];
-      return raw === undefined ? null : unwrapStaticString(raw);
+      return raw === undefined ? null : unwrapStaticString(raw, heredocBodies);
     }
     if (t.startsWith('--message=')) {
-      return unwrapStaticString(t.slice('--message='.length));
+      return unwrapStaticString(t.slice('--message='.length), heredocBodies);
     }
     // Combined short flags like `-am`, `-ma`, `-amS` carry the message
     // In the next positional arg — same as `-m` alone.
     if (/^-[a-zA-Z]*m[a-zA-Z]*$/.test(t)) {
       const raw = subArgs[i + 1];
-      return raw === undefined ? null : unwrapStaticString(raw);
+      return raw === undefined ? null : unwrapStaticString(raw, heredocBodies);
     }
   }
   return null;
@@ -153,6 +156,7 @@ interface HandlerCtx {
   readonly flags: readonly string[];
   readonly positional: readonly string[];
   readonly config: GitConfig;
+  readonly heredocBodies: ReadonlyMap<string, string>;
 }
 
 type Handler = (ctx: HandlerCtx) => Decision;
@@ -306,14 +310,14 @@ const handleMerge: Handler = ({ subArgs }) => {
   return ask('git-merge', '`git merge <branch>` may create merge conflicts. Confirm intent.');
 };
 
-const handleCommit: Handler = ({ subArgs, config }) => {
+const handleCommit: Handler = ({ subArgs, config, heredocBodies }) => {
   if (has(subArgs, '--amend')) {
     return deny(
       'git-commit-amend',
       '`git commit --amend` rewrites the last commit. If it has been pushed, this causes upstream divergence. Refuse — surface the intent.',
     );
   }
-  const msg = messageOf(subArgs);
+  const msg = messageOf(subArgs, heredocBodies);
   const hasFile = has(subArgs, '-F', '--file', '-c', '-C', '--reuse-message', '--reedit-message');
   const hasNoEdit = has(subArgs, '--no-edit');
   if (msg === null && !hasFile && !hasNoEdit) {
@@ -511,7 +515,11 @@ const HANDLERS: ReadonlyMap<string, Handler> = new Map<string, Handler>([
   ],
 ]);
 
-const evalGit = (inv: GitInvocation, config: GitConfig): Decision | null => {
+const evalGit = (
+  inv: GitInvocation,
+  config: GitConfig,
+  heredocBodies: ReadonlyMap<string, string>,
+): Decision | null => {
   const { subcommand, subArgs } = inv;
   const flags = flagsOf(subArgs);
   const positional = positionalOf(subArgs);
@@ -566,7 +574,7 @@ const evalGit = (inv: GitInvocation, config: GitConfig): Decision | null => {
 
   const handler = HANDLERS.get(subcommand);
   if (handler !== undefined) {
-    return handler({ subcommand, subArgs, flags, positional, config });
+    return handler({ subcommand, subArgs, flags, positional, config, heredocBodies });
   }
   return warn(
     'git-unknown-subcommand',
@@ -578,12 +586,13 @@ const bashGit = (segments: readonly Segment[], cmd: string, config: GitConfig): 
   if (hasBypass(cmd)) {
     return allow('bash-git');
   }
+  const heredocBodies = collectHeredocBodies(cmd);
   for (const seg of segments) {
     const inv = parseGit(seg);
     if (inv === null) {
       continue;
     }
-    const d = evalGit(inv, config);
+    const d = evalGit(inv, config, heredocBodies);
     if (d !== null && d.kind !== 'allow') {
       return d;
     }

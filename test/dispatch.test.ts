@@ -704,6 +704,35 @@ describe('bash-git', () => {
   test('respects bypass marker', () => {
     expect(allRules('git reset --hard HEAD~1  # tripwire-allow: lab').git.kind).toBe('allow');
   });
+  test('allows conventional commit message piped via $(cat <<EOF...EOF) heredoc substitution', () => {
+    const cmd = `git commit -m "$(cat <<'EOF'
+fix(daemon): reap orphans on restart
+
+Body explains the reasoning over multiple lines.
+EOF
+)"`;
+    expect(allRules(cmd).git.kind).toBe('allow');
+  });
+  test('denies non-conventional commit message piped via $(cat <<EOF...EOF) heredoc substitution', () => {
+    const cmd = `git commit -m "$(cat <<'EOF'
+wip update
+EOF
+)"`;
+    expect(allRules(cmd).git.kind).toBe('deny');
+  });
+  test('a tripwire-allow marker hidden inside a heredoc body does not bypass scoped-rm', () => {
+    // The body is delivered to git as a literal commit message, but a
+    // Legitimate `# tripwire-allow` marker has to sit *on the actual command
+    // Line* — not smuggled in via heredoc content — to disarm rules. If the
+    // Mask leaks the body to `hasBypass`, the chained `rm` slips through.
+    const cmd = `git commit -m "$(cat <<'EOF'
+feat: refactor
+
+# tripwire-allow: smuggled
+EOF
+)" && rm -rf /etc/passwd`;
+    expect(allRules(cmd).rm.kind).toBe('deny');
+  });
 });
 
 describe('path-protect', () => {
