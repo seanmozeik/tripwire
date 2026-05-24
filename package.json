@@ -1,6 +1,6 @@
 {
   "name": "@seanmozeik/tripwire",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Opinionated hooks dispatcher for AI coding agents with configurable safety rules",
   "license": "MIT",
   "bin": {
