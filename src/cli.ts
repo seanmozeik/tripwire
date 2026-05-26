@@ -14,7 +14,7 @@
 //   Bun src/cli.ts install pi
 //   Bun src/cli.ts install all
 
-import { resolve } from 'node:path';
+import { dirname } from 'node:path';
 
 import { BunServices } from '@effect/platform-bun';
 import { file } from 'bun';
@@ -24,19 +24,24 @@ import { Argument, Command, Flag } from 'effect/unstable/cli';
 import pkg from '../package.json' with { type: 'json' };
 import { installAll, installClaude, installCodex, installPi } from './lib/install';
 
-// Resolve tripwire-hook path relative to this CLI's installed location
-const cliDir = import.meta.dirname;
+// Resolve tripwire-hook path at runtime using process.argv
+// This works in both script mode (bun run) and compiled/bundled mode
+const runtimeSelf = (): string => {
+  const isBunCli = /\/bun(\.exe)?$/.test(process.argv[0] ?? '');
+  return isBunCli ? process.argv[1]! : process.argv[0]!;
+};
 
-// Try installed location first (both binaries in same dir), fall back to dev location
-const installedPath = resolve(cliDir, 'tripwire-hook');
-const devPath = resolve(cliDir, '../dist/tripwire.js');
 const dispatchBin = async (): Promise<string> => {
+  const cliPath = runtimeSelf();
+  const cliDir = dirname(cliPath);
+  // Try tripwire-hook in same directory first (installed scenario)
+  const installedPath = `${cliDir}/tripwire-hook`;
   try {
-    // Check if installed path exists
     await file(installedPath).text();
     return installedPath;
   } catch {
-    return devPath;
+    // Fallback to development scenario: tripwire-hook in ../dist relative to CLI
+    return `${cliDir}/tripwire.js`;
   }
 };
 
