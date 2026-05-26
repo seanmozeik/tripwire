@@ -14,14 +14,31 @@
 //   Bun src/cli.ts install pi
 //   Bun src/cli.ts install all
 
+import { resolve } from 'node:path';
+
 import { BunServices } from '@effect/platform-bun';
+import { file } from 'bun';
 import { Effect, Option } from 'effect';
 import { Argument, Command, Flag } from 'effect/unstable/cli';
 
 import pkg from '../package.json' with { type: 'json' };
 import { installAll, installClaude, installCodex, installPi } from './lib/install';
 
-const DISPATCH_BIN = `${import.meta.dir}/../dist/tripwire.js`;
+// Resolve tripwire-hook path relative to this CLI's installed location
+const cliDir = import.meta.dirname;
+
+// Try installed location first (both binaries in same dir), fall back to dev location
+const installedPath = resolve(cliDir, 'tripwire-hook');
+const devPath = resolve(cliDir, '../dist/tripwire.js');
+const dispatchBin = async (): Promise<string> => {
+  try {
+    // Check if installed path exists
+    await file(installedPath).text();
+    return installedPath;
+  } catch {
+    return devPath;
+  }
+};
 
 interface BuiltEvent {
   hook_event_name: string;
@@ -89,10 +106,11 @@ const runTest = (config: {
   readonly stdout: string | undefined;
   readonly tool: string;
 }): Effect.Effect<void> =>
-  Effect.sync(() => {
+  Effect.gen(function* () {
     const { command, content, path, post, stderr, stdout, tool } = config;
     const event = buildEvent({ tool, post, command, path, stdout, stderr, content });
-    const result = Bun.spawnSync([DISPATCH_BIN], {
+    const bin = yield* Effect.promise(() => dispatchBin());
+    const result = Bun.spawnSync([bin], {
       stdin: new TextEncoder().encode(JSON.stringify(event)),
       timeout: 10_000,
       stdout: 'pipe',
