@@ -17,6 +17,11 @@ const BlockRuleSchema = Schema.Struct({
   ),
 });
 
+const RtkConfigSchema = Schema.Struct({
+  enabled: Schema.optional(Schema.Boolean),
+  path: Schema.optional(Schema.String),
+});
+
 const GitConfigSchema = Schema.Struct({
   protectedBranches: Schema.optional(Schema.Array(Schema.String)),
   enforceConventionalCommits: Schema.optional(Schema.Boolean),
@@ -28,6 +33,7 @@ const SafePathsConfigSchema = Schema.Struct({
 });
 
 const ConfigSchema = Schema.Struct({
+  rtk: Schema.optional(RtkConfigSchema),
   git: Schema.optional(GitConfigSchema),
   safePaths: Schema.optional(SafePathsConfigSchema),
   blockedCommands: Schema.optional(Schema.Array(BlockRuleSchema)),
@@ -56,6 +62,7 @@ const decodeConfig = (unknown: unknown): Effect.Effect<Config, Error> =>
   Schema.decodeUnknownEffect(ConfigSchema)(unknown);
 
 const getDefaultConfig = (): Config => ({
+  rtk: { enabled: false },
   git: {
     protectedBranches: ['main', 'master', 'develop', 'production', 'release'],
     enforceConventionalCommits: true,
@@ -66,6 +73,7 @@ const getDefaultConfig = (): Config => ({
 });
 
 const mergeWithDefaults = (partial: Config): Config => ({
+  rtk: partial.rtk ?? getDefaultConfig().rtk,
   git: partial.git ?? getDefaultConfig().git,
   safePaths: partial.safePaths ?? getDefaultConfig().safePaths,
   blockedCommands: partial.blockedCommands ?? getDefaultConfig().blockedCommands,
@@ -94,6 +102,7 @@ export const loadConfig = (): Effect.Effect<Config> =>
   );
 
 export type BlockRule = typeof BlockRuleSchema.Type;
+export type RtkConfig = typeof RtkConfigSchema.Type;
 export type GitConfig = typeof GitConfigSchema.Type;
 export type SafePathsConfig = typeof SafePathsConfigSchema.Type;
 export type Config = typeof ConfigSchema.Type;
