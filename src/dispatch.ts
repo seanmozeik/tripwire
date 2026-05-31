@@ -3,8 +3,7 @@
 //
 // Reads a hook event JSON payload on stdin, routes by hook_event_name +
 // Tool_name, runs rules with per-rule timeouts, merges decisions
-// (most-restrictive wins), wraps allowed Bash commands through rtk for
-// Token-saver rewriting, scans PostToolUse output for secrets via
+// (most-restrictive wins), scans PostToolUse output for secrets via
 // Betterleaks, and writes Claude Code's expected JSON response on stdout.
 //
 // Design rules:
@@ -34,7 +33,6 @@ import {
   isWriteInput,
 } from './lib/event.ts';
 import { logError } from './lib/log';
-import { runRtkRewrite } from './lib/rtk';
 import { bashDeny } from './rules/bash-deny';
 import { bashGit } from './rules/bash-git';
 import { bashNetworkInstall } from './rules/bash-network-install';
@@ -65,25 +63,6 @@ const writeAllow = (): void => {
 // Via its `turn_id` extension and downgrade output accordingly. Claude
 // Code accepts both, so we only narrow when we can confirm we're on Codex.
 const isCodex = (event: HookEvent): boolean => event.turn_id !== undefined;
-
-const writeRewriteAllow = (event: HookEvent, command: string, _reason?: string): void => {
-  // Codex's PreToolUse parser strict-rejects `updatedInput` (openai/codex
-  // #18491 — parsed but unimplemented as of codex-cli 0.12x). On Codex we
-  // Can't transparently rewrite, so pass the original command through
-  // Silently. Until #18491 lands, RTK savings are Claude-only.
-  if (isCodex(event)) {
-    writeAllow();
-    return;
-  }
-  // Claude Code: rewrite silently. We deliberately omit
-  // `permissionDecisionReason` so the model's context isn't polluted with
-  // "rtk rewrote your command" chatter every Bash call.
-  const out = {
-    continue: true,
-    hookSpecificOutput: { hookEventName: event.hook_event_name, updatedInput: { command } },
-  };
-  process.stdout.write(`${JSON.stringify(out)}\n`);
-};
 
 interface WarnOutput {
   hookEventName: string;
@@ -259,36 +238,7 @@ const decide = (event: HookEvent, config: Config = getDefaultConfig()): Decision
   return allow('no-rules');
 };
 
-const handleBashAllow = (event: HookEvent, decision: Decision, config: Config): void => {
-  // After the gate passes (allow or warn), apply rtk command-rewrite. If
-  // Rtk doesn't change the command, fall through to normal allow / warn.
-  const rtk = runRtkRewrite(event, config.rtk ?? { enabled: false });
-  const original = (event.tool_input as { command?: string } | undefined)?.command ?? '';
-  const rewritten =
-    rtk.updatedCommand !== undefined && rtk.updatedCommand !== original ? rtk.updatedCommand : null;
-
-  if (decision.kind === 'warn') {
-    if (rewritten !== null) {
-      writeWarn(event, { ...decision, rewriteCommand: rewritten });
-      return;
-    }
-    writeWarn(event, decision);
-    return;
-  }
-  if (rewritten !== null) {
-    writeRewriteAllow(event, rewritten, rtk.reason);
-    return;
-  }
-  writeAllow();
-};
-
-const handleAllow = (event: HookEvent, decision: Decision, config: Config): void => {
-  const eventName = event.hook_event_name;
-  const tool = normalizeToolName(event.tool_name ?? '');
-  if (eventName === 'PreToolUse' && tool === 'Bash') {
-    handleBashAllow(event, decision, config);
-    return;
-  }
+const handleAllow = (event: HookEvent, decision: Decision): void => {
   if (decision.kind === 'warn') {
     writeWarn(event, decision);
     return;
@@ -325,7 +275,7 @@ const program = Effect.gen(function* () {
       writePreToolGate(event.hook_event_name, decision);
       return;
     }
-    handleAllow(event, decision, config);
+    handleAllow(event, decision);
     return;
   }
 
