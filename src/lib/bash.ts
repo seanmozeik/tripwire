@@ -999,6 +999,43 @@ const extractRtkCommands = (seg: Segment): string[] => {
   return inner === '' ? [] : [inner];
 };
 
+// ── poke run wrapper ─────────────────────────────────────────────────
+// `poke run [--origin <slug>] '<cmd>'` runs <cmd> through `sh -c`, so the
+// Inner command must be re-analyzed like any other exec wrapper. Without
+// This, `poke run 'rm -rf ~'` slips past every rule as a benign `poke` call.
+// Unlike rtk, poke run takes the command as a single argument (not the
+// Positional remainder), so exactly that one token is the inner command.
+const isPokeHead = (head: string): boolean => head === 'poke' || head.endsWith('/poke');
+
+const extractPokeRunCommands = (seg: Segment): string[] => {
+  if (!isPokeHead(seg.head) || seg.tokens[1] !== 'run') {
+    return [];
+  }
+  let j = 2;
+  while (j < seg.tokens.length) {
+    const t = seg.tokens[j]!;
+    if (t === '--') {
+      j++;
+      break;
+    }
+    if (t === '--origin') {
+      j += 2;
+      continue;
+    }
+    if (t.startsWith('--') && t.includes('=')) {
+      j++;
+      continue;
+    }
+    if (t.startsWith('-') && t !== '-') {
+      j++;
+      continue;
+    }
+    break;
+  }
+  const inner = seg.tokens[j];
+  return inner === undefined || inner === '' ? [] : [inner];
+};
+
 // ── Positional-prefix wrappers ───────────────────────────────────────
 // Heads where the real command follows one or more positional arguments
 // The wrapper consumes itself: `timeout <duration> <cmd>`, `chroot <newroot>
@@ -1083,6 +1120,7 @@ const SEGMENT_EXTRACTORS: readonly ((seg: Segment) => string[])[] = [
   extractHeadRenamingCommands,
   extractEvalCommands,
   extractRtkCommands,
+  extractPokeRunCommands,
   extractPrefixWrapperCommands,
 ];
 
