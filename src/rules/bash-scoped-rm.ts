@@ -77,7 +77,7 @@ const bashScopedRm = (
     .join('\n');
   return deny(
     'destructive-outside-safe-paths',
-    `Destructive deletion outside known-safe scopes is blocked. Use \`trash\` (macOS Trash, recoverable) or \`rip\` (graveyard at ~/.local/share/graveyard, recoverable) instead. Real \`rm\` and \`find -delete\` are allowed only inside ephemeral build / cache / state directories:\n${safeScopesSummary(extraRelative, extraAbsolute)}\n\nFlagged targets:\n${detail}\n\nIf raw \`rm\` is genuinely needed, append \` # tripwire-allow: <reason>\` to the command.`,
+    `Destructive deletion outside known-safe scopes is blocked. Use \`trash\` (macOS Trash, recoverable) or \`rip\` (graveyard at /tmp/graveyard-$USER, recoverable until reboot) instead. Real \`rm\` and \`find -delete\` are allowed only inside ephemeral build / cache / state directories:\n${safeScopesSummary(extraRelative, extraAbsolute)}\n\nFlagged targets:\n${detail}\n\nIf raw \`rm\` is genuinely needed, append \` # tripwire-allow: <reason>\` to the command.`,
   );
 };
 
