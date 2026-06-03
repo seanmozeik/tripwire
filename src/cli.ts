@@ -14,6 +14,7 @@
 //   Bun src/cli.ts install pi
 //   Bun src/cli.ts install all
 
+// oxlint-disable-next-line unicorn/import-style
 import { dirname } from 'node:path';
 
 import { BunServices } from '@effect/platform-bun';
@@ -27,7 +28,7 @@ import { installAll, installClaude, installCodex, installPi } from './lib/instal
 // Resolve tripwire-hook path at runtime using process.argv
 // This works in both script mode (bun run) and compiled/bundled mode
 const runtimeSelf = (): string => {
-  const isBunCli = /\/bun(\.exe)?$/.test(process.argv[0] ?? '');
+  const isBunCli = /\/bun(?<ext>\.exe)?$/.test(process.argv[0] ?? '');
   return isBunCli ? process.argv[1]! : process.argv[0]!;
 };
 

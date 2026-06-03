@@ -30,7 +30,7 @@ const findChangeDir = (seg: Segment): string | null => {
 };
 
 const isUnsafeExtractDest = (dest: string): boolean => {
-  return dest === '/' || /^(~|\$HOME|\$\{HOME\})$/.test(dest);
+  return dest === '/' || /^(?<home>~|\$HOME|\$\{HOME\})$/.test(dest);
 };
 
 const bashTarExplosion = (segments: readonly Segment[], cmd: string): Decision => {

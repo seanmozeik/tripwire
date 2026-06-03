@@ -8,38 +8,38 @@ import { type Decision, allow, deny } from '../lib/decision';
 const PROTECTED_TARGET_RE: readonly { rule: string; pattern: RegExp; message: string }[] = [
   {
     rule: 'redirect-env',
-    pattern: /(^|\/)\.env(\.[^/]+)?$/,
+    pattern: /(?<prefix>^|\/)\.env(?<ext>\.[^/]+)?$/,
     message:
       'Refusing to write into a .env file via shell redirect / tee / cp / mv. .env files hold secrets — never overwrite from a tool call.',
   },
   {
     rule: 'redirect-dev-vars',
-    pattern: /(^|\/)\.dev\.vars(\.[^/]+)?$/,
+    pattern: /(?<prefix>^|\/)\.dev\.vars(?<ext>\.[^/]+)?$/,
     message: 'Refusing to write into .dev.vars (Cloudflare/Wrangler secrets).',
   },
   {
     rule: 'redirect-ssh',
-    pattern: /(^|\/)\.ssh\//,
+    pattern: /(?<prefix>^|\/)\.ssh\//,
     message: 'Refusing to write into ~/.ssh/ via shell.',
   },
   {
     rule: 'redirect-key',
-    pattern: /\.(pem|key|p12|pfx)$/i,
+    pattern: /\.(?<ext>pem|key|p12|pfx)$/i,
     message: 'Refusing to overwrite a private-key-shaped file via shell.',
   },
   {
     rule: 'redirect-aws-credentials',
-    pattern: /(^|\/)\.aws\/credentials$/,
+    pattern: /(?<prefix>^|\/)\.aws\/credentials$/,
     message: 'Refusing to write into ~/.aws/credentials via shell.',
   },
   {
     rule: 'redirect-netrc',
-    pattern: /(^|\/)\.netrc$/,
+    pattern: /(?<prefix>^|\/)\.netrc$/,
     message: 'Refusing to write into ~/.netrc via shell.',
   },
   {
     rule: 'redirect-block-device',
-    pattern: /^\/dev\/(sd|disk|nvme|rdisk)/i,
+    pattern: /^\/dev\/(?<type>sd|disk|nvme|rdisk)/i,
     message: 'Redirecting into a raw block device wipes the disk. Refuse.',
   },
 ];

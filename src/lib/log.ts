@@ -1,5 +1,6 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
+// oxlint-disable-next-line unicorn/import-style
 import { dirname } from 'node:path';
 
 const LOG_PATH = `${homedir()}/.claude/tripwire.log`;

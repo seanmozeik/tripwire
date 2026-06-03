@@ -257,8 +257,13 @@ const countFdPrefixRedirects = (cmd: string): number => {
 };
 
 const heredocDelimiterFromLine = (line: string): string | null => {
-  const match = /<<-?\s*(?:"([^"]+)"|'([^']+)'|([A-Za-z_][A-Za-z0-9_]*))/u.exec(line);
-  return match?.[1] ?? match?.[2] ?? match?.[3] ?? null;
+  const match =
+    /<<-?\s*(?:"(?<quoted>[^"]+)"|'(?<single>[^']+)'|(?<unquoted>[A-Za-z_][A-Za-z0-9_]*))/u.exec(
+      line,
+    );
+  return (
+    match?.groups?.['quoted'] ?? match?.groups?.['single'] ?? match?.groups?.['unquoted'] ?? null
+  );
 };
 
 const SHELL_STDIN_HEAD_RE =
@@ -483,7 +488,7 @@ const pathDangerScore = (t: string): number => {
   if (t === '~' || HOME_VAR_RE.test(t)) {
     return 90;
   }
-  if (/^\/(etc|usr|bin|sbin|System|Library|var|boot|root|home)(\/|$)/.test(t)) {
+  if (/^\/(?<dir>etc|usr|bin|sbin|System|Library|var|boot|root|home)(?<suffix>\/|$)/.test(t)) {
     return 80;
   }
   if (t.startsWith('/Users/')) {
@@ -679,15 +684,16 @@ const extractExecCommands = (seg: Segment): string[] => {
 // Treats substitutions as opaque sentinels — and any rule that touches
 // Agent-controlled content should route through one of them.
 
-const HEREDOC_SUBST_RE = /\$\(\s*cat\s+<<-?\s*['"]?(\w+)['"]?\s*\n([\s\S]*?)\n\s*\1\s*\)/u;
-const ECHO_PRINTF_SUBST_RE = /\$\(\s*(?:printf|echo)\s+(?:-[a-zA-Z]+\s+)*'([^']*)'/u;
+const HEREDOC_SUBST_RE =
+  /\$\(\s*cat\s+<<-?\s*['"]?(?<delimiter>\w+)['"]?\s*\n(?<body>[\s\S]*?)\n\s*\k<delimiter>\s*\)/u;
+const ECHO_PRINTF_SUBST_RE = /\$\(\s*(?:printf|echo)\s+(?:-[a-zA-Z]+\s+)*'(?<content>[^']*)'/u;
 
 const unwrapStaticString = (value: string, heredocBodies?: ReadonlyMap<string, string>): string => {
   const heredoc = HEREDOC_SUBST_RE.exec(value);
   if (heredoc !== null) {
-    const captured = heredoc[2] ?? value;
+    const captured = heredoc.groups?.['body'] ?? value;
     if (heredocBodies !== undefined && captured.trim() === '__HEREDOC_BODY__') {
-      const delimiter = heredoc[1];
+      const delimiter = heredoc.groups?.['delimiter'];
       const real = delimiter === undefined ? undefined : heredocBodies.get(delimiter);
       if (real !== undefined) {
         return real;
@@ -697,7 +703,7 @@ const unwrapStaticString = (value: string, heredocBodies?: ReadonlyMap<string, s
   }
   const printf = ECHO_PRINTF_SUBST_RE.exec(value);
   if (printf !== null) {
-    return printf[1] ?? value;
+    return printf.groups?.['content'] ?? value;
   }
   return value;
 };
@@ -1225,7 +1231,7 @@ const safeScopesSummary = (
 // A legitimate bypass marker sits on the actual command line, which the
 // Mask leaves intact.
 const hasBypass = (cmd: string): boolean =>
-  /(^|\s)#\s*tripwire-allow\b/.test(maskLiteralHeredocBodies(cmd));
+  /(?<prefix>^|\s)#\s*tripwire-allow\b/.test(maskLiteralHeredocBodies(cmd));
 
 export type { Redirect, Segment };
 export {

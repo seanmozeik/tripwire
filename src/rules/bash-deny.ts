@@ -32,7 +32,7 @@ const SPECS: readonly Spec[] = [
     match: (seg) =>
       seg.head === 'rm' &&
       flagPresent(seg, '-rf', '-fr', '-Rf', '-fR') &&
-      seg.tokens.some((t) => /^(~|\$HOME|\$\{HOME\})$/.test(t)),
+      seg.tokens.some((t) => /^(?<home>~|\$HOME|\$\{HOME\})$/.test(t)),
   },
   {
     rule: 'fork-bomb',
@@ -51,13 +51,14 @@ const SPECS: readonly Spec[] = [
     rule: 'dd-raw-device',
     action: 'deny',
     message: 'dd writing to a raw block device wipes the disk. Refuse.',
-    match: (seg) => seg.head === 'dd' && /\bof=\/dev\/(disk|sd|nvme|rdisk)/i.test(argsJoined(seg)),
+    match: (seg) =>
+      seg.head === 'dd' && /\bof=\/dev\/(?<type>disk|sd|nvme|rdisk)/i.test(argsJoined(seg)),
   },
   {
     rule: 'mkfs',
     action: 'deny',
     message: 'mkfs formats a filesystem. Refuse.',
-    match: (seg) => /^mkfs(\.[a-z0-9]+)?$/i.test(seg.head),
+    match: (seg) => /^mkfs(?<ext>\.[a-z0-9]+)?$/i.test(seg.head),
   },
   {
     rule: 'kill-all',

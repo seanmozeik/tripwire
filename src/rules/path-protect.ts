@@ -1,3 +1,4 @@
+// oxlint-disable-next-line unicorn/import-style
 import { resolve } from 'node:path';
 
 import { type Decision, allow, deny } from '../lib/decision';
@@ -11,39 +12,47 @@ interface Spec {
 
 const protections: readonly Spec[] = [
   {
-    pattern: /(^|\/)\.env(\.[^/]+)?$/,
+    pattern: /(?<prefix>^|\/)\.env(?<ext>\.[^/]+)?$/,
     rule: 'env-file',
     message:
       '.env files hold secrets that should never be sent to the model. Refuse to write or edit. If an example is needed, create .env.example with redacted placeholders.',
   },
   {
-    pattern: /(^|\/)\.dev\.vars(\.[^/]+)?$/,
+    pattern: /(?<prefix>^|\/)\.dev\.vars(?<ext>\.[^/]+)?$/,
     rule: 'dev-vars',
     message: '.dev.vars holds Cloudflare/Wrangler secrets. Do not modify.',
   },
-  { pattern: /(^|\/)\.ssh\//, rule: 'ssh-dir', message: 'Never write into ~/.ssh/. Refuse.' },
   {
-    pattern: /(^|\/)(id_rsa|id_ed25519|id_ecdsa|id_dsa)(\.pub)?$/,
+    pattern: /(?<prefix>^|\/)\.ssh\//,
+    rule: 'ssh-dir',
+    message: 'Never write into ~/.ssh/. Refuse.',
+  },
+  {
+    pattern: /(?<prefix>^|\/)(?<key>id_rsa|id_ed25519|id_ecdsa|id_dsa)(?<pub>\.pub)?$/,
     rule: 'ssh-key',
     message: 'SSH key file. Refuse.',
   },
   {
-    pattern: /\.(pem|key|p12|pfx)$/i,
+    pattern: /\.(?<ext>pem|key|p12|pfx)$/i,
     rule: 'private-key',
     message:
       'Private key file. Refuse to overwrite. If generating a new key, use a different filename and let the user review.',
   },
   {
-    pattern: /(^|\/)secrets?\.(json|ya?ml|toml|env)$/i,
+    pattern: /(?<prefix>^|\/)secrets?\.(?<ext>json|ya?ml|toml|env)$/i,
     rule: 'secrets-file',
     message: 'Secrets file. Refuse.',
   },
   {
-    pattern: /(^|\/)\.aws\/credentials$/,
+    pattern: /(?<prefix>^|\/)\.aws\/credentials$/,
     rule: 'aws-credentials',
     message: 'AWS credentials file. Refuse.',
   },
-  { pattern: /(^|\/)\.netrc$/, rule: 'netrc', message: '.netrc holds host credentials. Refuse.' },
+  {
+    pattern: /(?<prefix>^|\/)\.netrc$/,
+    rule: 'netrc',
+    message: '.netrc holds host credentials. Refuse.',
+  },
 ];
 
 const pathProtect = (input: EditInput | WriteInput): Decision => {

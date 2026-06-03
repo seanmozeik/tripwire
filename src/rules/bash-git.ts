@@ -38,7 +38,7 @@ const getProtectedBranches = (config: GitConfig): readonly string[] =>
 
 // Conventional Commits 1.0.0 — type(scope)?(!)?: description
 const CONVENTIONAL_RE =
-  /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([\w./\- ]+\))?!?:\s+\S/;
+  /^(?<type>feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(?<scope>\([\w./\- ]+\))?!?:\s+\S/;
 
 const PRE_SUB_FLAG_TAKES_VALUE: ReadonlySet<string> = new Set([
   '-C',

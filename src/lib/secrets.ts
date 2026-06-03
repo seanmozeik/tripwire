@@ -16,6 +16,7 @@
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+// oxlint-disable-next-line unicorn/import-style
 import { join } from 'node:path';
 
 interface BetterleaksFinding {

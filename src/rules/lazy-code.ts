@@ -20,21 +20,21 @@ const STUB_RE: readonly RegExp[] = [
   /\btemp fix\b/i,
   /\bfallback\b/i,
   /\bplaceholder\b/i,
-  /\bbackwards?[ -]?compat(ibility)?\b/i,
+  /\bbackwards?[ -]?compat(?<ibility>ibility)?\b/i,
   /\bfor later\b/i,
   /\blater on\b/i,
   /\bget back to\b/i,
   /\bI'?ll fix\b/i,
   /\bto be implemented\b/i,
-  /\bnot yet (implemented|done)\b/i,
+  /\bnot yet (?<state>implemented|done)\b/i,
   /\bstubbed\b/i,
 ];
 
 const CODE_EXT_RE =
-  /\.(ts|tsx|js|jsx|mjs|cjs|py|rs|go|rb|java|kt|swift|c|cc|cpp|h|hpp|cs|php|sh|zsh|bash|lua|ex|exs|clj|scala|dart)$/i;
+  /\.(?<ext>ts|tsx|js|jsx|mjs|cjs|py|rs|go|rb|java|kt|swift|c|cc|cpp|h|hpp|cs|php|sh|zsh|bash|lua|ex|exs|clj|scala|dart)$/i;
 
 const TEST_PATH_RE =
-  /(^|\/)(__tests__|tests?|spec|fixtures?|mocks?|__mocks__|stories)(\/|$)|\.(test|spec|fixture|mock|stories)\.[^/]+$/i;
+  /(?<prefix>^|\/)(?<dir>__tests__|tests?|spec|fixtures?|mocks?|__mocks__|stories)(?<suffix>\/|$)|\.(?<ext>test|spec|fixture|mock|stories)\.[^/]+$/i;
 
 // Comment-syntax-agnostic. Works in `//`, `#`, `--`, `/* */`, `<!-- -->`,
 // `;`, `%`, etc.
