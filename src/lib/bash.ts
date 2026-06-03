@@ -752,6 +752,13 @@ const extractShellWrappedCommands = (seg: Segment): string[] => {
   return [];
 };
 
+// Heads that take `[flags] <command> [args]` on the same arg vector: the
+// First non-flag token after the prefix is the real command. `sudo`/`doas`
+// (privilege escalation), `xargs` (stdin-driven exec), and `watch` (repeated
+// Exec) all hide a sibling command this way, so the same unwrap that handles
+// `command`/`env`/`nohup` applies. `sudo` is also matched by bash-deny's
+// `ask` rule on the outer segment — both fire, and the more-restrictive
+// Interior decision (e.g. `sudo rm -rf /` → deny) wins on merge.
 const HEAD_RENAMING_HEADS: ReadonlySet<string> = new Set([
   'command',
   'exec',
@@ -766,6 +773,10 @@ const HEAD_RENAMING_HEADS: ReadonlySet<string> = new Set([
   'unbuffer',
   'script',
   'taskset',
+  'sudo',
+  'doas',
+  'xargs',
+  'watch',
 ]);
 
 const HEAD_RENAMING_VALUE_FLAGS: Readonly<Record<string, ReadonlySet<string>>> = {
@@ -777,6 +788,52 @@ const HEAD_RENAMING_VALUE_FLAGS: Readonly<Record<string, ReadonlySet<string>>> =
   stdbuf: new Set(['-i', '--input', '-o', '--output', '-e', '--error']),
   script: new Set(['-c', '--command']),
   taskset: new Set(),
+  sudo: new Set([
+    '-u',
+    '--user',
+    '-g',
+    '--group',
+    '-C',
+    '--close-from',
+    '-D',
+    '--chdir',
+    '-h',
+    '--host',
+    '-p',
+    '--prompt',
+    '-r',
+    '--role',
+    '-t',
+    '--type',
+    '-U',
+    '--other-user',
+    '-R',
+    '--chroot',
+    '-T',
+    '--command-timeout',
+  ]),
+  doas: new Set(['-a', '-C', '-u']),
+  xargs: new Set([
+    '-I',
+    '-i',
+    '-J',
+    '-n',
+    '--max-args',
+    '-P',
+    '--max-procs',
+    '-s',
+    '--max-chars',
+    '-L',
+    '--max-lines',
+    '-E',
+    '--eof',
+    '-d',
+    '--delimiter',
+    '-a',
+    '--arg-file',
+    '--replace',
+  ]),
+  watch: new Set(['-n', '--interval']),
 };
 
 const tokenLooksLikeEnvAssignment = (token: string): boolean =>
@@ -843,6 +900,186 @@ const extractEvalCommands = (seg: Segment): string[] => {
   return sub === '' ? [] : [sub];
 };
 
+// ── rtk (token-optimizing CLI proxy) ─────────────────────────────────
+// Rtk wraps real commands so their output is filtered before reaching the
+// Agent's context, and Codex auto-prepends it. The wrapper hides the real
+// Command from every rule: `rtk proxy rm -rf /` parses with head `rtk` and
+// The destructive `rm` buried in opaque positional args. Strip the `rtk`
+// Prefix and reconstruct the interior command so the existing rules decide
+// On what actually runs.
+//
+// Grammar: `rtk [global-opts] <subcommand> [args]`. Two subcommand classes
+// Exec a sibling command:
+//   • wrapper subs — the keyword is dropped, the remainder is an arbitrary
+//     Command: `run` (also `-c <string>`), `proxy`, `err`, `test`, `summary`.
+//   • tool-proxy subs — the keyword *is* the binary: `git`, `find`, `npm`,
+//     `docker`, … Reconstructing from the subcommand onward yields the real
+//     Invocation (`git push …`, `find … -delete`). rtk-internal filters that
+//     Aren't real binaries (`gain`, `config`, `diff`, …) reconstruct to inert
+//     Heads no rule matches, so no allowlist is needed.
+const RTK_WRAPPER_SUBCOMMANDS: ReadonlySet<string> = new Set([
+  'run',
+  'proxy',
+  'err',
+  'test',
+  'summary',
+]);
+
+const isRtkHead = (head: string): boolean => head === 'rtk' || head.endsWith('/rtk');
+
+const skipRtkGlobalFlags = (tokens: readonly string[]): number => {
+  // Rtk's global options (`-v`/`-vv`/`--verbose`, `--ultra-compact`,
+  // `--skip-env`) are all boolean, so any leading flag token can be skipped.
+  let i = 1;
+  while (i < tokens.length) {
+    const t = tokens[i]!;
+    if (t.startsWith('-') && t !== '-' && t !== '--') {
+      i++;
+      continue;
+    }
+    break;
+  }
+  return i;
+};
+
+const dashCommandArg = (tokens: readonly string[], start: number): string | null => {
+  for (let k = start; k < tokens.length; k++) {
+    const t = tokens[k]!;
+    if ((t === '-c' || t === '--command') && k + 1 < tokens.length) {
+      return tokens[k + 1]!;
+    }
+    if (t.startsWith('--command=')) {
+      return t.slice('--command='.length);
+    }
+  }
+  return null;
+};
+
+const extractRtkCommands = (seg: Segment): string[] => {
+  if (!isRtkHead(seg.head)) {
+    return [];
+  }
+  const subIdx = skipRtkGlobalFlags(seg.tokens);
+  const sub = seg.tokens[subIdx];
+  if (sub === undefined) {
+    return [];
+  }
+  if (RTK_WRAPPER_SUBCOMMANDS.has(sub)) {
+    // `rtk run -c '<cmd>'` carries the command in a flag value.
+    const viaFlag = dashCommandArg(seg.tokens, subIdx + 1);
+    if (viaFlag !== null) {
+      return viaFlag === '' ? [] : [viaFlag];
+    }
+    // Otherwise the command is the positional remainder after the keyword,
+    // Skipping any wrapper-local boolean flags.
+    let j = subIdx + 1;
+    while (j < seg.tokens.length) {
+      const t = seg.tokens[j]!;
+      if (t === '--') {
+        j++;
+        break;
+      }
+      if (t.startsWith('-') && t !== '-') {
+        j++;
+        continue;
+      }
+      break;
+    }
+    const inner = seg.tokens.slice(j).join(' ');
+    return inner === '' ? [] : [inner];
+  }
+  // Tool-proxy subcommand: the subcommand token is the real binary name.
+  const inner = seg.tokens.slice(subIdx).join(' ');
+  return inner === '' ? [] : [inner];
+};
+
+// ── Positional-prefix wrappers ───────────────────────────────────────
+// Heads where the real command follows one or more positional arguments
+// The wrapper consumes itself: `timeout <duration> <cmd>`, `chroot <newroot>
+// <cmd>`, `flock <lockfile> <cmd>` (or `flock <lockfile> -c '<cmd>'`), and
+// `su [user] -c '<cmd>'`. Skip the flag region, drop the wrapper's own
+// Positionals, and the remainder is the command.
+interface PrefixWrapperSpec {
+  readonly valueFlags: ReadonlySet<string>;
+  // Positional args the wrapper consumes before the command (duration, newroot…).
+  readonly skipPositionals: number;
+  // Whether the command can also arrive via `-c <string>` (su, flock).
+  readonly dashCommand: boolean;
+}
+
+const PREFIX_WRAPPER_SPECS: Readonly<Record<string, PrefixWrapperSpec>> = {
+  timeout: {
+    valueFlags: new Set(['-s', '--signal', '-k', '--kill-after']),
+    skipPositionals: 1,
+    dashCommand: false,
+  },
+  gtimeout: {
+    valueFlags: new Set(['-s', '--signal', '-k', '--kill-after']),
+    skipPositionals: 1,
+    dashCommand: false,
+  },
+  chroot: {
+    valueFlags: new Set(['--userspec', '--groups']),
+    skipPositionals: 1,
+    dashCommand: false,
+  },
+  flock: {
+    valueFlags: new Set(['-w', '--wait', '--timeout', '-E', '--conflict-exit-code']),
+    skipPositionals: 1,
+    dashCommand: true,
+  },
+  su: { valueFlags: new Set(), skipPositionals: 0, dashCommand: true },
+};
+
+const extractPrefixWrapperCommands = (seg: Segment): string[] => {
+  const spec = PREFIX_WRAPPER_SPECS[seg.head];
+  if (spec === undefined) {
+    return [];
+  }
+  if (spec.dashCommand) {
+    const viaFlag = dashCommandArg(seg.tokens, 1);
+    if (viaFlag !== null) {
+      return viaFlag === '' ? [] : [viaFlag];
+    }
+  }
+  let i = 1;
+  while (i < seg.tokens.length) {
+    const t = seg.tokens[i]!;
+    if (spec.valueFlags.has(t)) {
+      i += 2;
+      continue;
+    }
+    if (t.includes('=') && spec.valueFlags.has(t.slice(0, t.indexOf('=')))) {
+      i++;
+      continue;
+    }
+    if (t === '--') {
+      i++;
+      break;
+    }
+    if (t.startsWith('-') && t !== '-') {
+      i++;
+      continue;
+    }
+    break;
+  }
+  i += spec.skipPositionals;
+  const inner = seg.tokens.slice(i).join(' ');
+  return inner === '' ? [] : [inner];
+};
+
+// Each extractor pulls the inner command(s) a wrapper hides on its own arg
+// Vector, to be re-parsed as additional segments so every rule sees what
+// Actually runs. Order is irrelevant — all results are unioned into `out`.
+const SEGMENT_EXTRACTORS: readonly ((seg: Segment) => string[])[] = [
+  extractExecCommands,
+  extractShellWrappedCommands,
+  extractHeadRenamingCommands,
+  extractEvalCommands,
+  extractRtkCommands,
+  extractPrefixWrapperCommands,
+];
+
 const parseCommand = (cmd: string): Segment[] => {
   let entries: ParseEntry[];
   const cmdForParsing = maskLiteralHeredocBodies(cmd);
@@ -894,24 +1131,11 @@ const parseCommand = (cmd: string): Segment[] => {
   const preExtractLen = out.length;
   for (let k = 0; k < preExtractLen; k++) {
     const seg = out[k]!;
-    for (const sub of extractExecCommands(seg)) {
-      for (const innerSeg of parseCommand(sub)) {
-        out.push(innerSeg);
-      }
-    }
-    for (const sub of extractShellWrappedCommands(seg)) {
-      for (const innerSeg of parseCommand(sub)) {
-        out.push(innerSeg);
-      }
-    }
-    for (const sub of extractHeadRenamingCommands(seg)) {
-      for (const innerSeg of parseCommand(sub)) {
-        out.push(innerSeg);
-      }
-    }
-    for (const sub of extractEvalCommands(seg)) {
-      for (const innerSeg of parseCommand(sub)) {
-        out.push(innerSeg);
+    for (const extract of SEGMENT_EXTRACTORS) {
+      for (const sub of extract(seg)) {
+        for (const innerSeg of parseCommand(sub)) {
+          out.push(innerSeg);
+        }
       }
     }
   }

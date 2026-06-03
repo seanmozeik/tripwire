@@ -1,5 +1,5 @@
 import { type Segment, hasBypass } from '../lib/bash';
-import { type Decision, allow, ask, deny } from '../lib/decision';
+import { type Decision, allow, ask, deny, merge } from '../lib/decision';
 
 interface Spec {
   readonly rule: string;
@@ -369,6 +369,11 @@ const UNBYPASSABLE_RULES: ReadonlySet<string> = new Set([
 
 const bashDeny = (segments: readonly Segment[], cmd: string): Decision => {
   const bypass = hasBypass(cmd);
+  // Collect the first matching spec per segment, then return the most
+  // Restrictive across all of them. Returning the first match outright lets
+  // A weaker `ask` on an early segment (e.g. the outer `sudo`) shadow a
+  // `deny` on a later unwrapped segment (e.g. the interior `shutdown`).
+  const hits: Decision[] = [];
   for (const seg of segments) {
     for (const s of SPECS) {
       if (!s.match(seg, cmd)) {
@@ -378,10 +383,11 @@ const bashDeny = (segments: readonly Segment[], cmd: string): Decision => {
         // Caller asserted in-turn approval; honor it for this rule.
         continue;
       }
-      return s.action === 'deny' ? deny(s.rule, s.message) : ask(s.rule, s.message);
+      hits.push(s.action === 'deny' ? deny(s.rule, s.message) : ask(s.rule, s.message));
+      break;
     }
   }
-  return allow('bash-deny');
+  return hits.length === 0 ? allow('bash-deny') : merge(hits);
 };
 
 export { bashDeny, UNBYPASSABLE_RULES };

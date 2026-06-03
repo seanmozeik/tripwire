@@ -813,3 +813,91 @@ describe('lazy-code', () => {
     expect(d.kind).toBe('allow');
   });
 });
+
+describe('interior-command wrappers (rtk / privilege / exec)', () => {
+  // ── rtk: strip the proxy prefix, decide on the interior command ──────
+  test('rtk proxy unwraps rm -rf / (MTA-75/79)', () => {
+    expect(allRules('rtk proxy rm -rf /').deny.kind).toBe('deny');
+  });
+  test('rtk proxy rm !! is flagged as destructive (MTA-79)', () => {
+    const d = allRules('rtk proxy rm !!');
+    expect(d.rm.kind).toBe('deny');
+    expect(d.rm.rule).toBe('destructive-outside-safe-paths');
+  });
+  test('rtk run -c unwraps a shell-string command', () => {
+    expect(allRules("rtk run -c 'rm -rf /'").deny.kind).toBe('deny');
+  });
+  test('rtk run unwraps a positional command', () => {
+    expect(allRules('rtk run rm -rf /').deny.kind).toBe('deny');
+  });
+  test('rtk err / test / summary unwrap their command', () => {
+    expect(allRules('rtk err rm -rf /').deny.kind).toBe('deny');
+    expect(allRules('rtk summary rm -rf /').deny.kind).toBe('deny');
+  });
+  test('rtk honours global flags before the subcommand', () => {
+    expect(allRules('rtk -v --ultra-compact proxy rm -rf /').deny.kind).toBe('deny');
+  });
+  test('rtk git push to a protected branch is denied via the proxy', () => {
+    const d = allRules('rtk git push origin main');
+    expect(d.git.kind).toBe('deny');
+    expect(d.git.rule).toBe('git-push-protected');
+  });
+  test('rtk absolute-path head is still unwrapped', () => {
+    expect(allRules('/opt/homebrew/bin/rtk proxy rm -rf /').deny.kind).toBe('deny');
+  });
+  test('rtk on a harmless interior command stays allowed', () => {
+    expect(allRules('rtk git status').deny.kind).toBe('allow');
+    expect(allRules('rtk find . -name foo').deny.kind).toBe('allow');
+  });
+
+  // ── privilege escalation: inspect what runs under sudo/doas/su ───────
+  test('sudo wrapping rm -rf / is denied (interior inspected)', () => {
+    expect(allRules('sudo rm -rf /').deny.kind).toBe('deny');
+  });
+  test('sudo with flags before the command still unwraps', () => {
+    expect(allRules('sudo -u root -- rm -rf /').deny.kind).toBe('deny');
+  });
+  test('plain sudo apt still asks (no regression)', () => {
+    expect(allRules('sudo apt install foo').deny.kind).toBe('ask');
+  });
+  test('doas wrapping rm -rf / is denied', () => {
+    expect(allRules('doas rm -rf /').deny.kind).toBe('deny');
+  });
+  test('su -c unwraps the command string', () => {
+    expect(allRules("su -c 'rm -rf /'").deny.kind).toBe('deny');
+    expect(allRules("su root -c 'rm -rf /'").deny.kind).toBe('deny');
+  });
+
+  // ── stdin / repeat / scheduling exec wrappers ───────────────────────
+  test('xargs wrapping rm -rf /etc is flagged', () => {
+    expect(allRules('find . | xargs rm -rf /etc').rm.kind).toBe('deny');
+  });
+  test('xargs with -I before the command unwraps', () => {
+    expect(allRules('echo x | xargs -I {} rm -rf /').deny.kind).toBe('deny');
+  });
+  test('watch -n wrapping rm -rf / unwraps', () => {
+    expect(allRules('watch -n 5 rm -rf /').deny.kind).toBe('deny');
+  });
+
+  // ── positional-prefix wrappers: timeout / chroot / flock ────────────
+  test('timeout <duration> unwraps the command', () => {
+    expect(allRules('timeout 5 rm -rf /').deny.kind).toBe('deny');
+  });
+  test('timeout with signal flags before the duration unwraps', () => {
+    expect(allRules('timeout -s KILL 10 rm -rf /').deny.kind).toBe('deny');
+  });
+  test('chroot <newroot> unwraps the command', () => {
+    expect(allRules('chroot /mnt rm -rf /').deny.kind).toBe('deny');
+  });
+  test('flock <lockfile> <command> unwraps', () => {
+    expect(allRules('flock /tmp/lock rm -rf /').deny.kind).toBe('deny');
+  });
+  test('flock -c unwraps the command string', () => {
+    expect(allRules("flock /tmp/lock -c 'rm -rf /'").deny.kind).toBe('deny');
+  });
+
+  // ── nested wrappers compose ─────────────────────────────────────────
+  test('sudo timeout rm -rf / unwraps both layers', () => {
+    expect(allRules('sudo timeout 5 rm -rf /').deny.kind).toBe('deny');
+  });
+});
