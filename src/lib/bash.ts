@@ -1000,11 +1000,11 @@ const extractRtkCommands = (seg: Segment): string[] => {
 };
 
 // ── poke run wrapper ─────────────────────────────────────────────────
-// `poke run [--origin <slug>] '<cmd>'` runs <cmd> through `sh -c`, so the
-// Inner command must be re-analyzed like any other exec wrapper. Without
-// This, `poke run 'rm -rf ~'` slips past every rule as a benign `poke` call.
-// Unlike rtk, poke run takes the command as a single argument (not the
-// Positional remainder), so exactly that one token is the inner command.
+// `poke run [--origin <slug>] -- <argv...>` spawns <argv> directly (Bun.spawn,
+// No shell), so the argv IS the executed command and must be re-analyzed like
+// Any other exec wrapper. Without this, `poke run -- rm -rf ~` slips past every
+// Rule as a benign `poke` call. The command is the whole positional remainder
+// After the wrapper's own flags / `--`, joined back into a re-parseable string.
 const isPokeHead = (head: string): boolean => head === 'poke' || head.endsWith('/poke');
 
 const extractPokeRunCommands = (seg: Segment): string[] => {
@@ -1032,8 +1032,8 @@ const extractPokeRunCommands = (seg: Segment): string[] => {
     }
     break;
   }
-  const inner = seg.tokens[j];
-  return inner === undefined || inner === '' ? [] : [inner];
+  const inner = seg.tokens.slice(j).join(' ');
+  return inner === '' ? [] : [inner];
 };
 
 // ── Positional-prefix wrappers ───────────────────────────────────────
