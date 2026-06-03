@@ -179,7 +179,7 @@ describe('bash-deny', () => {
     expect(allRules('fd -e ts -x echo {}').deny.kind).toBe('allow');
   });
   test('allows bare fd with no -x', () => {
-    expect(allRules('fd -e ts /Users/sean/dev').deny.kind).toBe('allow');
+    expect(allRules('fd -e ts /Users/the-user/dev').deny.kind).toBe('allow');
   });
   test('blocks fd / -x rm -rf {} (placeholder resolves to /)', () => {
     expect(allRules('fd -e ts / -x rm -rf {}').deny.kind).toBe('deny');
@@ -212,7 +212,7 @@ describe('bash-deny', () => {
     expect(allRules(String.raw`find /tmp/scratch -exec echo {} \;`).deny.kind).toBe('allow');
   });
   test('allows bare find with no -exec', () => {
-    expect(allRules("find /Users/sean/dev -name '*.ts'").deny.kind).toBe('allow');
+    expect(allRules("find /Users/the-user/dev -name '*.ts'").deny.kind).toBe('allow');
   });
   test('blocks rm -rf ~', () => {
     expect(allRules('rm -rf ~').deny.kind).toBe('deny');
@@ -429,7 +429,7 @@ describe('config-custom', () => {
         pattern: 'gog calendar create',
         requiresFlags: ['--attendees'],
         message:
-          "Calendar invite with attendees fires an email to a third party. Draft the invite description and recipient list in chat first, get Sean's explicit go-ahead this turn, then re-run.",
+          "Calendar invite with attendees fires an email to a third party. Draft the invite description and recipient list in chat first, get the user's explicit go-ahead this turn, then re-run.",
       },
     ],
     allowedCommands: [],
@@ -441,7 +441,7 @@ describe('config-custom', () => {
         pattern: 'gog calendar delete',
         forbidsFlagValues: [{ flag: '--send-updates', values: ['all', 'externalOnly'] }],
         message:
-          'Cancellation fires an email to attendees. Pass `--send-updates none` if cancelling silently, or surface to Sean first.',
+          'Cancellation fires an email to attendees. Pass `--send-updates none` if cancelling silently, or surface to the user first.',
       },
     ],
     allowedCommands: [],
@@ -503,7 +503,7 @@ describe('config-custom', () => {
         {
           pattern: 'gog gmail send',
           message:
-            "Mail send fires from one of Sean's identities to a third party. Draft the body in chat and get Sean's explicit go-ahead.",
+            "Mail send fires from one of the user's identities to a third party. Draft the body in chat and get the user's explicit go-ahead.",
         },
       ],
       allowedCommands: [],

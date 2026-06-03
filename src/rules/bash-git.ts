@@ -19,7 +19,7 @@ import { type Decision, allow, ask, deny, warn } from '../lib/decision';
 //     And no -F) — deny (would hang the agent).
 //   - Rebase / cherry-pick / merge — ask (creates conflicts).
 //   - Config — allow read; deny write to --global / --system; deny local
-//     Write (Sean's identity / workflow).
+//     Write (the user's identity / workflow).
 //
 // `git -C <dir>`, `git --git-dir=<path>`, `git --work-tree=<path>`,
 // `git -c key=value` are stripped before subcommand dispatch — `git -C ../foo
@@ -502,7 +502,7 @@ const HANDLERS: ReadonlyMap<string, Handler> = new Map<string, Handler>([
     ({ subcommand }) =>
       warn(
         `git-${subcommand}`,
-        `\`git ${subcommand}\` is allowed but unusual mid-session. Make sure this is what Sean asked for.`,
+        `\`git ${subcommand}\` is allowed but unusual mid-session. Make sure this is what the user asked for.`,
       ),
   ],
   [
@@ -510,7 +510,7 @@ const HANDLERS: ReadonlyMap<string, Handler> = new Map<string, Handler>([
     ({ subcommand }) =>
       warn(
         `git-${subcommand}`,
-        `\`git ${subcommand}\` is allowed but unusual mid-session. Make sure this is what Sean asked for.`,
+        `\`git ${subcommand}\` is allowed but unusual mid-session. Make sure this is what the user asked for.`,
       ),
   ],
 ]);

@@ -2,10 +2,10 @@ import { type Segment, hasBypass } from '../lib/bash';
 import { type Decision, allow, deny, warn } from '../lib/decision';
 
 // Opinionated tooling enforcement. Hard-deny on the package managers and
-// Tools Sean has explicitly replaced (npm/pip/patch-package); soft-warn
+// Tools the user has explicitly replaced (npm/pip/patch-package); soft-warn
 // Suggesting modern equivalents (find→fd, grep→rg).
 //
-// Hard-deny rationale (from Sean's CLAUDE.md): TypeScript is bun-only,
+// Hard-deny rationale (from the user's CLAUDE.md): TypeScript is bun-only,
 // Python is uv-only. Slipping into npm or pip mid-session means the
 // Agent forgot the toolchain and is about to install into the wrong
 // Directory or make a lockfile bun can't read.
@@ -23,7 +23,7 @@ const POLICIES: readonly Policy[] = [
     rule: 'use-bun-not-npm',
     action: 'deny',
     message:
-      'Use `bun` instead of `npm`. Translations: `npm install` → `bun install`, `npm install <pkg>` → `bun add <pkg>`, `npm install -D <pkg>` → `bun add -d <pkg>`, `npm run X` → `bun run X` (or `bun X` for bin scripts), `npm test` → `bun test`. If you genuinely need npm (publishing to a registry that requires it, working in a non-Sean repo), append ` # tripwire-allow: <reason>` to the command.',
+      'Use `bun` instead of `npm`. Translations: `npm install` → `bun install`, `npm install <pkg>` → `bun add <pkg>`, `npm install -D <pkg>` → `bun add -d <pkg>`, `npm run X` → `bun run X` (or `bun X` for bin scripts), `npm test` → `bun test`. If you genuinely need npm (publishing to a registry that requires it, working in a different repo), append ` # tripwire-allow: <reason>` to the command.',
     fires: (seg) => seg.head === 'npm',
   },
   {
@@ -35,20 +35,20 @@ const POLICIES: readonly Policy[] = [
   {
     rule: 'use-bun-not-pnpm',
     action: 'deny',
-    message: 'Use `bun` instead of `pnpm`. Sean is bun-only across his repos.',
+    message: 'Use `bun` instead of `pnpm`. The user is bun-only across their repos.',
     fires: (seg) => seg.head === 'pnpm',
   },
   {
     rule: 'use-bun-not-yarn',
     action: 'deny',
-    message: 'Use `bun` instead of `yarn`. Sean is bun-only.',
+    message: 'Use `bun` instead of `yarn`. The user is bun-only.',
     fires: (seg) => seg.head === 'yarn',
   },
   {
     rule: 'use-uv-not-pip',
     action: 'deny',
     message:
-      'Use `uv` instead of `pip`. Translations: `pip install <pkg>` → `uv add <pkg>` (project dependency) or `uv pip install <pkg>` (env-only escape hatch). `pip freeze` → `uv pip freeze`. `pip list` → `uv pip list`. Sean is uv-only across Python repos.',
+      'Use `uv` instead of `pip`. Translations: `pip install <pkg>` → `uv add <pkg>` (project dependency) or `uv pip install <pkg>` (env-only escape hatch). `pip freeze` → `uv pip freeze`. `pip list` → `uv pip list`. The user is uv-only across Python repos.',
     fires: (seg) => seg.head === 'pip' || seg.head === 'pip3',
   },
   {
@@ -76,12 +76,12 @@ const POLICIES: readonly Policy[] = [
     fires: (seg) => seg.head === 'patch-package',
   },
 
-  // ── SOFT WARNS: modern equivalents Sean has installed ────────────────
+  // ── SOFT WARNS: modern equivalents the user has installed ────────────────
   {
     rule: 'consider-fd',
     action: 'warn',
     message:
-      'Consider `fd` instead of `find`. Faster, simpler syntax, respects .gitignore by default. Examples: `find . -name "*.ts"` → `fd -e ts`, `find . -type f -name "X"` → `fd -t f X`, `find PATH ...` → `fd ... PATH`. Sean has both installed; either works.',
+      'Consider `fd` instead of `find`. Faster, simpler syntax, respects .gitignore by default. Examples: `find . -name "*.ts"` → `fd -e ts`, `find . -type f -name "X"` → `fd -t f X`, `find PATH ...` → `fd ... PATH`. The user has both installed; either works.',
     fires: (seg) => seg.head === 'find',
   },
   {

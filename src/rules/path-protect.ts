@@ -31,7 +31,7 @@ const protections: readonly Spec[] = [
     pattern: /\.(pem|key|p12|pfx)$/i,
     rule: 'private-key',
     message:
-      'Private key file. Refuse to overwrite. If generating a new key, use a different filename and let Sean review.',
+      'Private key file. Refuse to overwrite. If generating a new key, use a different filename and let the user review.',
   },
   {
     pattern: /(^|\/)secrets?\.(json|ya?ml|toml|env)$/i,

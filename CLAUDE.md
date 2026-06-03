@@ -30,10 +30,10 @@ The compiled `dist/tripwire.js` is what `~/.claude/settings.json` invokes. Bun b
 {
   "hooks": {
     "PreToolUse": [
-      { "hooks": [{ "type": "command", "command": "/Users/sean/dev/tripwire/dist/tripwire.js" }] },
+      { "hooks": [{ "type": "command", "command": "/path/to/tripwire/dist/tripwire.js" }] },
     ],
     "PostToolUse": [
-      { "hooks": [{ "type": "command", "command": "/Users/sean/dev/tripwire/dist/tripwire.js" }] },
+      { "hooks": [{ "type": "command", "command": "/path/to/tripwire/dist/tripwire.js" }] },
     ],
   },
 }

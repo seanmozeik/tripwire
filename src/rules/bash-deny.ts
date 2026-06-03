@@ -162,7 +162,7 @@ const SPECS: readonly Spec[] = [
     rule: 'osascript',
     action: 'ask',
     message:
-      'osascript runs arbitrary AppleScript and can do almost anything (move files, send emails, drive apps). Confirm with Sean what you want done before running it.',
+      'osascript runs arbitrary AppleScript and can do almost anything (move files, send emails, drive apps). Confirm with the user what you want done before running it.',
     match: (seg) => seg.head === 'osascript',
   },
   {
@@ -194,7 +194,7 @@ const SPECS: readonly Spec[] = [
     rule: 'pmset-write',
     action: 'deny',
     message:
-      '`pmset` (with arguments) writes power-management settings. Read-only `pmset -g` is fine; mutations need Sean.',
+      '`pmset` (with arguments) writes power-management settings. Read-only `pmset -g` is fine; mutations need the user.',
     match: (seg) =>
       seg.head === 'pmset' &&
       seg.tokens.length > 1 &&
@@ -237,7 +237,7 @@ const SPECS: readonly Spec[] = [
     rule: 'kextload',
     action: 'deny',
     message:
-      'Loading a kernel extension (`kextload`, `kmutil load`) is a system-level mutation. Refuse — Sean handles this manually.',
+      'Loading a kernel extension (`kextload`, `kmutil load`) is a system-level mutation. Refuse — the user handles this manually.',
     match: (seg) =>
       seg.head === 'kextload' ||
       seg.head === 'kextunload' ||

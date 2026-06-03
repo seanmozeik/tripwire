@@ -56,7 +56,7 @@ const bashNetworkInstall = (segments: readonly Segment[], cmd: string): Decision
   if (isFetchPipedToShell(segments)) {
     return deny(
       'curl-pipe-shell',
-      "Piping `curl` / `wget` directly into a shell runs whatever the remote URL serves. Refuse — download to a file, inspect, then run if appropriate. If you genuinely need this, append ` # tripwire-allow: <reason>` (and explain to Sean what you're running).",
+      "Piping `curl` / `wget` directly into a shell runs whatever the remote URL serves. Refuse — download to a file, inspect, then run if appropriate. If you genuinely need this, append ` # tripwire-allow: <reason>` (and explain to the user what you're running).",
     );
   }
   for (const seg of segments) {

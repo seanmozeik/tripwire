@@ -42,7 +42,7 @@ Binaries should land in `~/.local/bin/tripwire-hook` and `~/.local/bin/tripwire`
 - Pi: `npm:@hsingjui/pi-hooks` reads from `$HOME/.local/bin`
 - Devin: auto-reads Claude Code settings
 
-Reason: repo moves shouldn't break the hook wiring. A relative path in `~/dev/tripwire` would break the day Sean clones to a new machine or moves the repo.
+Reason: repo moves shouldn't break the hook wiring. A relative path in `~/dev/tripwire` would break the day the user clones to a new machine or moves the repo.
 
 ## Companion: `betterleaks` for PostToolUse secret scrubbing
 
