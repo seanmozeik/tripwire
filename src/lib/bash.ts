@@ -209,7 +209,17 @@ const parseSegment = (entries: readonly ParseEntry[], fdBudget: FdBudget): Segme
       args.push(t);
     }
   }
-  return { head: tokens[0]!, tokens, args, flags, redirects, raw: tokens.join(' ') };
+  // Normalise the head to its basename so command-name rules match regardless
+  // Of whether the command was invoked via absolute path (/bin/rm), a
+  // Homebrew-prefixed path (/opt/homebrew/bin/gog), or a relative ./rm form.
+  // This fixes the containment hole where `/bin/rm <unsafe>` bypassed every
+  // Rule that compared `seg.head === 'rm'`.  The `tokens` array is left
+  // Unchanged (raw reconstruction stays accurate); only the canonical `head`
+  // Used for matching is normalised.
+  const rawHead = tokens[0]!;
+  const slashIdx = rawHead.lastIndexOf('/');
+  const head = slashIdx === -1 ? rawHead : rawHead.slice(slashIdx + 1);
+  return { head, tokens, args, flags, redirects, raw: tokens.join(' ') };
 };
 
 // Pass an env function that preserves variable references as literals,
@@ -714,6 +724,8 @@ const unwrapStaticString = (value: string, heredocBodies?: ReadonlyMap<string, s
 // Otherwise sees `sh` as the head and the script as an opaque positional
 // Arg. We pull the script out and feed it back through `parseCommand` so
 // All existing rules apply.
+// Head normalisation in `parseSegment` strips directory prefixes, so this set
+// Only needs bare basenames — `/bin/bash` etc. are now unreachable as heads.
 const SHELL_WRAPPER_HEADS: ReadonlySet<string> = new Set([
   'sh',
   'bash',
@@ -721,16 +733,6 @@ const SHELL_WRAPPER_HEADS: ReadonlySet<string> = new Set([
   'dash',
   'ksh',
   'ash',
-  '/bin/sh',
-  '/bin/bash',
-  '/bin/zsh',
-  '/bin/dash',
-  '/bin/ksh',
-  '/usr/bin/sh',
-  '/usr/bin/bash',
-  '/usr/bin/zsh',
-  '/usr/local/bin/bash',
-  '/opt/homebrew/bin/bash',
 ]);
 
 const extractShellWrappedCommands = (seg: Segment): string[] => {
@@ -931,7 +933,9 @@ const RTK_WRAPPER_SUBCOMMANDS: ReadonlySet<string> = new Set([
   'summary',
 ]);
 
-const isRtkHead = (head: string): boolean => head === 'rtk' || head.endsWith('/rtk');
+// Head normalisation in `parseSegment` strips directory prefixes, so only the
+// Bare basename is needed — the `endsWith` fallbacks are now unreachable.
+const isRtkHead = (head: string): boolean => head === 'rtk';
 
 const skipRtkGlobalFlags = (tokens: readonly string[]): number => {
   // Rtk's global options (`-v`/`-vv`/`--verbose`, `--ultra-compact`,
@@ -996,43 +1000,6 @@ const extractRtkCommands = (seg: Segment): string[] => {
   }
   // Tool-proxy subcommand: the subcommand token is the real binary name.
   const inner = seg.tokens.slice(subIdx).join(' ');
-  return inner === '' ? [] : [inner];
-};
-
-// ── poke run wrapper ─────────────────────────────────────────────────
-// `poke run [--origin <slug>] -- <argv...>` spawns <argv> directly (Bun.spawn,
-// No shell), so the argv IS the executed command and must be re-analyzed like
-// Any other exec wrapper. Without this, `poke run -- rm -rf ~` slips past every
-// Rule as a benign `poke` call. The command is the whole positional remainder
-// After the wrapper's own flags / `--`, joined back into a re-parseable string.
-const isPokeHead = (head: string): boolean => head === 'poke' || head.endsWith('/poke');
-
-const extractPokeRunCommands = (seg: Segment): string[] => {
-  if (!isPokeHead(seg.head) || seg.tokens[1] !== 'run') {
-    return [];
-  }
-  let j = 2;
-  while (j < seg.tokens.length) {
-    const t = seg.tokens[j]!;
-    if (t === '--') {
-      j++;
-      break;
-    }
-    if (t === '--origin') {
-      j += 2;
-      continue;
-    }
-    if (t.startsWith('--') && t.includes('=')) {
-      j++;
-      continue;
-    }
-    if (t.startsWith('-') && t !== '-') {
-      j++;
-      continue;
-    }
-    break;
-  }
-  const inner = seg.tokens.slice(j).join(' ');
   return inner === '' ? [] : [inner];
 };
 
@@ -1120,7 +1087,6 @@ const SEGMENT_EXTRACTORS: readonly ((seg: Segment) => string[])[] = [
   extractHeadRenamingCommands,
   extractEvalCommands,
   extractRtkCommands,
-  extractPokeRunCommands,
   extractPrefixWrapperCommands,
 ];
 
