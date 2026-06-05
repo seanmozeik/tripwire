@@ -6,6 +6,7 @@
 import { spawnSync } from 'node:child_process';
 
 import type { RtkConfig } from './config';
+import { sanitizeGrepFlags } from './grep-sanitize';
 
 interface RtkOutput {
   readonly updatedCommand?: string;
@@ -50,6 +51,21 @@ const findRtkBin = (config: RtkConfig): string | null => {
   return null;
 };
 
+const sanitizeRtkEvent = (event: unknown): unknown => {
+  if (typeof event !== 'object' || event === null) {
+    return event;
+  }
+  const toolInput = (event as { readonly tool_input?: unknown }).tool_input;
+  if (typeof toolInput !== 'object' || toolInput === null) {
+    return event;
+  }
+  const command = (toolInput as { readonly command?: unknown }).command;
+  if (typeof command !== 'string') {
+    return event;
+  }
+  return { ...event, tool_input: { ...toolInput, command: sanitizeGrepFlags(command) } };
+};
+
 const runRtkRewrite = (event: unknown, config: RtkConfig, timeoutMs = 2000): RtkOutput => {
   // If rtk is disabled, skip it
   if (!config.enabled) {
@@ -62,7 +78,7 @@ const runRtkRewrite = (event: unknown, config: RtkConfig, timeoutMs = 2000): Rtk
     return {};
   }
 
-  const payload = JSON.stringify(event);
+  const payload = JSON.stringify(sanitizeRtkEvent(event));
   const result = spawnSync(rtkBin, ['hook', 'claude'], {
     input: payload,
     encoding: 'utf8',
