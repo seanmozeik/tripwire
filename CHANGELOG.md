@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2026-06-05
+
+## Added
+
+- `sanitizeGrepFlags` to normalize command arguments for grep operations.
+- Stricter protection against sensitive file access and privilege escalation in bash commands.
+- Support for `poke run <cmd>` as an execution wrapper that inspects interior commands.
+
+## Changed
+
+- Bash command handling now normalizes the command head to its basename and treats `poke run <cmd>` as an exec wrapper.
+- User-specific references in tripwire have been generalized to "the user".
+
+## Fixed
+
+- Corrected the rip graveyard path in deny messages.
+- Removed the retired `poke-run` wrapper.
+
 ## [0.5.3] - 2026-05-26
 
 ## Fixed
