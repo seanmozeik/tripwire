@@ -14,7 +14,7 @@
 //     Token (`__tripwire_cmd_sub__`) so safe-path checks fail safely.
 //   - Glob expansion is not performed.
 
-import { parse, type ParseEntry } from 'shell-quote';
+import { parse, quote, type ParseEntry } from 'shell-quote';
 
 interface Segment {
   readonly head: string; // First non-flag token, e.g. `rm`, `npm`
@@ -667,7 +667,7 @@ const extractExecCommands = (seg: Segment): string[] => {
       continue;
     }
     const root = spec.pickRoot(tokens, i);
-    out.push(substitutePlaceholders(inner, spec, root).join(' '));
+    out.push(quote(substitutePlaceholders(inner, spec, root)));
     i = j;
   }
   return out;
@@ -894,7 +894,7 @@ const extractHeadRenamingCommands = (seg: Segment): string[] => {
     }
   }
   const start = skipHeadRenamingPrefix(seg.tokens);
-  const inner = seg.tokens.slice(start).join(' ');
+  const inner = quote(seg.tokens.slice(start));
   return inner === '' ? [] : [inner];
 };
 
@@ -904,7 +904,10 @@ const extractEvalCommands = (seg: Segment): string[] => {
   if (!EVAL_HEADS.has(seg.head)) {
     return [];
   }
-  const sub = seg.tokens.slice(1).join(' ');
+  if (seg.tokens.length === 2) {
+    return [seg.tokens[1]!];
+  }
+  const sub = quote(seg.tokens.slice(1));
   return sub === '' ? [] : [sub];
 };
 
@@ -995,11 +998,11 @@ const extractRtkCommands = (seg: Segment): string[] => {
       }
       break;
     }
-    const inner = seg.tokens.slice(j).join(' ');
+    const inner = quote(seg.tokens.slice(j));
     return inner === '' ? [] : [inner];
   }
   // Tool-proxy subcommand: the subcommand token is the real binary name.
-  const inner = seg.tokens.slice(subIdx).join(' ');
+  const inner = quote(seg.tokens.slice(subIdx));
   return inner === '' ? [] : [inner];
 };
 
@@ -1074,7 +1077,7 @@ const extractPrefixWrapperCommands = (seg: Segment): string[] => {
     break;
   }
   i += spec.skipPositionals;
-  const inner = seg.tokens.slice(i).join(' ');
+  const inner = quote(seg.tokens.slice(i));
   return inner === '' ? [] : [inner];
 };
 
@@ -1090,9 +1093,41 @@ const SEGMENT_EXTRACTORS: readonly ((seg: Segment) => string[])[] = [
   extractPrefixWrapperCommands,
 ];
 
+const normalizeTopLevelNewlines = (cmd: string): string => {
+  let out = '';
+  let inSingle = false;
+  let inDouble = false;
+  let escaped = false;
+
+  for (const ch of cmd) {
+    if (escaped) {
+      out += ch;
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\') {
+      out += ch;
+      escaped = true;
+      continue;
+    }
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
+      out += ch;
+      continue;
+    }
+    if (ch === '"' && !inSingle) {
+      inDouble = !inDouble;
+      out += ch;
+      continue;
+    }
+    out += ch === '\n' && !inSingle && !inDouble ? ' ; ' : ch;
+  }
+  return out;
+};
+
 const parseCommand = (cmd: string): Segment[] => {
   let entries: ParseEntry[];
-  const cmdForParsing = maskLiteralHeredocBodies(cmd);
+  const cmdForParsing = normalizeTopLevelNewlines(maskLiteralHeredocBodies(cmd));
   try {
     entries = parse(cmdForParsing, PRESERVE_ENV);
   } catch {
@@ -1214,7 +1249,7 @@ const safeScopesSummary = (
       '.bundle',
       '.cargo-target',
     ],
-    'tmp / state': ['tmp', '.tmp', '.state', '/tmp', '/var/tmp', '/var/folders'],
+    'tmp / state': ['tmp', '.tmp', '.state', ...SAFE_ABSOLUTE],
     iac: ['.terraform'],
     'bundler dev': ['.yarn/cache', '.yarn/install-state.gz', '.pnpm-store', '.bun'],
   };

@@ -3,8 +3,7 @@
 //
 // Reads a hook event JSON payload on stdin, routes by hook_event_name +
 // Tool_name, runs rules with per-rule timeouts, merges decisions
-// (most-restrictive wins), wraps allowed Bash commands through rtk for
-// Token-saver rewriting, scans PostToolUse output for secrets via
+// (most-restrictive wins), scans PostToolUse output for secrets via
 // Betterleaks, and writes Claude Code's expected JSON response on stdout.
 //
 // Design rules:
@@ -34,7 +33,6 @@ import {
   isWriteInput,
 } from './lib/event.ts';
 import { logError } from './lib/log';
-import { runRtkRewrite } from './lib/rtk';
 import { bashDeny } from './rules/bash-deny';
 import { bashGit } from './rules/bash-git';
 import { bashNetworkInstall } from './rules/bash-network-install';
@@ -61,50 +59,26 @@ const writeAllow = (): void => {
 };
 
 // Codex's PreToolUse hook rejects `hookSpecificOutput.additionalContext`
-// (openai/codex issue #19385) and `updatedInput` (#18491). Detect Codex
-// Via its `turn_id` extension and downgrade output accordingly. Claude
-// Code accepts both, so we only narrow when we can confirm we're on Codex.
+// (openai/codex issue #19385). Detect Codex via its `turn_id` extension
+// And downgrade output accordingly. Claude Code accepts it, so we only
+// Narrow when we can confirm we're on Codex.
 const isCodex = (event: HookEvent): boolean => event.turn_id !== undefined;
-
-const writeRewriteAllow = (event: HookEvent, command: string, _reason?: string): void => {
-  // Codex's PreToolUse parser strict-rejects `updatedInput` (openai/codex
-  // #18491 — parsed but unimplemented as of codex-cli 0.12x). On Codex we
-  // Can't transparently rewrite, so pass the original command through
-  // Silently. Until #18491 lands, RTK savings are Claude-only.
-  if (isCodex(event)) {
-    writeAllow();
-    return;
-  }
-  // Claude Code: rewrite silently. We deliberately omit
-  // `permissionDecisionReason` so the model's context isn't polluted with
-  // "rtk rewrote your command" chatter every Bash call.
-  const out = {
-    continue: true,
-    hookSpecificOutput: { hookEventName: event.hook_event_name, updatedInput: { command } },
-  };
-  process.stdout.write(`${JSON.stringify(out)}\n`);
-};
 
 interface WarnOutput {
   hookEventName: string;
   additionalContext?: string;
-  updatedInput?: { command: string };
 }
 
 const writeWarn = (event: HookEvent, decision: Decision): void => {
   const eventName = event.hook_event_name;
   const reason = `[tripwire:${decision.rule}] ${decision.message}`;
   if (isCodex(event)) {
-    // Codex rejects both `additionalContext` and `updatedInput` on
-    // PreToolUse. Send only `systemMessage`; the rewrite (if any) is
-    // Dropped and the original command runs.
+    // Codex rejects `additionalContext` on PreToolUse. Send only
+    // `systemMessage`.
     process.stdout.write(`${JSON.stringify({ continue: true, systemMessage: reason })}\n`);
     return;
   }
   const hookSpecificOutput: WarnOutput = { hookEventName: eventName, additionalContext: reason };
-  if (decision.rewriteCommand !== undefined) {
-    hookSpecificOutput.updatedInput = { command: decision.rewriteCommand };
-  }
   process.stdout.write(`${JSON.stringify({ continue: true, hookSpecificOutput })}\n`);
 };
 
@@ -259,24 +233,9 @@ const decide = (event: HookEvent, config: Config = getDefaultConfig()): Decision
   return allow('no-rules');
 };
 
-const handleBashAllow = (event: HookEvent, decision: Decision, config: Config): void => {
-  // After the gate passes (allow or warn), apply rtk command-rewrite. If
-  // Rtk doesn't change the command, fall through to normal allow / warn.
-  const rtk = runRtkRewrite(event, config.rtk ?? { enabled: false });
-  const original = (event.tool_input as { command?: string } | undefined)?.command ?? '';
-  const rewritten =
-    rtk.updatedCommand !== undefined && rtk.updatedCommand !== original ? rtk.updatedCommand : null;
-
+const handleBashAllow = (event: HookEvent, decision: Decision, _config: Config): void => {
   if (decision.kind === 'warn') {
-    if (rewritten !== null) {
-      writeWarn(event, { ...decision, rewriteCommand: rewritten });
-      return;
-    }
     writeWarn(event, decision);
-    return;
-  }
-  if (rewritten !== null) {
-    writeRewriteAllow(event, rewritten, rtk.reason);
     return;
   }
   writeAllow();

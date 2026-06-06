@@ -7,7 +7,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import { decide } from '../src';
-import { EXEC_SPECS, parseCommand } from '../src/lib/bash';
+import { EXEC_SPECS, parseCommand, safeScopesSummary } from '../src/lib/bash';
 import type { Config, GitConfig, SafePathsConfig } from '../src/lib/config';
 import type { HookEvent } from '../src/lib/event';
 import { bashDeny } from '../src/rules/bash-deny';
@@ -49,6 +49,16 @@ const allRules = (cmd: string) => {
 
 const configDecision = (command: string, config: Config) => decide(bashEvent(command), config);
 
+const runDispatch = (event: HookEvent): unknown => {
+  const proc = Bun.spawnSync(['bun', 'src/dispatch.ts'], {
+    stdin: new TextEncoder().encode(JSON.stringify(event)),
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  expect(proc.exitCode).toBe(0);
+  return JSON.parse(proc.stdout.toString()) as unknown;
+};
+
 describe('decide API', () => {
   test('denies destructive git push to a protected branch', () => {
     const decision = decide(bashEvent('git push origin main'));
@@ -76,6 +86,12 @@ describe('decide API', () => {
     const decision = decide(bashEvent('tripwire-local-block --flag'), config);
     expect(decision.kind).toBe('deny');
     expect(decision.rule).toBe('config-custom');
+  });
+
+  test('allows grep without rewriting the hook input', () => {
+    const out = runDispatch(bashEvent('rg -n pattern src'));
+
+    expect(out).toEqual({ continue: true });
   });
 });
 
@@ -302,6 +318,9 @@ describe('bash-scoped-rm', () => {
   test('allows rm -rf /tmp/x', () => {
     expect(allRules('rm -rf /tmp/x').rm.kind).toBe('allow');
   });
+  test('safe scope summary includes private tmp aliases', () => {
+    expect(safeScopesSummary()).toContain('/private/tmp');
+  });
   test('blocks find . -delete', () => {
     expect(allRules('find . -name foo -delete').rm.kind).toBe('deny');
   });
@@ -386,6 +405,28 @@ describe('bash-scoped-rm', () => {
     // The segment whole.
     expect(allRules('rm -rf /tmp/foo &>/tmp/log').rm.kind).toBe('allow');
     expect(allRules('rm -rf /tmp/foo &>>/tmp/log').rm.kind).toBe('allow');
+  });
+  test('splits top-level newlines into separate command segments', () => {
+    const segs = parseCommand('rm -f /private/tmp/foo.sock\nsomeothercmd alpha beta gamma');
+
+    expect(segs.map((seg) => seg.head)).toEqual(['rm', 'someothercmd']);
+    expect(segs[0]?.tokens).toEqual(['rm', '-f', '/private/tmp/foo.sock']);
+    expect(segs[1]?.tokens).toEqual(['someothercmd', 'alpha', 'beta', 'gamma']);
+  });
+  test('detects unsafe rm on the second newline-separated command', () => {
+    const d = allRules('echo first\nrm -rf /etc/passwd');
+
+    expect(d.rm.kind).toBe('deny');
+    expect(parseCommand('echo first\nrm -rf /etc/passwd').map((seg) => seg.head)).toEqual([
+      'echo',
+      'rm',
+    ]);
+  });
+  test('preserves newlines inside double-quoted arguments', () => {
+    const segs = parseCommand('git commit -m "feat: line one\nline two"');
+
+    expect(segs).toHaveLength(1);
+    expect(segs[0]?.tokens).toEqual(['git', 'commit', '-m', 'feat: line one\nline two']);
   });
 
   // Regression: absolute-path and wrapper invocations must not bypass the rule.
@@ -903,6 +944,14 @@ describe('interior-command wrappers (rtk / privilege / exec)', () => {
     expect(d.git.kind).toBe('deny');
     expect(d.git.rule).toBe('git-push-protected');
   });
+  test('rtk git commit preserves a multi-word conventional message', () => {
+    const git = parseCommand('rtk git commit -m "feat: add the thing"').find(
+      (seg) => seg.head === 'git',
+    );
+
+    expect(git?.tokens).toEqual(['git', 'commit', '-m', 'feat: add the thing']);
+    expect(allRules('rtk git commit -m "feat: add the thing"').git.kind).toBe('allow');
+  });
   test('rtk absolute-path head is still unwrapped', () => {
     expect(allRules('/opt/homebrew/bin/rtk proxy rm -rf /').deny.kind).toBe('deny');
   });
@@ -914,6 +963,13 @@ describe('interior-command wrappers (rtk / privilege / exec)', () => {
   // ── privilege escalation: inspect what runs under sudo/doas/su ───────
   test('sudo wrapping rm -rf / is denied (interior inspected)', () => {
     expect(allRules('sudo rm -rf /').deny.kind).toBe('deny');
+  });
+  test('sudo preserves quoted rm targets while unwrapping', () => {
+    const rm = parseCommand('sudo rm -rf "/some path/with spaces"').find(
+      (seg) => seg.head === 'rm',
+    );
+
+    expect(rm?.tokens).toEqual(['rm', '-rf', '/some path/with spaces']);
   });
   test('sudo with flags before the command still unwraps', () => {
     expect(allRules('sudo -u root -- rm -rf /').deny.kind).toBe('deny');
