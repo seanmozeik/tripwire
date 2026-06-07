@@ -5,7 +5,7 @@
 import { accessSync, constants, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 
-import { Effect, Schema } from 'effect';
+import { Cause, Effect, Schema } from 'effect';
 
 const BlockRuleSchema = Schema.Struct({
   pattern: Schema.String,
@@ -36,24 +36,28 @@ const ConfigSchema = Schema.Struct({
 
 const CONFIG_PATH = `${homedir()}/.config/tripwire/config.json`;
 
-const configExists = (): Effect.Effect<boolean> =>
+const configExists = (path: string): Effect.Effect<boolean> =>
   Effect.sync(() => {
     try {
-      accessSync(CONFIG_PATH, constants.R_OK);
+      accessSync(path, constants.R_OK);
       return true;
     } catch {
       return false;
     }
   });
 
-const readConfigFile = (): Effect.Effect<string, Error> =>
-  Effect.try({ try: () => readFileSync(CONFIG_PATH, 'utf8'), catch: (error) => error as Error });
+const readConfigFile = (path: string): Effect.Effect<string, Error> =>
+  Effect.try({ try: () => readFileSync(path, 'utf8'), catch: (error) => error as Error });
 
 const parseConfigJson = (raw: string): Effect.Effect<unknown, Error> =>
   Effect.try({ try: () => JSON.parse(raw) as unknown, catch: (error) => error as Error });
 
+// `onExcessProperty: 'error'` rejects unknown keys (the default 'ignore' would
+// Silently strip them — a typo'd `blockedComands` would vanish unnoticed, the
+// Same silent-policy-drop class this whole change exists to kill). A stray key
+// Now fails loud, e.g. the `rtk` block that triggered MTA-137.
 const decodeConfig = (unknown: unknown): Effect.Effect<Config, Error> =>
-  Schema.decodeUnknownEffect(ConfigSchema)(unknown);
+  Schema.decodeUnknownEffect(ConfigSchema)(unknown, { onExcessProperty: 'error' });
 
 const getDefaultConfig = (): Config => ({
   git: {
@@ -72,25 +76,46 @@ const mergeWithDefaults = (partial: Config): Config => ({
   allowedCommands: partial.allowedCommands ?? getDefaultConfig().allowedCommands,
 });
 
-export const loadConfig = (): Effect.Effect<Config> =>
+// A present-but-broken config (bad JSON, schema decode failure, timeout) must
+// Never be papered over with defaults — that silently drops all custom safety
+// Policy. `loadConfigResult` reports the failure as data so callers can fail
+// Closed loudly (see `loadConfig` and the dispatcher). A *missing* file is the
+// One legitimate defaults case.
+type ConfigLoad =
+  | { readonly ok: true; readonly config: Config }
+  | { readonly ok: false; readonly error: string };
+
+export const loadConfigResult = (path: string = CONFIG_PATH): Effect.Effect<ConfigLoad> =>
   Effect.gen(function* () {
-    const exists = yield* configExists();
+    const exists = yield* configExists(path);
     if (!exists) {
-      return getDefaultConfig();
+      const result: ConfigLoad = { ok: true, config: getDefaultConfig() };
+      return result;
     }
 
-    const raw = yield* readConfigFile();
+    const raw = yield* readConfigFile(path);
     const parsed = yield* parseConfigJson(raw);
     const config = yield* decodeConfig(parsed);
-    return mergeWithDefaults(config);
+    const result: ConfigLoad = { ok: true, config: mergeWithDefaults(config) };
+    return result;
   }).pipe(
     Effect.timeout(1000),
-    // oxlint-disable-next-line promise/prefer-await-to-then
-    Effect.catch(() => {
-      // Log error but return defaults to never block the agent
-      console.error('[tripwire] Config loading failed, using defaults');
-      return Effect.succeed(getDefaultConfig());
+    Effect.catchCause((cause) => {
+      const result: ConfigLoad = { ok: false, error: Cause.pretty(cause) };
+      return Effect.succeed(result);
     }),
+  );
+
+// Loud loader for library consumers (e.g. the shim daemon) that expect a
+// `Config`. A broken config dies rather than silently defaulting, so the
+// Consumer fails closed visibly until the file is fixed.
+export const loadConfig = (path: string = CONFIG_PATH): Effect.Effect<Config> =>
+  loadConfigResult(path).pipe(
+    Effect.flatMap((result) =>
+      result.ok
+        ? Effect.succeed(result.config)
+        : Effect.die(new Error(`[tripwire] config load failed (${path}): ${result.error}`)),
+    ),
   );
 
 export type BlockRule = typeof BlockRuleSchema.Type;
@@ -98,4 +123,5 @@ export type GitConfig = typeof GitConfigSchema.Type;
 export type SafePathsConfig = typeof SafePathsConfigSchema.Type;
 export type Config = typeof ConfigSchema.Type;
 
+export type { ConfigLoad };
 export { CONFIG_PATH, ConfigSchema, getDefaultConfig, mergeWithDefaults };

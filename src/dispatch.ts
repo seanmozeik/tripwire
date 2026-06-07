@@ -18,8 +18,14 @@ import { BunRuntime } from '@effect/platform-bun';
 import { Cause, Effect, Exit, Schema } from 'effect';
 
 import { parseCommand } from './lib/bash';
-import { getDefaultConfig, loadConfig, mergeWithDefaults, type Config } from './lib/config';
-import { type Decision, allow, merge } from './lib/decision';
+import {
+  CONFIG_PATH,
+  getDefaultConfig,
+  loadConfigResult,
+  mergeWithDefaults,
+  type Config,
+} from './lib/config';
+import { type Decision, allow, deny, merge } from './lib/decision';
 import {
   type BashInput,
   type EditInput,
@@ -255,8 +261,17 @@ const handleAllow = (event: HookEvent, decision: Decision, config: Config): void
   writeAllow();
 };
 
+// A broken config (bad JSON / unknown field / decode failure) silently dropping
+// All custom policy is the dangerous case this guards. Fail closed: deny the
+// Pending PreToolUse call with the decode error inline so the agent halts and
+// The user sees it, rather than running on bare defaults unannounced.
+const configErrorMessage = (error: string): string =>
+  `tripwire config at ${CONFIG_PATH} failed to load, so ALL custom safety policy is ` +
+  `inactive. Failing closed until it is fixed. Fix the JSON, then this clears on the next ` +
+  `call (the shim daemon caches config at warm — restart it there). Error: ${error}`;
+
 const program = Effect.gen(function* () {
-  const config = yield* loadConfig();
+  const configLoad = yield* loadConfigResult();
   const raw = yield* Effect.promise(readStdin);
 
   const parseExit = yield* Effect.exit(
@@ -277,6 +292,22 @@ const program = Effect.gen(function* () {
     return;
   }
   const event = decodeExit.value;
+
+  if (!configLoad.ok) {
+    if (event.hook_event_name === 'PreToolUse') {
+      writePreToolGate(
+        event.hook_event_name,
+        deny('config-error', configErrorMessage(configLoad.error)),
+      );
+      return;
+    }
+    // Config governs PreToolUse gating; PostToolUse secret-scrub is config-
+    // Independent and there is always an imminent next PreToolUse to surface the
+    // Deny, so don't block already-run output here.
+    writeAllow();
+    return;
+  }
+  const config = configLoad.config;
 
   if (event.hook_event_name === 'PreToolUse') {
     const decision = decide(event, config);
