@@ -88,7 +88,7 @@ const POLICIES: readonly Policy[] = [
     rule: 'consider-rg',
     action: 'warn',
     message:
-      'Consider `rg` (ripgrep) instead of `grep`. Faster; recurses by default; respects .gitignore by default (use `-u`/`-uu` to include ignored/hidden files); searches the CWD when no path is given. NOT a clean flag-for-flag swap; some flags differ or are unneeded. Carry over fine: `-i`, `-n`, `-v`, `-l`, `-c`. WATCH OUT: `-r` is NOT recursive in rg — it means `--replace` (rg already recurses), so `rg -rn "PATTERN" dir/` silently parses as `--replace=n` and rewrites every match to the literal "n" while exiting 0. Drop the `-r`: `grep -rn PATTERN .` → `rg -n PATTERN`. And `grep --include`/`--exclude` become `rg -g GLOB`/`-g !GLOB`.',
+      'Consider `rg` (ripgrep) instead of `grep`. Faster; recurses by default; respects .gitignore by default (use `-u`/`-uu` to include ignored/hidden files); searches the CWD when no path is given. NOT a clean flag-for-flag swap; some flags differ or are unneeded. Carry over fine: `-i`, `-n`, `-v`, `-l`, `-c`. WATCH OUT: `-r` is NOT recursive in rg, it means `--replace` (rg already recurses), so `rg -rn "PATTERN" dir/` silently parses as `--replace=n` and rewrites every match to the literal "n" while exiting 0. Drop the `-r`: `grep -rn PATTERN .` → `rg -n PATTERN`. And `grep --include`/`--exclude` become `rg -g GLOB`/`-g !GLOB`.',
     fires: (seg) => seg.head === 'grep' || seg.head === 'egrep' || seg.head === 'fgrep',
   },
   {
