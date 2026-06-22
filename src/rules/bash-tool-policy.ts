@@ -92,6 +92,18 @@ const POLICIES: readonly Policy[] = [
     fires: (seg) => seg.head === 'grep' || seg.head === 'egrep' || seg.head === 'fgrep',
   },
   {
+    rule: 'rg-r-is-replace',
+    action: 'warn',
+    message:
+      'You almost certainly made a mistake: `-r` in rg means `--replace`, NOT recursive. ripgrep is always recursive by default — there is no `-r` flag for recursion. `-rn` silently parses as `--replace=n`, rewriting every match to the literal string "n" while exiting 0 with no error. If you want to search: drop the `-r` entirely (`rg -rn PATTERN` → `rg -n PATTERN`). If you genuinely want text substitution: use `--replace` explicitly so the intent is clear.',
+    fires: (seg) => {
+      if (seg.head !== 'rg') {
+        return false;
+      }
+      return seg.flags.some((f) => f.startsWith('-') && !f.startsWith('--') && f.includes('r'));
+    },
+  },
+  {
     rule: 'consider-btop',
     action: 'warn',
     message: 'Consider `btop` instead of `top`. Better UI, more info, modern.',

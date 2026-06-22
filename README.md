@@ -85,8 +85,8 @@ To wire it by hand, point the agent's hook events at `tripwire-hook`.
 {
   "hooks": {
     "PreToolUse": [{ "hooks": [{ "type": "command", "command": "/path/to/tripwire-hook" }] }],
-    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "/path/to/tripwire-hook" }] }]
-  }
+    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "/path/to/tripwire-hook" }] }],
+  },
 }
 ```
 
@@ -202,8 +202,8 @@ The reason is required, which keeps the bypass deliberate and leaves a trail in 
 The decision primitives are exported for building custom rules or embedding tripwire elsewhere:
 
 ```typescript
-import { allow, deny, ask, warn } from "@seanmozeik/tripwire";
-import type { Decision, Config } from "@seanmozeik/tripwire";
+import { allow, deny, ask, warn } from '@seanmozeik/tripwire';
+import type { Decision, Config } from '@seanmozeik/tripwire';
 ```
 
 ## Development
