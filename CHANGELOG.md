@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.7] - 2026-07-29
+
+## Changed
+
+- Effect and Platform Bun are now peer dependencies at beta.102 or newer, so Tripwire shares its consumer's Effect runtime.
+- Tripwire's development toolchain now uses TypeScript 7 and Effect TSGo 0.24.3.
+
 ## [0.6.6] - 2026-06-22
 
 ## Added
