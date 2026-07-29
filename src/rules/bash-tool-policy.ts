@@ -95,7 +95,7 @@ const POLICIES: readonly Policy[] = [
     rule: 'rg-r-is-replace',
     action: 'warn',
     message:
-      'You almost certainly made a mistake: `-r` in rg means `--replace`, NOT recursive. ripgrep is always recursive by default — there is no `-r` flag for recursion. `-rn` silently parses as `--replace=n`, rewriting every match to the literal string "n" while exiting 0 with no error. If you want to search: drop the `-r` entirely (`rg -rn PATTERN` → `rg -n PATTERN`). If you genuinely want text substitution: use `--replace` explicitly so the intent is clear.',
+      'STOP — your rg output is probably mangled. `-r` in rg means `--replace`, NOT recursive, so any `-r{X}` flag combo silently rewrites every match to the literal string "{X}" and exits 0 with no error. ripgrep is always recursive by default — there is no `-r` for recursion. If you want to search: drop the `-r` entirely (`rg -rn PATTERN` → `rg -n PATTERN`). If you genuinely want text substitution: use `--replace` explicitly.',
     fires: (seg) => {
       if (seg.head !== 'rg') {
         return false;

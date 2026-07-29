@@ -8,9 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.6.6] - 2026-06-22
 
 ## Added
+
 - Tripwire feature documentation and usage examples in the README.
 
 ## Fixed
+
 - Improved detection of ripgrep `-r` flag misuse by adding a specific policy check.
 
 ## [0.6.5] - 2026-06-08
