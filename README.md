@@ -73,6 +73,7 @@ Use the installer to configure hooks automatically:
 ```bash
 tripwire install claude    # Claude Code
 tripwire install codex     # Codex
+tripwire install cursor    # Cursor Agent
 tripwire install pi        # pi-guardrails
 tripwire install all       # every supported agent
 ```
@@ -91,6 +92,33 @@ To wire it by hand, point the agent's hook events at `tripwire-hook`.
 ```
 
 **Codex** uses the same hook format as Claude Code.
+
+**Cursor Agent** (`~/.cursor/hooks.json`) uses event-specific commands because
+some Cursor hook payloads do not include their configured event name:
+
+```json
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [{ "command": "tripwire-hook --cursor-event preToolUse", "failClosed": true }],
+    "postToolUse": [{ "command": "tripwire-hook --cursor-event postToolUse" }],
+    "beforeShellExecution": [
+      { "command": "tripwire-hook --cursor-event beforeShellExecution", "failClosed": true }
+    ],
+    "afterShellExecution": [{ "command": "tripwire-hook --cursor-event afterShellExecution" }],
+    "beforeReadFile": [
+      { "command": "tripwire-hook --cursor-event beforeReadFile", "failClosed": true }
+    ],
+    "afterFileEdit": [{ "command": "tripwire-hook --cursor-event afterFileEdit" }]
+  }
+}
+```
+
+Tripwire translates Cursor's lower-camel event payloads into its canonical
+tool event model and returns Cursor's `permission` response. The same rules
+therefore apply to Cursor's unsandboxed headless runs, including shell, file,
+and git protections. Cursor's post-tool shell hook is observational, so its
+secret scan can report a hit but cannot replace terminal output after execution.
 
 **Devin** and other agents: configure the agent to call `tripwire-hook` on tool events.
 

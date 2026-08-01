@@ -11,6 +11,7 @@
 //   Bun src/cli.ts test --post --tool=Bash --stdout='ghp_<token>'
 //   Bun src/cli.ts install claude
 //   Bun src/cli.ts install codex
+//   Bun src/cli.ts install cursor
 //   Bun src/cli.ts install pi
 //   Bun src/cli.ts install all
 
@@ -23,7 +24,7 @@ import { Effect, Option } from 'effect';
 import { Argument, Command, Flag } from 'effect/unstable/cli';
 
 import pkg from '../package.json' with { type: 'json' };
-import { installAll, installClaude, installCodex, installPi } from './lib/install';
+import { installAll, installClaude, installCodex, installCursor, installPi } from './lib/install';
 
 // Resolve tripwire-hook path at runtime using process.argv
 // This works in both script mode (bun run) and compiled/bundled mode
@@ -179,9 +180,9 @@ const testCommand = Command.make(
 
 const runInstall = (target: string): Effect.Effect<void> =>
   Effect.gen(function* () {
-    if (!['claude', 'codex', 'pi', 'all'].includes(target)) {
+    if (!['claude', 'codex', 'cursor', 'pi', 'all'].includes(target)) {
       console.error(`error: unknown target "${target}"`);
-      console.error('Valid targets: claude, codex, pi, all');
+      console.error('Valid targets: claude, codex, cursor, pi, all');
       process.exit(1);
     }
 
@@ -204,6 +205,11 @@ const runInstall = (target: string): Effect.Effect<void> =>
       case 'pi': {
         const result = yield* Effect.promise(() => installPi());
         results = [{ target: 'pi', result }];
+        break;
+      }
+      case 'cursor': {
+        const result = yield* Effect.promise(() => installCursor());
+        results = [{ target: 'cursor', result }];
         break;
       }
       case 'all': {
@@ -237,7 +243,7 @@ const installCommand = Command.make(
   'install',
   {
     target: Argument.string('target').pipe(
-      Argument.withDescription('Target agent (claude, codex, pi, or all)'),
+      Argument.withDescription('Target agent (claude, codex, cursor, pi, or all)'),
     ),
   },
   ({ target }) => runInstall(target),

@@ -25,6 +25,7 @@ import {
   mergeWithDefaults,
   type Config,
 } from './lib/config';
+import { cursorHost, normalizeHookInput, type HookHost } from './lib/cursor';
 import { type Decision, allow, deny, merge } from './lib/decision';
 import {
   type BashInput,
@@ -60,8 +61,32 @@ const readStdin = async (): Promise<string> => {
   return Buffer.concat(chunks).toString('utf8');
 };
 
-const writeAllow = (): void => {
+const NATIVE_HOST: HookHost = { kind: 'native' };
+
+const writeAllow = (host: HookHost = NATIVE_HOST): void => {
+  if (host.kind === 'cursor' && !host.post) {
+    process.stdout.write('{"continue":true,"permission":"allow"}\n');
+    return;
+  }
   process.stdout.write('{"continue": true}\n');
+};
+
+const cursorReason = (decision: Decision): string =>
+  `[tripwire:${decision.rule}] ${decision.message}`;
+
+const writeCursorPreGate = (decision: Decision): void => {
+  const reason =
+    decision.kind === 'ask'
+      ? `${cursorReason(decision)} This unattended Cursor run cannot ask a human, so the action is denied.`
+      : cursorReason(decision);
+  process.stdout.write(
+    `${JSON.stringify({
+      continue: true,
+      permission: 'deny',
+      user_message: reason,
+      agent_message: reason,
+    })}\n`,
+  );
 };
 
 // Codex's PreToolUse hook rejects `hookSpecificOutput.additionalContext`
@@ -75,7 +100,17 @@ interface WarnOutput {
   additionalContext?: string;
 }
 
-const writeWarn = (event: HookEvent, decision: Decision): void => {
+const writeWarn = (event: HookEvent, decision: Decision, host: HookHost): void => {
+  if (host.kind === 'cursor') {
+    process.stdout.write(
+      `${JSON.stringify({
+        continue: true,
+        permission: 'allow',
+        agent_message: cursorReason(decision),
+      })}\n`,
+    );
+    return;
+  }
   const eventName = event.hook_event_name;
   const reason = `[tripwire:${decision.rule}] ${decision.message}`;
   if (isCodex(event)) {
@@ -88,7 +123,15 @@ const writeWarn = (event: HookEvent, decision: Decision): void => {
   process.stdout.write(`${JSON.stringify({ continue: true, hookSpecificOutput })}\n`);
 };
 
-const writePreToolGate = (eventName: string, decision: Decision): void => {
+const writePreToolGate = (
+  eventName: string,
+  decision: Decision,
+  host: HookHost = NATIVE_HOST,
+): void => {
+  if (host.kind === 'cursor') {
+    writeCursorPreGate(decision);
+    return;
+  }
   const out = {
     hookSpecificOutput: {
       hookEventName: eventName,
@@ -99,7 +142,12 @@ const writePreToolGate = (eventName: string, decision: Decision): void => {
   process.stdout.write(`${JSON.stringify(out)}\n`);
 };
 
-const writePostToolBlock = (decision: Decision): void => {
+const writePostToolBlock = (decision: Decision, host: HookHost): void => {
+  if (host.kind === 'cursor') {
+    // The tool already ran. Cursor has no post-event rollback channel.
+    writeAllow(host);
+    return;
+  }
   const out = {
     continue: true,
     decision: 'block',
@@ -239,26 +287,22 @@ const decide = (event: HookEvent, config: Config = getDefaultConfig()): Decision
   return allow('no-rules');
 };
 
-const handleBashAllow = (event: HookEvent, decision: Decision, _config: Config): void => {
-  if (decision.kind === 'warn') {
-    writeWarn(event, decision);
-    return;
-  }
-  writeAllow();
-};
-
-const handleAllow = (event: HookEvent, decision: Decision, config: Config): void => {
+const handleAllow = (event: HookEvent, decision: Decision, host: HookHost): void => {
   const eventName = event.hook_event_name;
   const tool = normalizeToolName(event.tool_name ?? '');
   if (eventName === 'PreToolUse' && tool === 'Bash') {
-    handleBashAllow(event, decision, config);
+    if (decision.kind === 'warn') {
+      writeWarn(event, decision, host);
+      return;
+    }
+    writeAllow(host);
     return;
   }
   if (decision.kind === 'warn') {
-    writeWarn(event, decision);
+    writeWarn(event, decision, host);
     return;
   }
-  writeAllow();
+  writeAllow(host);
 };
 
 // A broken config (bad JSON / unknown field / decode failure) silently dropping
@@ -270,6 +314,34 @@ const configErrorMessage = (error: string): string =>
   `inactive. Failing closed until it is fixed. Fix the JSON, then this clears on the next ` +
   `call (the shim daemon caches config at warm — restart it there). Error: ${error}`;
 
+const cursorEventNameFromArgs = (): string | undefined => {
+  const index = process.argv.indexOf('--cursor-event');
+  if (index !== -1) {
+    return process.argv[index + 1] ?? '';
+  }
+  const value = process.argv.find((arg) => arg.startsWith('--cursor-event='));
+  return value?.slice('--cursor-event='.length);
+};
+
+const cursorHostFromArgs = (): HookHost => {
+  const eventName = cursorEventNameFromArgs();
+  return eventName === undefined ? NATIVE_HOST : cursorHost(eventName);
+};
+
+const writeHookFailure = (stage: string): void => {
+  const host = cursorHostFromArgs();
+  if (host.kind === 'cursor' && !host.post) {
+    writeCursorPreGate(
+      deny(
+        'cursor-hook-error',
+        `Cursor hook input could not be processed (${stage}). Failing closed.`,
+      ),
+    );
+    return;
+  }
+  writeAllow(host);
+};
+
 const program = Effect.gen(function* () {
   const configLoad = yield* loadConfigResult();
   const raw = yield* Effect.promise(readStdin);
@@ -279,32 +351,36 @@ const program = Effect.gen(function* () {
   );
   if (Exit.isFailure(parseExit)) {
     logError('parse', Cause.pretty(parseExit.cause));
-    writeAllow();
+    writeHookFailure('invalid JSON');
     return;
   }
 
+  const normalized = normalizeHookInput(parseExit.value, cursorEventNameFromArgs());
+
   const decodeExit = yield* Effect.exit(
-    Schema.decodeUnknownEffect(HookEventSchema)(parseExit.value),
+    Schema.decodeUnknownEffect(HookEventSchema)(normalized.event),
   );
   if (Exit.isFailure(decodeExit)) {
     logError('decode', Cause.pretty(decodeExit.cause));
-    writeAllow();
+    writeHookFailure('unsupported event shape');
     return;
   }
   const event = decodeExit.value;
+  const host = normalized.host;
 
   if (!configLoad.ok) {
     if (event.hook_event_name === 'PreToolUse') {
       writePreToolGate(
         event.hook_event_name,
         deny('config-error', configErrorMessage(configLoad.error)),
+        host,
       );
       return;
     }
     // Config governs PreToolUse gating; PostToolUse secret-scrub is config-
     // Independent and there is always an imminent next PreToolUse to surface the
     // Deny, so don't block already-run output here.
-    writeAllow();
+    writeAllow(host);
     return;
   }
   const config = configLoad.config;
@@ -312,30 +388,30 @@ const program = Effect.gen(function* () {
   if (event.hook_event_name === 'PreToolUse') {
     const decision = decide(event, config);
     if (decision.kind === 'deny' || decision.kind === 'ask') {
-      writePreToolGate(event.hook_event_name, decision);
+      writePreToolGate(event.hook_event_name, decision, host);
       return;
     }
-    handleAllow(event, decision, config);
+    handleAllow(event, decision, host);
     return;
   }
 
   if (event.hook_event_name === 'PostToolUse') {
     const decision = decide(event, config);
     if (decision.kind === 'deny') {
-      writePostToolBlock(decision);
+      writePostToolBlock(decision, host);
       return;
     }
-    writeAllow();
+    writeAllow(host);
     return;
   }
 
-  writeAllow();
+  writeAllow(host);
 });
 
 const handled = program.pipe(
   Effect.catchCause((cause) => {
     logError('dispatch-fatal', Cause.pretty(cause));
-    writeAllow();
+    writeHookFailure('dispatcher failure');
     return Effect.void;
   }),
 );

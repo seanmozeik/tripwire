@@ -1,6 +1,9 @@
 # tripwire
 
-Opinionated Claude Code hooks dispatcher. One Bun entry point fronts every hook event in `~/.claude/settings.json`; rule modules decide allow / block / rewrite. Blocks return actionable error messages so the agent knows what to do next.
+Opinionated coding-agent hooks dispatcher. One Bun entry point fronts Claude
+Code, Codex, Cursor Agent, and pi hook events; rule modules decide allow /
+block / rewrite. Blocks return actionable error messages so the agent knows the
+right alternative.
 
 ## Hard rules
 
@@ -24,7 +27,9 @@ The compiled `dist/tripwire.js` is what `~/.claude/settings.json` invokes. Bun b
 
 ## Wiring
 
-`~/.claude/settings.json` calls the same binary for every hook event, dispatching by `hook_event_name` read from stdin:
+`~/.claude/settings.json` calls the same binary for every Claude hook event,
+dispatching by `hook_event_name` read from stdin. Cursor uses the same binary
+with `--cursor-event <event>` because some Cursor payloads omit the event name:
 
 ```jsonc
 {
@@ -35,6 +40,14 @@ The compiled `dist/tripwire.js` is what `~/.claude/settings.json` invokes. Bun b
     "PostToolUse": [
       { "hooks": [{ "type": "command", "command": "/path/to/tripwire/dist/tripwire.js" }] },
     ],
+  },
+}
+```
+
+```jsonc
+{
+  "hooks": {
+    "beforeShellExecution": [{ "command": "tripwire-hook --cursor-event beforeShellExecution" }],
   },
 }
 ```
