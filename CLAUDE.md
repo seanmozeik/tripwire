@@ -29,7 +29,9 @@ The compiled `dist/tripwire.js` is what `~/.claude/settings.json` invokes. Bun b
 
 `~/.claude/settings.json` calls the same binary for every Claude hook event,
 dispatching by `hook_event_name` read from stdin. Cursor uses the same binary
-with `--cursor-event <event>` because some Cursor payloads omit the event name:
+with `--cursor-event <event>` because some Cursor payloads omit the event name.
+Pi loads `dist/tripwire-pi.js` as a native extension; the adapter translates
+Pi events into the same canonical hook payload:
 
 ```jsonc
 {
@@ -59,6 +61,7 @@ Settings.json stays one line per event. All policy lives in this repo, version-c
 ```
 src/
   dispatch.ts        # entry — reads stdin, routes, writes JSON decision
+  pi-extension.ts    # native Pi adapter; fails closed if dispatch cannot run
   rules/
     bash-deny.ts     # rm -rf /, fork bomb, force push, dd of=/dev/, …
     bash-rewrite.ts  # find → fd, grep → rg (suggest, don't block)

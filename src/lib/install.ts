@@ -1,7 +1,9 @@
-// Config installation module for tripwire hooks.
-// Parses and upserts hook configurations for Claude Code, Codex, Cursor, and pi-guardrails.
+// Agent installation module for Tripwire hooks and the native Pi extension.
 
+import { lstat, mkdir, readlink, symlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
+import pathModule from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { file } from 'bun';
 
@@ -18,6 +20,11 @@ interface PiConfig {
     PostToolUse?: { hooks: { type: string; command: string }[] }[];
   };
 }
+
+const piExtensionSourceCandidates = [
+  fileURLToPath(new URL('../../dist/tripwire-pi.js', import.meta.url)),
+  fileURLToPath(new URL('tripwire-pi.js', import.meta.url)),
+];
 
 interface CodexHooksConfig {
   hooks?: {
@@ -208,28 +215,58 @@ export const installClaude = async (): Promise<{ success: boolean; message: stri
   }
 };
 
-export const installPi = async (): Promise<{ success: boolean; message: string }> => {
-  const configPath = `${homedir()}/.pi/agent/settings.json`;
+export const installPi = async (
+  options: { readonly extensionSource?: string; readonly homeDirectory?: string } = {},
+): Promise<{ success: boolean; message: string }> => {
+  const homeDirectory = options.homeDirectory ?? homedir();
+  const configPath = `${homeDirectory}/.pi/agent/settings.json`;
   const configFile = file(configPath);
+  const extensionPath = `${homeDirectory}/.pi/agent/extensions/tripwire.js`;
 
   try {
+    const source =
+      options.extensionSource ??
+      piExtensionSourceCandidates.find((candidate) => Bun.file(candidate).size > 0);
+    if (source === undefined) {
+      return { success: false, message: 'Built Pi extension not found; run `bun run build` first' };
+    }
     const raw = await configFile.text();
     const config = JSON.parse(raw) as PiConfig;
-
-    config.hooks ??= {};
-    const [preToolUse, preSkipped] = addHookIfMissing(config.hooks.PreToolUse);
-    const [postToolUse, postSkipped] = addHookIfMissing(config.hooks.PostToolUse);
-
-    config.hooks.PreToolUse = preToolUse;
-    config.hooks.PostToolUse = postToolUse;
-
-    if (preSkipped && postSkipped) {
-      return { success: true, message: `Already configured: ${configPath}` };
+    if (config.hooks !== undefined) {
+      for (const event of ['PreToolUse', 'PostToolUse'] as const) {
+        const groups = config.hooks[event]
+          ?.map((group) => ({
+            ...group,
+            hooks: group.hooks.filter((hook) => !isTripwireCommand(hook.command)),
+          }))
+          .filter((group) => group.hooks.length > 0);
+        if (groups === undefined || groups.length === 0) {
+          delete config.hooks[event];
+        } else {
+          config.hooks[event] = groups;
+        }
+      }
+      if (Object.keys(config.hooks).length === 0) {
+        delete config.hooks;
+      }
     }
-
+    await mkdir(pathModule.dirname(extensionPath), { recursive: true });
+    try {
+      const status = await lstat(extensionPath);
+      if (!status.isSymbolicLink() || (await readlink(extensionPath)) !== source) {
+        return {
+          success: false,
+          message: `Refusing to replace existing Pi extension: ${extensionPath}`,
+        };
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error;
+      }
+      await symlink(source, extensionPath);
+    }
     await configFile.write(`${JSON.stringify(config, null, 2)}\n`);
-
-    return { success: true, message: `Updated ${configPath}` };
+    return { success: true, message: `Installed ${extensionPath}` };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (message.includes('No such file')) {

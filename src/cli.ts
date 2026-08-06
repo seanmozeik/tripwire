@@ -3,7 +3,7 @@
 // Dispatcher and pretty-print the decision. Indispensable for tuning
 // Rules without going through Claude Code.
 //
-// `tripwire install <target>` — install tripwire hooks for AI agents.
+// `tripwire install <target>` — install Tripwire hooks or native extensions for AI agents.
 //
 // Usage:
 //   Bun src/cli.ts test 'rm -rf /etc'

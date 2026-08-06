@@ -47,5 +47,24 @@ if (cli.exitCode !== 0) {
   process.exit(cli.exitCode || 1);
 }
 
+const piExtension = Bun.spawnSync(
+  [
+    'bun',
+    'build',
+    './src/pi-extension.ts',
+    '--target',
+    'node',
+    '--minify',
+    '--outdir',
+    'dist',
+    '--entry-naming',
+    'tripwire-pi.js',
+  ],
+  { stdout: 'inherit', stderr: 'inherit' },
+);
+if (piExtension.exitCode !== 0) {
+  process.exit(piExtension.exitCode || 1);
+}
+
 chmodSync('dist/tripwire.js', 0o755);
 chmodSync('dist/tripwire-cli.js', 0o755);
