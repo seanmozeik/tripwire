@@ -1,11 +1,23 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { lstat, mkdir, mkdtemp, readFile, readlink, rm, writeFile } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readlink,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import pathModule from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { installPi } from '../src/lib/install';
 import {
   createTripwirePiExtension,
+  resolveShippedHookPath,
   tripwirePiDenialReason,
   type PiExtensionContext,
   type PiToolCallEvent,
@@ -24,6 +36,23 @@ afterEach(async () => {
 });
 
 describe('Tripwire Pi extension', () => {
+  test('resolves the Bun dispatcher through the Pi extension symlink', async () => {
+    const dist = pathModule.join(root, 'dist');
+    const extensions = pathModule.join(root, '.pi', 'agent', 'extensions');
+    await mkdir(dist, { recursive: true });
+    await mkdir(extensions, { recursive: true });
+    const extensionSource = pathModule.join(dist, 'tripwire-pi.js');
+    const hook = pathModule.join(dist, 'tripwire.js');
+    const installed = pathModule.join(extensions, 'tripwire.js');
+    await Promise.all([
+      writeFile(extensionSource, 'export default () => {};\n'),
+      writeFile(hook, '#!/usr/bin/env bun\n'),
+      symlink(extensionSource, installed),
+    ]);
+
+    expect(resolveShippedHookPath(pathToFileURL(installed).href)).toBe(realpathSync(hook));
+  });
+
   test('understands Tripwire denials and fails closed on invalid output', () => {
     expect(
       tripwirePiDenialReason({

@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { realpathSync } from 'node:fs';
+import path from 'node:path';
 import type { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 
@@ -44,7 +46,20 @@ interface HookResult {
 }
 
 const TIMEOUT_MS = 60_000;
-const shippedHookPath = fileURLToPath(new URL('tripwire.js', import.meta.url));
+
+/** Resolve the Bun hook next to the built extension, following install symlinks. */
+const resolveShippedHookPath = (extensionUrl: string | URL = import.meta.url): string => {
+  const extensionPath = fileURLToPath(extensionUrl);
+  let resolved = extensionPath;
+  try {
+    resolved = realpathSync(extensionPath);
+  } catch {
+    // Keep the unresolved path when the module is not on disk yet (unit tests).
+  }
+  return path.join(path.dirname(resolved), 'tripwire.js');
+};
+
+const shippedHookPath = resolveShippedHookPath();
 
 const hookInput = (
   event: PiToolCallEvent | PiToolResultEvent,
@@ -182,6 +197,7 @@ export default createTripwirePiExtension(shippedHookPath);
 
 export {
   createTripwirePiExtension,
+  resolveShippedHookPath,
   tripwirePiDenialReason,
   type PiExtensionContext,
   type PiToolCallEvent,
