@@ -23,6 +23,20 @@ const lazyCodeDecision = (line: string) =>
 const tarDecision = (command: string) => bashTarExplosion(parseCommand(command), command);
 
 describe('compound shell commands', () => {
+  test('treats shell negation as a transparent command prefix', () => {
+    const dangerous = [
+      '! rm -rf /',
+      'if ! rm -rf /; then echo safe; fi',
+      'while ! shutdown -h now; do echo safe; done',
+    ];
+
+    for (const command of dangerous) {
+      expect(shellDecision(command).kind, command).toBe('deny');
+    }
+    expect(shellDecision('! test -f file').kind).toBe('allow');
+    expect(shellDecision('if ! test -f file; then echo missing; fi').kind).toBe('allow');
+  });
+
   test('checks executable commands after every supported control keyword', () => {
     const dangerous = [
       'if rm -rf /; then echo safe; fi',

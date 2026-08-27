@@ -1085,6 +1085,7 @@ const extractPrefixWrapperCommands = (seg: Segment): string[] => {
 // hides `rm` from every policy rule. Reparse the tail as a command so nested
 // conditions and loop bodies pass through the normal rule pipeline.
 const COMPOUND_COMMAND_HEADS: ReadonlySet<string> = new Set([
+  '!',
   'if',
   'elif',
   'then',
