@@ -5,7 +5,7 @@
 import { accessSync, constants, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 
-import { Cause, Effect, Schema } from 'effect';
+import { Cause, Data, Effect, Schema } from 'effect';
 
 const BlockRuleSchema = Schema.Struct({
   pattern: Schema.String,
@@ -51,6 +51,10 @@ const ConfigSchema = Schema.Struct({
 
 const CONFIG_PATH = `${homedir()}/.config/tripwire/config.json`;
 
+class ConfigReadError extends Data.TaggedError('ConfigReadError')<{ readonly cause: unknown }> {}
+
+class ConfigParseError extends Data.TaggedError('ConfigParseError')<{ readonly cause: unknown }> {}
+
 const configExists = (path: string): Effect.Effect<boolean> =>
   Effect.sync(() => {
     try {
@@ -62,10 +66,16 @@ const configExists = (path: string): Effect.Effect<boolean> =>
   });
 
 const readConfigFile = (path: string): Effect.Effect<string, Error> =>
-  Effect.try({ try: () => readFileSync(path, 'utf8'), catch: (error) => error as Error });
+  Effect.try({
+    try: () => readFileSync(path, 'utf8'),
+    catch: (cause) => new ConfigReadError({ cause }),
+  });
 
 const parseConfigJson = (raw: string): Effect.Effect<unknown, Error> =>
-  Effect.try({ try: () => JSON.parse(raw) as unknown, catch: (error) => error as Error });
+  Effect.try({
+    try: () => JSON.parse(raw) as unknown,
+    catch: (cause) => new ConfigParseError({ cause }),
+  });
 
 // `onExcessProperty: 'error'` rejects unknown keys (the default 'ignore' would
 // Silently strip them — a typo'd `blockedComands` would vanish unnoticed, the

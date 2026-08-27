@@ -88,7 +88,8 @@ const isTripwireCommand = (command: string): boolean =>
   command === TRIPWIRE_HOOK ||
   command.startsWith(`${TRIPWIRE_HOOK} `) ||
   command.includes('/tripwire-hook') ||
-  command.includes('/tripwire.js');
+  command.includes('/tripwire.js') ||
+  command.includes('/dist/tripwire');
 
 const cursorEventFromCommand = (command: string): string | undefined =>
   /(?:^|\s)--cursor-event(?:=|\s+)(?<event>[^\s]+)/.exec(command)?.groups?.['event'];

@@ -4,8 +4,8 @@
   "description": "Opinionated hooks dispatcher for AI coding agents with configurable safety rules",
   "license": "MIT",
   "bin": {
-    "tripwire": "./dist/tripwire-cli.js",
-    "tripwire-hook": "./dist/tripwire.js"
+    "tripwire": "./dist/tripwire",
+    "tripwire-hook": "./dist/tripwire"
   },
   "files": [
     "dist",
@@ -32,24 +32,23 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "shell-quote": "^1.8.4"
+    "shell-quote": "1.10.0"
   },
   "devDependencies": {
-    "@effect/platform-bun": "^4.0.0-beta.102",
-    "@effect/tsgo": "^0.24.3",
-    "@types/bun": "^1.4.0",
-    "@types/shell-quote": "^1.7.5",
-    "effect": "^4.0.0-beta.102",
+    "@effect/platform-bun": "4.0.0-rc.112",
+    "@effect/tsgo": "0.38.0",
+    "bun-types": "1.4.0",
+    "effect": "4.0.0-rc.112",
     "oxfmt": "^0.53.0",
     "oxlint": "1.68.0",
     "oxlint-tsgolint": "^0.23.0",
-    "typescript": "^7.0.2"
+    "typescript": "7.0.2"
   },
   "peerDependencies": {
-    "@effect/platform-bun": "^4.0.0-beta.102",
-    "effect": "^4.0.0-beta.102"
+    "@effect/platform-bun": "4.0.0-rc.112",
+    "effect": "4.0.0-rc.112"
   },
   "engines": {
-    "bun": ">=1.0"
+    "bun": ">=1.4"
   }
 }

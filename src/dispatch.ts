@@ -15,7 +15,7 @@
 //     Line, or `# tripwire-allow` in a bash command.
 
 import { BunRuntime } from '@effect/platform-bun';
-import { Cause, Effect, Exit, Schema } from 'effect';
+import { Cause, Data, Effect, Exit, Schema } from 'effect';
 
 import { parseCommand } from './lib/bash';
 import {
@@ -183,10 +183,20 @@ const normalizeToolName = (name: string): string => {
 
 type RuleFn = () => Decision;
 
+class RuleExecutionError extends Data.TaggedError('RuleExecutionError')<{
+  readonly cause: unknown;
+}> {}
+
+class HookInputParseError extends Data.TaggedError('HookInputParseError')<{
+  readonly cause: unknown;
+}> {}
+
 const runRule = (name: string, fn: RuleFn, timeoutMs: number): Effect.Effect<Decision> =>
   Effect.gen(function* () {
     const exit = yield* Effect.exit(
-      Effect.try({ try: fn, catch: (e) => e }).pipe(Effect.timeout(timeoutMs)),
+      Effect.try({ try: fn, catch: (cause) => new RuleExecutionError({ cause }) }).pipe(
+        Effect.timeout(timeoutMs),
+      ),
     );
     if (Exit.isSuccess(exit)) {
       return exit.value;
@@ -341,7 +351,10 @@ const program = Effect.gen(function* () {
   const raw = yield* Effect.promise(readStdin);
 
   const parseExit = yield* Effect.exit(
-    Effect.try({ try: () => JSON.parse(raw) as unknown, catch: (e) => e }),
+    Effect.try({
+      try: () => JSON.parse(raw) as unknown,
+      catch: (cause) => new HookInputParseError({ cause }),
+    }),
   );
   if (Exit.isFailure(parseExit)) {
     logError('parse', Cause.pretty(parseExit.cause));
@@ -410,8 +423,12 @@ const handled = program.pipe(
   }),
 );
 
-if (import.meta.main) {
+const runHook = (): void => {
   BunRuntime.runMain(handled);
+};
+
+if (import.meta.main) {
+  runHook();
 }
 
 export {
@@ -419,6 +436,7 @@ export {
   collectPreToolUseRules,
   decide,
   normalizeToolName,
+  runHook,
   runRules,
   runRulesSync,
 };

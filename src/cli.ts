@@ -6,45 +6,28 @@
 // `tripwire install <target>` — install Tripwire hooks or native extensions for AI agents.
 //
 // Usage:
-//   Bun src/cli.ts test 'rm -rf /etc'
-//   Bun src/cli.ts test --tool=Read --path=.env
-//   Bun src/cli.ts test --post --tool=Bash --stdout='ghp_<token>'
-//   Bun src/cli.ts install claude
-//   Bun src/cli.ts install codex
-//   Bun src/cli.ts install cursor
-//   Bun src/cli.ts install pi
-//   Bun src/cli.ts install all
-
-// oxlint-disable-next-line unicorn/import-style
-import { dirname } from 'node:path';
+//   Bun src/main.ts test 'rm -rf /etc'
+//   Bun src/main.ts test --tool=Read --path=.env
+//   Bun src/main.ts test --post --tool=Bash --stdout='ghp_<token>'
+//   Bun src/main.ts install claude
+//   Bun src/main.ts install codex
+//   Bun src/main.ts install cursor
+//   Bun src/main.ts install pi
+//   Bun src/main.ts install all
 
 import { BunServices } from '@effect/platform-bun';
-import { file } from 'bun';
 import { Effect, Option } from 'effect';
 import { Argument, Command, Flag } from 'effect/unstable/cli';
 
 import pkg from '../package.json' with { type: 'json' };
 import { installAll, installClaude, installCodex, installCursor, installPi } from './lib/install';
 
-// Resolve tripwire-hook path at runtime using process.argv
-// This works in both script mode (bun run) and compiled/bundled mode
-const runtimeSelf = (): string => {
-  const isBunCli = /\/bun(?<ext>\.exe)?$/.test(process.argv[0] ?? '');
-  return isBunCli ? process.argv[1]! : process.argv[0]!;
-};
-
-const dispatchBin = async (): Promise<string> => {
-  const cliPath = runtimeSelf();
-  const cliDir = dirname(cliPath);
-  // Try tripwire-hook in same directory first (installed scenario)
-  const installedPath = `${cliDir}/tripwire-hook`;
-  try {
-    await file(installedPath).text();
-    return installedPath;
-  } catch {
-    // Fallback to development scenario: tripwire-hook in ../dist relative to CLI
-    return `${cliDir}/tripwire.js`;
+const hookCommand = (): string[] => {
+  const isBunCli = /\/bun(?<ext>\.exe)?$/.test(process.execPath);
+  if (isBunCli) {
+    return [process.execPath, new URL('main.ts', import.meta.url).pathname, '--tripwire-hook'];
   }
+  return [process.execPath, '--tripwire-hook'];
 };
 
 interface BuiltEvent {
@@ -104,6 +87,14 @@ const buildEvent = (params: EventParams): BuiltEvent => {
   return event;
 };
 
+const prettyJson = (output: string): string => {
+  try {
+    return JSON.stringify(JSON.parse(output) as unknown, null, 2);
+  } catch {
+    return output;
+  }
+};
+
 const runTest = (config: {
   readonly command: string | undefined;
   readonly content: string | undefined;
@@ -113,11 +104,10 @@ const runTest = (config: {
   readonly stdout: string | undefined;
   readonly tool: string;
 }): Effect.Effect<void> =>
-  Effect.gen(function* () {
+  Effect.sync(() => {
     const { command, content, path, post, stderr, stdout, tool } = config;
     const event = buildEvent({ tool, post, command, path, stdout, stderr, content });
-    const bin = yield* Effect.promise(() => dispatchBin());
-    const result = Bun.spawnSync([bin], {
+    const result = Bun.spawnSync(hookCommand(), {
       stdin: new TextEncoder().encode(JSON.stringify(event)),
       timeout: 10_000,
       stdout: 'pipe',
@@ -129,12 +119,7 @@ const runTest = (config: {
       process.exit(1);
     }
     const output = new TextDecoder().decode(result.stdout);
-    try {
-      const parsed = JSON.parse(output) as unknown;
-      console.log(JSON.stringify(parsed, null, 2));
-    } catch {
-      console.log(output);
-    }
+    console.log(prettyJson(output));
   });
 
 const testCommand = Command.make(
@@ -152,7 +137,10 @@ const testCommand = Command.make(
       Flag.optional,
       Flag.withDescription('File path for Read/Write/Edit tools'),
     ),
-    post: Flag.boolean('post').pipe(Flag.withDescription('Test PostToolUse instead of PreToolUse')),
+    post: Flag.boolean('post').pipe(
+      Flag.withDefault(false),
+      Flag.withDescription('Test PostToolUse instead of PreToolUse'),
+    ),
     stderr: Flag.string('stderr').pipe(
       Flag.optional,
       Flag.withDescription('Stderr for PostToolUse Bash'),
@@ -256,7 +244,7 @@ const app = Command.make('tripwire').pipe(
 
 const program = Command.run(app, { version: pkg.version });
 
-const main = async (): Promise<void> => {
+const runCli = async (): Promise<void> => {
   try {
     await Effect.runPromise(program.pipe(Effect.provide(BunServices.layer)));
   } catch (error) {
@@ -266,5 +254,9 @@ const main = async (): Promise<void> => {
   }
 };
 
-// oxlint-disable-next-line no-void, unicorn/prefer-top-level-await
-void main();
+if (import.meta.main) {
+  // oxlint-disable-next-line no-void
+  void runCli();
+}
+
+export { runCli };

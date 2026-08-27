@@ -56,7 +56,7 @@ const resolveShippedHookPath = (extensionUrl: string | URL = import.meta.url): s
   } catch {
     // Keep the unresolved path when the module is not on disk yet (unit tests).
   }
-  return path.join(path.dirname(resolved), 'tripwire.js');
+  return path.join(path.dirname(resolved), 'tripwire');
 };
 
 const shippedHookPath = resolveShippedHookPath();
@@ -86,7 +86,7 @@ const readStream = async (stream: Readable): Promise<string> => {
 };
 
 const runTripwire = async (hookPath: string, input: unknown): Promise<HookResult> => {
-  const child = spawn(hookPath, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(hookPath, ['--tripwire-hook'], { stdio: ['pipe', 'pipe', 'pipe'] });
   const state = { timedOut: false };
   const timeout = setTimeout(() => {
     state.timedOut = true;

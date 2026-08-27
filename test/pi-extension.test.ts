@@ -42,7 +42,7 @@ describe('Tripwire Pi extension', () => {
     await mkdir(dist, { recursive: true });
     await mkdir(extensions, { recursive: true });
     const extensionSource = pathModule.join(dist, 'tripwire-pi.js');
-    const hook = pathModule.join(dist, 'tripwire.js');
+    const hook = pathModule.join(dist, 'tripwire');
     const installed = pathModule.join(extensions, 'tripwire.js');
     await Promise.all([
       writeFile(extensionSource, 'export default () => {};\n'),

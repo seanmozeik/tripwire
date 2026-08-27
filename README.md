@@ -66,7 +66,8 @@ Every default is configurable, and you can add your own allow and deny rules on 
 bun install -g @seanmozeik/tripwire
 ```
 
-This puts two binaries on your PATH: `tripwire` (the CLI) and `tripwire-hook` (the dispatcher your agent calls).
+This puts two commands on your PATH: `tripwire` (the CLI) and `tripwire-hook`
+(the dispatcher your agent calls). Both commands point to one compiled executable.
 
 ## Wiring it into an agent
 
@@ -272,10 +273,15 @@ import type { Decision, Config } from '@seanmozeik/tripwire';
 
 ```bash
 bun install
-bun run build      # build dist/tripwire.js and dist/tripwire-cli.js
+bun run build      # compile the single dist/tripwire executable
 bun run check      # format, lint, typecheck
 bun test
 ```
+
+Development and published builds require Bun 1.4 or later. The build uses bytecode
+compilation and module splitting. The small entry module loads only the hook or CLI
+module that the current command needs. The Pi adapter remains a separate JavaScript
+extension because Pi loads it in its own Node.js process.
 
 ## License
 

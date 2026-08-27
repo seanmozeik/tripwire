@@ -18,12 +18,13 @@ right alternative.
 
 ```bash
 bun install
-bun run build      # → dist/tripwire.js (minified, bytecode-cached, executable shebang)
+bun run build      # → dist/tripwire (single compiled executable with bytecode)
 bun run check      # format + lint --fix + typecheck
 bun test           # unit tests on rule modules
 ```
 
-The compiled `dist/tripwire.js` is what `~/.claude/settings.json` invokes. Bun bytecode caching keeps per-call startup at single-digit ms.
+The compiled `dist/tripwire` is the CLI and hook executable. Package installation exposes it as
+both `tripwire` and `tripwire-hook`. The entry module loads only the selected command module.
 
 ## Wiring
 
@@ -37,10 +38,10 @@ Pi events into the same canonical hook payload:
 {
   "hooks": {
     "PreToolUse": [
-      { "hooks": [{ "type": "command", "command": "/path/to/tripwire/dist/tripwire.js" }] },
+      { "hooks": [{ "type": "command", "command": "/path/to/tripwire/dist/tripwire" }] },
     ],
     "PostToolUse": [
-      { "hooks": [{ "type": "command", "command": "/path/to/tripwire/dist/tripwire.js" }] },
+      { "hooks": [{ "type": "command", "command": "/path/to/tripwire/dist/tripwire" }] },
     ],
   },
 }
