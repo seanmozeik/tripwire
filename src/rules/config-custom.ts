@@ -19,11 +19,8 @@ const ALIASES: ReadonlyMap<string, string> = new Map([
 
 const canonical = (token: string): string => ALIASES.get(token) ?? token;
 
-// Strip directory prefix so an absolute or homebrew-style path matches its
-// Basename — `/opt/homebrew/bin/gog` and `gog` are the same command for
-// Policy purposes. shim's typed dispatcher resolves CLIs to absolute paths,
-// So matchers that compare `seg.head` literally would otherwise miss every
-// Rule for those invocations.
+// Match command policy by executable basename so an absolute path cannot
+// bypass a configured rule.
 const basename = (token: string): string => {
   const idx = token.lastIndexOf('/');
   return idx === -1 ? token : token.slice(idx + 1);

@@ -345,7 +345,7 @@ const handleAllow = (event: HookEvent, decision: Decision, host: HookHost): void
 const configErrorMessage = (error: string): string =>
   `tripwire config at ${CONFIG_PATH} failed to load, so ALL custom safety policy is ` +
   `inactive. Failing closed until it is fixed. Fix the JSON, then this clears on the next ` +
-  `call (the shim daemon caches config at warm — restart it there). Error: ${error}`;
+  `hook call. Restart any long-running consumer that caches the loaded config. Error: ${error}`;
 
 const cursorEventNameFromArgs = (): string | undefined => {
   const index = process.argv.indexOf('--cursor-event');

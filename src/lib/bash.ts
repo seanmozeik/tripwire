@@ -209,13 +209,9 @@ const parseSegment = (entries: readonly ParseEntry[], fdBudget: FdBudget): Segme
       args.push(t);
     }
   }
-  // Normalise the head to its basename so command-name rules match regardless
-  // Of whether the command was invoked via absolute path (/bin/rm), a
-  // Homebrew-prefixed path (/opt/homebrew/bin/gog), or a relative ./rm form.
-  // This fixes the containment hole where `/bin/rm <unsafe>` bypassed every
-  // Rule that compared `seg.head === 'rm'`.  The `tokens` array is left
-  // Unchanged (raw reconstruction stays accurate); only the canonical `head`
-  // Used for matching is normalised.
+  // Use the executable basename for command rules. Keep the original tokens
+  // so an absolute or relative command path cannot bypass a rule and raw
+  // reconstruction stays accurate.
   const rawHead = tokens[0]!;
   const slashIdx = rawHead.lastIndexOf('/');
   const head = slashIdx === -1 ? rawHead : rawHead.slice(slashIdx + 1);

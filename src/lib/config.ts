@@ -80,10 +80,7 @@ const parseConfigJson = (raw: string): Effect.Effect<unknown, Error> =>
     catch: (cause) => new ConfigParseError({ cause }),
   });
 
-// `onExcessProperty: 'error'` rejects unknown keys (the default 'ignore' would
-// Silently strip them — a typo'd `blockedComands` would vanish unnoticed, the
-// Same silent-policy-drop class this whole change exists to kill). A stray key
-// A stray key now fails loud instead of silently dropping policy.
+// Reject unknown keys so a misspelled policy cannot disappear silently.
 const decodeConfig = (unknown: unknown): Effect.Effect<Config, Error> =>
   Schema.decodeUnknownEffect(ConfigSchema)(unknown, { onExcessProperty: 'error' });
 
@@ -112,11 +109,8 @@ const mergeWithDefaults = (partial: Config): ResolvedConfig => {
   };
 };
 
-// A present-but-broken config (bad JSON, schema decode failure, timeout) must
-// Never be papered over with defaults — that silently drops all custom safety
-// Policy. `loadConfigResult` reports the failure as data so callers can fail
-// Closed loudly (see `loadConfig` and the dispatcher). A *missing* file is the
-// One legitimate defaults case.
+// A present but invalid config must not fall back to defaults because that
+// would drop custom safety policy. Only a missing file selects defaults.
 type ConfigLoad =
   | { readonly ok: true; readonly config: ResolvedConfig }
   | { readonly ok: false; readonly error: string };
@@ -141,9 +135,7 @@ export const loadConfigResult = (path: string = CONFIG_PATH): Effect.Effect<Conf
     }),
   );
 
-// Loud loader for library consumers (e.g. the shim daemon) that expect a
-// `Config`. A broken config dies rather than silently defaulting, so the
-// Consumer fails closed visibly until the file is fixed.
+// Library consumers get a loud failure instead of an unconfigured fallback.
 export const loadConfig = (path: string = CONFIG_PATH): Effect.Effect<ResolvedConfig> =>
   loadConfigResult(path).pipe(
     Effect.flatMap((result) =>
