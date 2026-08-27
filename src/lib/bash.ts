@@ -7,12 +7,11 @@
 // Shell operators (`;`, `&&`, `||`, `|`, `&`, newline). Each segment
 // Records its head token, positional args, flags, and redirect targets.
 //
-// Limitations:
-//   - No variable expansion. `$HOME` stays literal — rules that care about
-//     Paths should either reject literal env-var references or accept them.
-//   - Command substitution `$(...)` is collapsed into a single opaque
-//     Token (`__tripwire_cmd_sub__`) so safe-path checks fail safely.
-//   - Glob expansion is not performed.
+// Parsing notes:
+//   - Shell variables stay literal. Path rules handle known home references.
+//   - Command substitutions are inspected as nested commands. The outer
+//     command keeps an opaque marker for safe path classification.
+//   - Glob entries are expanded with Bun.Glob before path classification.
 
 import { parse, quote, type ParseEntry } from 'shell-quote';
 
