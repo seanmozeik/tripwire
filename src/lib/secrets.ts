@@ -1,120 +1,184 @@
-// Betterleaks supplies the maintained secret-rule set. Its `--pipe` mode also
-// Scans the working directory, so this adapter uses one scoped temporary file.
+// Betterleaks supplies the maintained secret-rule set. The stdin command keeps
+// scanned content in memory and writes its JSON report to stdout.
 
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
 
-interface BetterleaksFinding {
-  readonly RuleID: string;
-  readonly Description: string;
-  readonly StartLine: number;
-  readonly EndLine: number;
-  readonly Secret: string;
-  readonly Match: string;
-}
+import { Result, Schema } from 'effect';
 
-interface ScanResult {
+import type { SecretScannerConfig } from './config';
+
+const BetterleaksFindingSchema = Schema.Struct({
+  RuleID: Schema.String,
+  Description: Schema.String,
+  StartLine: Schema.Finite,
+  EndLine: Schema.Finite,
+  Secret: Schema.String,
+  Match: Schema.String,
+});
+
+const BetterleaksReportSchema = Schema.Array(BetterleaksFindingSchema);
+
+type BetterleaksFinding = typeof BetterleaksFindingSchema.Type;
+
+interface ScanSuccess {
+  readonly ok: true;
   readonly hits: readonly { readonly rule: string; readonly count: number }[];
   readonly redacted: string;
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
+type ScanFailureCategory = 'missing-executable' | 'timeout' | 'non-zero-exit' | 'malformed-json';
 
-const isBetterleaksFinding = (value: unknown): value is BetterleaksFinding =>
-  isRecord(value) &&
-  typeof value['RuleID'] === 'string' &&
-  typeof value['Description'] === 'string' &&
-  typeof value['StartLine'] === 'number' &&
-  typeof value['EndLine'] === 'number' &&
-  typeof value['Secret'] === 'string' &&
-  typeof value['Match'] === 'string';
+interface ScanFailure {
+  readonly ok: false;
+  readonly category: ScanFailureCategory;
+}
 
-const BETTERLEAKS_BIN = '/opt/homebrew/bin/betterleaks';
+type ScanResult = ScanSuccess | ScanFailure;
+
+interface ScannerInvocation {
+  readonly executable: string;
+  readonly args: readonly string[];
+  readonly input: string;
+  readonly timeoutMs: number;
+}
+
+interface ScannerProcessResult {
+  readonly status: number | null;
+  readonly stdout: string;
+  readonly error?: unknown;
+}
+
+type ScannerRunner = (invocation: ScannerInvocation) => ScannerProcessResult;
+
+const BETTERLEAKS_ARGS = [
+  'stdin',
+  '--report-format',
+  'json',
+  '--report-path',
+  '-',
+  '--exit-code',
+  '0',
+  '--no-banner',
+  '--no-color',
+  '--log-level',
+  'error',
+] as const;
+
+const defaultScannerRunner: ScannerRunner = ({ executable, args, input, timeoutMs }) => {
+  const result = spawnSync(executable, args, {
+    encoding: 'utf8',
+    input,
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ['pipe', 'pipe', 'ignore'],
+    timeout: timeoutMs,
+  });
+  const processResult: ScannerProcessResult = {
+    status: result.status,
+    stdout: typeof result.stdout === 'string' ? result.stdout : '',
+  };
+  return result.error === undefined ? processResult : { ...processResult, error: result.error };
+};
+
+const errorCode = (cause: unknown): string | undefined => {
+  if (typeof cause !== 'object' || cause === null || !('code' in cause)) {
+    return undefined;
+  }
+  return typeof cause.code === 'string' ? cause.code : undefined;
+};
+
+const classifyExecutionFailure = (cause: unknown): ScanFailureCategory => {
+  const code = errorCode(cause);
+  if (code === 'ENOENT') {
+    return 'missing-executable';
+  }
+  if (code === 'ETIMEDOUT') {
+    return 'timeout';
+  }
+  return 'non-zero-exit';
+};
 
 const summarizeHits = (
   findings: readonly BetterleaksFinding[],
 ): readonly { rule: string; count: number }[] => {
   const counts = new Map<string, number>();
-  for (const f of findings) {
-    counts.set(f.RuleID, (counts.get(f.RuleID) ?? 0) + 1);
+  for (const finding of findings) {
+    counts.set(finding.RuleID, (counts.get(finding.RuleID) ?? 0) + 1);
   }
   return [...counts.entries()].map(([rule, count]) => ({ rule, count }));
 };
 
-const escapeRegExp = (s: string): string => s.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+const escapeRegExp = (value: string): string =>
+  value.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 
 // Replace every found secret in the original input with a tagged redaction.
 const redactWith = (input: string, findings: readonly BetterleaksFinding[]): string => {
-  let out = input;
+  let output = input;
   // Sort by length descending so shorter matches that are substrings of
-  // Longer ones don't fire first and break the longer match.
+  // Longer ones do not fire first and break the longer match.
   const sorted = [...findings].toSorted((a, b) => b.Secret.length - a.Secret.length);
-  for (const f of sorted) {
-    if (f.Secret === '') {
+  for (const finding of sorted) {
+    if (finding.Secret === '') {
       continue;
     }
-    out = out.replaceAll(f.Secret, `[REDACTED:${f.RuleID}]`);
+    output = output.replaceAll(finding.Secret, `[REDACTED:${finding.RuleID}]`);
   }
-  return out;
+  return output;
 };
 
-const scanAndRedact = (input: string, timeoutMs = 5000): ScanResult => {
+const scanAndRedact = (
+  input: string,
+  config: SecretScannerConfig,
+  runner: ScannerRunner = defaultScannerRunner,
+): ScanResult => {
   if (input.length === 0) {
-    return { hits: [], redacted: input };
+    return { ok: true, hits: [], redacted: input };
   }
-  const dir = mkdtempSync(path.join(tmpdir(), 'tripwire-scan-'));
-  const inPath = path.join(dir, 'input');
-  const reportPath = path.join(dir, 'report.json');
+
+  let processResult: ScannerProcessResult;
   try {
-    writeFileSync(inPath, input);
-    const result = spawnSync(
-      BETTERLEAKS_BIN,
-      [
-        'detect',
-        '--no-git',
-        '--no-banner',
-        '--no-color',
-        '--report-format',
-        'json',
-        '--report-path',
-        reportPath,
-        '--source',
-        inPath,
-        '--exit-code',
-        '0',
-        '--log-level',
-        'error',
-      ],
-      { encoding: 'utf8', timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 },
-    );
-    if (result.error !== undefined) {
-      return { hits: [], redacted: input };
-    }
-    let findings: BetterleaksFinding[];
-    try {
-      const raw = readFileSync(reportPath, 'utf8');
-      const parsed = JSON.parse(raw || '[]') as unknown;
-      findings = Array.isArray(parsed) ? parsed.filter((value) => isBetterleaksFinding(value)) : [];
-    } catch {
-      return { hits: [], redacted: input };
-    }
-    if (findings.length === 0) {
-      return { hits: [], redacted: input };
-    }
-    return { hits: summarizeHits(findings), redacted: redactWith(input, findings) };
-  } finally {
-    try {
-      rmSync(dir, { recursive: true, force: true });
-    } catch {
-      // Best-effort cleanup.
-    }
+    processResult = runner({
+      executable: config.executable,
+      args: BETTERLEAKS_ARGS,
+      input,
+      timeoutMs: config.timeoutMs,
+    });
+  } catch {
+    return { ok: false, category: 'non-zero-exit' };
   }
+
+  if (processResult.error !== undefined) {
+    return { ok: false, category: classifyExecutionFailure(processResult.error) };
+  }
+  if (processResult.status !== 0) {
+    return { ok: false, category: 'non-zero-exit' };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(processResult.stdout) as unknown;
+  } catch {
+    return { ok: false, category: 'malformed-json' };
+  }
+
+  const decoded = Schema.decodeUnknownResult(BetterleaksReportSchema)(parsed);
+  if (Result.isFailure(decoded)) {
+    return { ok: false, category: 'malformed-json' };
+  }
+
+  const findings = decoded.success;
+  return { ok: true, hits: summarizeHits(findings), redacted: redactWith(input, findings) };
 };
 
-// `escapeRegExp` is exported so tests / callers can build patterns over the
-// Redacted output without re-implementing escaping.
-export type { BetterleaksFinding, ScanResult };
+// `escapeRegExp` is exported so tests and callers can build patterns over the
+// Redacted output without reimplementing escaping.
+export type {
+  BetterleaksFinding,
+  ScanFailure,
+  ScanFailureCategory,
+  ScannerInvocation,
+  ScannerProcessResult,
+  ScannerRunner,
+  ScanResult,
+  ScanSuccess,
+};
 export { escapeRegExp, scanAndRedact };

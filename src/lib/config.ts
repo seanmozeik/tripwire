@@ -41,12 +41,18 @@ const ToolPolicySchema = Schema.Struct({
   match: Schema.optional(ToolPolicyMatchSchema),
 });
 
+const SecretScannerConfigSchema = Schema.Struct({
+  executable: Schema.String,
+  timeoutMs: Schema.Finite.check(Schema.isGreaterThan(0)),
+});
+
 const ConfigSchema = Schema.Struct({
   git: Schema.optional(GitConfigSchema),
   safePaths: Schema.optional(SafePathsConfigSchema),
   toolPolicies: Schema.optional(Schema.Array(ToolPolicySchema)),
   blockedCommands: Schema.optional(Schema.Array(BlockRuleSchema)),
   allowedCommands: Schema.optional(Schema.Array(BlockRuleSchema)),
+  secretScanner: Schema.optional(SecretScannerConfigSchema),
 });
 
 const CONFIG_PATH = `${homedir()}/.config/tripwire/config.json`;
@@ -87,6 +93,7 @@ const getDefaultConfig = (): ResolvedConfig => ({
   toolPolicies: [],
   blockedCommands: [],
   allowedCommands: [],
+  secretScanner: { executable: 'betterleaks', timeoutMs: 5000 },
 });
 
 const mergeWithDefaults = (partial: Config): ResolvedConfig => {
@@ -101,6 +108,7 @@ const mergeWithDefaults = (partial: Config): ResolvedConfig => {
     toolPolicies: partial.toolPolicies ?? defaults.toolPolicies,
     blockedCommands: partial.blockedCommands ?? defaults.blockedCommands,
     allowedCommands: partial.allowedCommands ?? defaults.allowedCommands,
+    secretScanner: partial.secretScanner ?? defaults.secretScanner,
   };
 };
 
@@ -149,6 +157,7 @@ export type BlockRule = typeof BlockRuleSchema.Type;
 export type GitConfig = typeof GitConfigSchema.Type;
 export type SafePathsConfig = typeof SafePathsConfigSchema.Type;
 export type ToolPolicy = typeof ToolPolicySchema.Type;
+export type SecretScannerConfig = typeof SecretScannerConfigSchema.Type;
 export type Config = typeof ConfigSchema.Type;
 
 export interface ResolvedConfig {
@@ -160,7 +169,14 @@ export interface ResolvedConfig {
   readonly toolPolicies: readonly ToolPolicy[];
   readonly blockedCommands: readonly BlockRule[];
   readonly allowedCommands: readonly BlockRule[];
+  readonly secretScanner: SecretScannerConfig;
 }
 
 export type { ConfigLoad };
-export { CONFIG_PATH, ConfigSchema, getDefaultConfig, mergeWithDefaults };
+export {
+  CONFIG_PATH,
+  ConfigSchema,
+  SecretScannerConfigSchema,
+  getDefaultConfig,
+  mergeWithDefaults,
+};

@@ -62,6 +62,9 @@ Every default is configurable, and you can add your own allow and deny rules on 
 
 ## Install
 
+Tripwire requires Betterleaks 1.5.0 or later for post-tool secret scanning.
+Install `betterleaks` on `PATH` before you enable the hook.
+
 ```bash
 bun install -g @seanmozeik/tripwire
 ```
@@ -177,7 +180,8 @@ Drop a `~/.config/tripwire/config.json` to add local policy. Unknown keys are re
   ],
   "allowedCommands": [
     { "pattern": "my-custom-tool", "message": "Allowing my-custom-tool per your configuration" }
-  ]
+  ],
+  "secretScanner": { "executable": "betterleaks", "timeoutMs": 5000 }
 }
 ```
 
@@ -194,6 +198,13 @@ Drop a `~/.config/tripwire/config.json` to add local policy. Unknown keys are re
 - `absolute` (string[]): additional absolute paths where destructive operations are allowed.
 
 Built-in safe paths already cover `dist`, `build`, `.next`, `node_modules`, `/tmp`, `/var/tmp`, and other common build and cache directories.
+
+**`secretScanner`** configures Betterleaks 1.5.0 or later:
+
+- `executable` (string, default `"betterleaks"`): executable name resolved through `PATH`, or an absolute path.
+- `timeoutMs` (positive finite number, default `5000`): maximum scanner runtime in milliseconds.
+
+Post-tool scanning fails closed. If Betterleaks is missing, times out, exits with an error, or emits an invalid report, Tripwire blocks the original tool output and returns a safe capability error. It never includes the unverified output or raw scanner diagnostics in that error.
 
 **`toolPolicies`** is an ordered array of local package-manager and utility preferences:
 

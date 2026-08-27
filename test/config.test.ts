@@ -36,6 +36,7 @@ describe('loadConfigResult', () => {
       expect(result.config.git.enforceConventionalCommits).toBe(false);
       expect(result.config.toolPolicies).toEqual([]);
       expect(result.config.blockedCommands).toEqual([]);
+      expect(result.config.secretScanner).toEqual({ executable: 'betterleaks', timeoutMs: 5000 });
     }
   });
 
@@ -81,6 +82,50 @@ describe('loadConfigResult', () => {
         enforceConventionalCommits: true,
       });
       expect(result.config.toolPolicies[0]?.rule).toBe('prefer-example');
+    }
+  });
+
+  test('loads typed secret scanner configuration', async () => {
+    await writeFile(
+      configPath,
+      JSON.stringify({ secretScanner: { executable: '/custom/bin/betterleaks', timeoutMs: 1250 } }),
+    );
+
+    const result = await Effect.runPromise(loadConfigResult(configPath));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.config.secretScanner).toEqual({
+        executable: '/custom/bin/betterleaks',
+        timeoutMs: 1250,
+      });
+    }
+  });
+
+  test('rejects non-positive scanner timeout', async () => {
+    await writeFile(
+      configPath,
+      JSON.stringify({ secretScanner: { executable: 'betterleaks', timeoutMs: 0 } }),
+    );
+
+    const result = await Effect.runPromise(loadConfigResult(configPath));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('timeoutMs');
+    }
+  });
+
+  test('rejects unknown scanner fields', async () => {
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        secretScanner: { executable: 'betterleaks', timeoutMs: 5000, extra: true },
+      }),
+    );
+
+    const result = await Effect.runPromise(loadConfigResult(configPath));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('extra');
     }
   });
 
@@ -189,7 +234,7 @@ describe('dispatcher on broken config', () => {
     await rm(home, { force: true, recursive: true });
   });
 
-  test('PostToolUse still scans output, then the next PreToolUse fails closed', async () => {
+  test('PostToolUse still fails closed, then the next PreToolUse denies the config', async () => {
     const home = await mkdtemp(path.join(tmpdir(), 'tripwire-home-'));
     await mkdir(path.join(home, '.config', 'tripwire'), { recursive: true });
     await writeFile(
@@ -198,8 +243,8 @@ describe('dispatcher on broken config', () => {
     );
 
     const run = (event: HookEvent) => {
-      const proc = Bun.spawnSync(['bun', 'src/dispatch.ts'], {
-        env: { ...process.env, HOME: home },
+      const proc = Bun.spawnSync([process.execPath, 'src/dispatch.ts'], {
+        env: { ...process.env, HOME: home, PATH: path.join(home, 'empty-path') },
         stdin: new TextEncoder().encode(JSON.stringify(event)),
         stdout: 'pipe',
         stderr: 'pipe',
@@ -207,16 +252,20 @@ describe('dispatcher on broken config', () => {
       expect(proc.exitCode).toBe(0);
       return JSON.parse(proc.stdout.toString()) as {
         decision?: string;
+        reason?: string;
         hookSpecificOutput?: { permissionDecision?: string };
       };
     };
 
+    const fixture = 'SYNTHETIC_SCANNER_INPUT';
     const post = run({
       hook_event_name: 'PostToolUse',
       tool_name: 'Bash',
-      tool_response: { stdout: 'ghp_123456789012345678901234567890123456' },
+      tool_response: { stdout: fixture },
     });
     expect(post.decision).toBe('block');
+    expect(post.reason).toContain('secret-scanner-failed');
+    expect(post.reason).not.toContain(fixture);
 
     const nextPre = run({
       hook_event_name: 'PreToolUse',

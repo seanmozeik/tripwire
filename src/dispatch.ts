@@ -9,10 +9,12 @@ import { Cause, Data, Effect, Exit, Schema } from 'effect';
 import { parseCommand } from './lib/bash';
 import {
   CONFIG_PATH,
+  getDefaultConfig,
   loadConfigResult,
   mergeWithDefaults,
   type Config,
   type ResolvedConfig,
+  type SecretScannerConfig,
 } from './lib/config';
 import { cursorHost, normalizeHookInput, type HookHost } from './lib/cursor';
 import { type Decision, allow, deny, merge } from './lib/decision';
@@ -260,11 +262,18 @@ const collectPreToolUseRules = (tool: string, input: unknown, config: ResolvedCo
   return rules;
 };
 
-const collectPostToolUseRules = (tool: string, response: unknown): Rule[] => {
+const collectPostToolUseRules = (
+  tool: string,
+  response: unknown,
+  secretScanner: SecretScannerConfig,
+): Rule[] => {
   if (tool === 'Bash' || tool === 'PowerShell' || tool === 'Read' || tool === 'WebFetch') {
     const scanTool = tool === 'PowerShell' ? 'Bash' : tool;
     return [
-      { name: 'post-secret-scrub', fn: () => postSecretScrub({ toolName: scanTool, response }) },
+      {
+        name: 'post-secret-scrub',
+        fn: () => postSecretScrub({ toolName: scanTool, response, secretScanner }),
+      },
     ];
   }
   return [];
@@ -305,7 +314,9 @@ const decide = (event: HookEvent, config: Config = {}): Decision => {
     return runRulesSync(collectPreToolUseRules(tool, event.tool_input, mergedConfig));
   }
   if (event.hook_event_name === 'PostToolUse') {
-    return runRulesSync(collectPostToolUseRules(tool, event.tool_response));
+    return runRulesSync(
+      collectPostToolUseRules(tool, event.tool_response, mergedConfig.secretScanner),
+    );
   }
   return allow('no-rules');
 };
@@ -418,8 +429,11 @@ const program = Effect.gen(function* tripwireProgram() {
 
   if (event.hook_event_name === 'PostToolUse') {
     const tool = normalizeToolName(event.tool_name ?? '');
+    const secretScanner = configLoad.ok
+      ? configLoad.config.secretScanner
+      : getDefaultConfig().secretScanner;
     const decision = yield* runRules(
-      collectPostToolUseRules(tool, event.tool_response),
+      collectPostToolUseRules(tool, event.tool_response, secretScanner),
       RULE_TIMEOUT_MS,
     );
     if (decision.kind === 'deny') {

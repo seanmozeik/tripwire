@@ -80,14 +80,30 @@ describe('PowerShell handling', () => {
     expect(decision.message).toContain('Use the Bash tool');
   });
 
-  test('post-tool calls scan PowerShell stdout for secrets', () => {
-    const decision = decide({
-      hook_event_name: 'PostToolUse',
-      tool_name: 'powershell',
-      tool_response: { stdout: 'ghp_123456789012345678901234567890123456' },
-    });
+  test('post-tool calls fail closed when the scanner is missing', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'tripwire-missing-scanner-'));
+    const fixture = 'SYNTHETIC_POWERSHELL_OUTPUT';
+    try {
+      const decision = decide(
+        {
+          hook_event_name: 'PostToolUse',
+          tool_name: 'powershell',
+          tool_response: { stdout: fixture },
+        },
+        {
+          secretScanner: {
+            executable: path.join(dir, 'betterleaks-not-installed'),
+            timeoutMs: 250,
+          },
+        },
+      );
 
-    expect(decision.kind).toBe('deny');
-    expect(decision.rule).toBe('secrets-in-output');
+      expect(decision.kind).toBe('deny');
+      expect(decision.rule).toBe('secret-scanner-failed');
+      expect(decision.message).toContain('missing-executable');
+      expect(decision.message).not.toContain(fixture);
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
   });
 });
