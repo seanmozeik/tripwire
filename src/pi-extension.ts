@@ -119,6 +119,66 @@ const editStrings = (
   };
 };
 
+const applyPatchInputs = (patch: string): readonly Record<string, unknown>[] => {
+  const fileHeader = /^\*{3}\s+(?:Add|Update|Delete)\s+File\s*:\s*(?<path>\S.*?)\s*$/;
+  const moveHeader = /^\*{3}\s+Move\s+to\s*:\s*(?<path>\S.*?)\s*$/;
+  const byPath = new Map<string, { newLines: string[]; oldLines: string[] }>();
+  let currentPaths: string[] = [];
+  const beginMarker = '*** Begin Patch';
+  const endMarker = '*** End Patch';
+  const lines = patch.split(/\r?\n/);
+  const beginIndex = lines.findIndex((line) => line.trim() === beginMarker);
+  if (beginIndex === -1) {
+    return [];
+  }
+  const unboundedBody = lines.slice(beginIndex + 1);
+  const endIndex = [...unboundedBody, endMarker].findIndex((line) => line.trim() === endMarker);
+  const body = unboundedBody.slice(0, endIndex);
+
+  const addCurrentPath = (filePath: string): void => {
+    currentPaths.push(filePath);
+    if (!byPath.has(filePath)) {
+      byPath.set(filePath, { newLines: [], oldLines: [] });
+    }
+  };
+
+  for (const line of body) {
+    const fileMatch = fileHeader.exec(line);
+    const filePath = fileMatch?.groups?.['path']?.trim();
+    if (filePath !== undefined && filePath.length > 0) {
+      currentPaths = [];
+      addCurrentPath(filePath);
+      continue;
+    }
+    if (currentPaths.length === 0) {
+      continue;
+    }
+    const moveMatch = moveHeader.exec(line);
+    const movePath = moveMatch?.groups?.['path']?.trim();
+    if (movePath !== undefined && movePath.length > 0) {
+      addCurrentPath(movePath);
+      continue;
+    }
+    let linesKey: 'newLines' | 'oldLines' | undefined;
+    if (line.startsWith('+')) {
+      linesKey = 'newLines';
+    } else if (line.startsWith('-')) {
+      linesKey = 'oldLines';
+    }
+    if (linesKey !== undefined) {
+      for (const path of currentPaths) {
+        byPath.get(path)?.[linesKey].push(line.slice(1));
+      }
+    }
+  }
+
+  return [...byPath].map(([filePath, strings]) => ({
+    file_path: filePath,
+    new_string: strings.newLines.join('\n'),
+    old_string: strings.oldLines.join('\n'),
+  }));
+};
+
 const normalizedToolInputs = (event: PiToolCallEvent): readonly Record<string, unknown>[] => {
   const { input, toolName } = event;
   if (toolName === 'bash' || toolName === 'powershell') {
@@ -136,6 +196,10 @@ const normalizedToolInputs = (event: PiToolCallEvent): readonly Record<string, u
     ];
   }
   if (toolName === 'edit') {
+    const patchInputs = applyPatchInputs(stringField(input, 'input') ?? '');
+    if (patchInputs.length > 0) {
+      return patchInputs;
+    }
     const directPath = stringField(input, 'path') ?? stringField(input, 'file_path');
     const paths = stringArrayField(input, 'paths');
     let targets = paths;

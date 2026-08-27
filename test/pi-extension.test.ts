@@ -154,6 +154,58 @@ describe('Tripwire Pi extension', () => {
     expect(hashlineInputs[1]).toMatchObject({
       tool_input: { file_path: '.env', new_string: '¶one.ts#abcd\n+change' },
     });
+
+    const applyPatchInputs = hookInputs(
+      {
+        input: {
+          input: `Apply this patch exactly:
+
+*** Begin Patch
+*** Update File: package.json
+@@
+-  "version": "0.7.0"
++  "version": "0.7.1"
+*** Add File: src/added.ts
++export const added = true;
++export const marker = '*** End Patch';
+*** Update File: src/old.ts
+*** Move to: src/new.ts
+@@
+-const oldName = true;
++const newName = true;
+*** Delete File: .oxlintrc.json
+*** End Patch`,
+        },
+        toolCallId: 'edit-3',
+        toolName: 'edit',
+      },
+      'PreToolUse',
+      root,
+    );
+    expect(applyPatchInputs).toHaveLength(5);
+    expect(applyPatchInputs.map((input) => input['tool_input'])).toEqual([
+      {
+        file_path: 'package.json',
+        new_string: '  "version": "0.7.1"',
+        old_string: '  "version": "0.7.0"',
+      },
+      {
+        file_path: 'src/added.ts',
+        new_string: "export const added = true;\nexport const marker = '*** End Patch';",
+        old_string: '',
+      },
+      {
+        file_path: 'src/old.ts',
+        new_string: 'const newName = true;',
+        old_string: 'const oldName = true;',
+      },
+      {
+        file_path: 'src/new.ts',
+        new_string: 'const newName = true;',
+        old_string: 'const oldName = true;',
+      },
+      { file_path: '.oxlintrc.json', new_string: '', old_string: '' },
+    ]);
   });
 
   test('converts Pi text blocks into post-tool secret-scan input', () => {
