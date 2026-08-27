@@ -11,6 +11,7 @@ import path from 'node:path';
 
 import { Effect } from 'effect';
 
+import { decide } from '../src';
 import { loadConfig, loadConfigResult } from '../src/lib/config';
 import type { HookEvent } from '../src/lib/event';
 
@@ -31,7 +32,9 @@ describe('loadConfigResult', () => {
     const result = await Effect.runPromise(loadConfigResult(path.join(dir, 'absent.json')));
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.config.git?.protectedBranches).toContain('main');
+      expect(result.config.git.protectedBranches).toEqual([]);
+      expect(result.config.git.enforceConventionalCommits).toBe(false);
+      expect(result.config.toolPolicies).toEqual([]);
       expect(result.config.blockedCommands).toEqual([]);
     }
   });
@@ -47,10 +50,65 @@ describe('loadConfigResult', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.config.blockedCommands).toHaveLength(1);
-      expect(result.config.blockedCommands?.[0]?.pattern).toBe('example-danger');
+      expect(result.config.blockedCommands[0]?.pattern).toBe('example-danger');
       // Defaults still merged in for the untouched sections.
-      expect(result.config.git?.enforceConventionalCommits).toBe(true);
+      expect(result.config.git.enforceConventionalCommits).toBe(false);
     }
+  });
+
+  test('loads typed tool policies and deep-merges partial Git policy', async () => {
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        git: { enforceConventionalCommits: true },
+        toolPolicies: [
+          {
+            rule: 'prefer-example',
+            executables: ['legacy-example'],
+            action: 'warn',
+            message: 'Use example instead.',
+            match: { argumentsStartWith: ['scan'], shortFlagsIncludeAll: ['r'] },
+          },
+        ],
+      }),
+    );
+
+    const result = await Effect.runPromise(loadConfigResult(configPath));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.config.git).toEqual({
+        protectedBranches: [],
+        enforceConventionalCommits: true,
+      });
+      expect(result.config.toolPolicies[0]?.rule).toBe('prefer-example');
+    }
+  });
+
+  test('applies a tool policy through the file loader and dispatcher', async () => {
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        toolPolicies: [
+          {
+            rule: 'prefer-example',
+            executables: ['legacy-example'],
+            action: 'warn',
+            message: 'Use example instead.',
+          },
+        ],
+      }),
+    );
+
+    const config = await Effect.runPromise(loadConfig(configPath));
+    const decision = decide(
+      {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Bash',
+        tool_input: { command: 'legacy-example scan' },
+      },
+      config,
+    );
+    expect(decision).toMatchObject({ kind: 'warn', rule: 'prefer-example' });
   });
 
   test('unknown top-level key → ok:false naming the key (the rtk trigger)', async () => {
@@ -85,7 +143,7 @@ describe('loadConfig (loud loader)', () => {
   test('valid config resolves to the merged Config', async () => {
     await writeFile(configPath, JSON.stringify({ allowedCommands: [] }));
     const config = await Effect.runPromise(loadConfig(configPath));
-    expect(config.git?.protectedBranches).toContain('main');
+    expect(config.git.protectedBranches).toEqual([]);
   });
 });
 

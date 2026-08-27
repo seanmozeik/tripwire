@@ -8,7 +8,7 @@ import { describe, expect, test } from 'bun:test';
 
 import { decide } from '../src';
 import { EXEC_SPECS, parseCommand, safeScopesSummary } from '../src/lib/bash';
-import type { Config, GitConfig, SafePathsConfig } from '../src/lib/config';
+import type { Config, GitConfig, SafePathsConfig, ToolPolicy } from '../src/lib/config';
 import type { HookEvent } from '../src/lib/event';
 import { bashDeny } from '../src/rules/bash-deny';
 import { bashGit } from '../src/rules/bash-git';
@@ -16,10 +16,10 @@ import { bashNetworkInstall } from '../src/rules/bash-network-install';
 import { bashRedirect } from '../src/rules/bash-redirect';
 import { bashScopedRm } from '../src/rules/bash-scoped-rm';
 import { bashTarExplosion } from '../src/rules/bash-tar-explosion';
-import { bashToolPolicy } from '../src/rules/bash-tool-policy';
 import { lazyCode } from '../src/rules/lazy-code';
 import { pathProtect } from '../src/rules/path-protect';
 import { readProtect } from '../src/rules/read-protect';
+import { toolPolicy } from '../src/rules/tool-policy';
 
 const defaultGitConfig: GitConfig = {
   protectedBranches: ['main', 'master', 'develop', 'production', 'release'],
@@ -27,6 +27,50 @@ const defaultGitConfig: GitConfig = {
 };
 
 const defaultSafePathsConfig: SafePathsConfig = {};
+
+const personalToolPolicies: readonly ToolPolicy[] = [
+  {
+    rule: 'use-bun-not-npm',
+    executables: ['npm', 'npx', 'pnpm', 'yarn'],
+    action: 'deny',
+    message: 'Use bun.',
+  },
+  { rule: 'use-uv-not-pip', executables: ['pip', 'pip3'], action: 'deny', message: 'Use uv.' },
+  {
+    rule: 'use-uv-sync-not-venv',
+    executables: ['python', 'python3'],
+    action: 'deny',
+    message: 'Use uv sync.',
+    match: { argumentsIncludeAll: ['-m', 'venv'] },
+  },
+  {
+    rule: 'uv-sync-over-uv-venv',
+    executables: ['uv'],
+    action: 'deny',
+    message: 'Use uv sync.',
+    match: { argumentsStartWith: ['venv'] },
+  },
+  {
+    rule: 'use-bun-patch-not-patch-package',
+    executables: ['patch-package'],
+    action: 'deny',
+    message: 'Use bun patch.',
+  },
+  { rule: 'consider-fd', executables: ['find'], action: 'warn', message: 'Consider fd.' },
+  {
+    rule: 'consider-rg',
+    executables: ['grep', 'egrep', 'fgrep'],
+    action: 'warn',
+    message: 'Consider rg.',
+  },
+  {
+    rule: 'rg-r-is-replace',
+    executables: ['rg'],
+    action: 'warn',
+    message: 'The short r flag means replace.',
+    match: { shortFlagsIncludeAll: ['r'] },
+  },
+];
 
 const bashEvent = (command: string): HookEvent => ({
   hook_event_name: 'PreToolUse',
@@ -43,7 +87,7 @@ const allRules = (cmd: string) => {
     redirect: bashRedirect(segs, cmd),
     netinstall: bashNetworkInstall(segs, cmd),
     tar: bashTarExplosion(segs, cmd),
-    policy: bashToolPolicy(segs, cmd),
+    policy: toolPolicy(segs, cmd, personalToolPolicies),
   };
 };
 
@@ -60,10 +104,16 @@ const runDispatch = (event: HookEvent): unknown => {
 };
 
 describe('decide API', () => {
-  test('denies destructive git push to a protected branch', () => {
-    const decision = decide(bashEvent('git push origin main'));
+  test('denies destructive git push to a configured protected branch', () => {
+    const decision = decide(bashEvent('git push origin main'), { git: defaultGitConfig });
     expect(decision.kind).toBe('deny');
     expect(decision.rule).toBe('git-push-protected');
+  });
+
+  test('does not impose personal tool or Git workflow preferences by default', () => {
+    expect(decide(bashEvent('npm --version')).kind).toBe('allow');
+    expect(decide(bashEvent('git push origin main')).kind).toBe('allow');
+    expect(decide(bashEvent('git commit -m "work in progress"')).kind).toBe('allow');
   });
 
   test('allows git status', () => {
@@ -600,7 +650,7 @@ describe('bash-tar-explosion', () => {
   });
 });
 
-describe('bash-tool-policy', () => {
+describe('tool-policy', () => {
   test('denies npm install', () => {
     expect(allRules('npm install').policy.kind).toBe('deny');
   });
@@ -634,13 +684,19 @@ describe('bash-tool-policy', () => {
   test('warns on grep', () => {
     expect(allRules('grep -r pattern .').policy.kind).toBe('warn');
   });
+  test('warns when an rg short-flag group contains r', () => {
+    expect(allRules('rg -rn pattern .').policy.kind).toBe('warn');
+  });
+  test('does not treat a long rg flag containing r as the short r flag', () => {
+    expect(allRules('rg --crlf pattern .').policy.kind).toBe('allow');
+  });
   test('allows bun add', () => {
     expect(allRules('bun add foo').policy.kind).toBe('allow');
   });
   test('allows uv add', () => {
     expect(allRules('uv add requests').policy.kind).toBe('allow');
   });
-  // Generality regression: a third command-name rule family (bash-tool-policy)
+  // Generality regression: a third command-name rule family (tool-policy)
   // Also benefits from the central head normalisation.
   test('warns on grep invoked by absolute path', () => {
     expect(allRules('/usr/bin/grep -r pattern .').policy.kind).toBe('warn');

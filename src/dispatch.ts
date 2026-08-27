@@ -20,10 +20,10 @@ import { Cause, Effect, Exit, Schema } from 'effect';
 import { parseCommand } from './lib/bash';
 import {
   CONFIG_PATH,
-  getDefaultConfig,
   loadConfigResult,
   mergeWithDefaults,
   type Config,
+  type ResolvedConfig,
 } from './lib/config';
 import { cursorHost, normalizeHookInput, type HookHost } from './lib/cursor';
 import { type Decision, allow, deny, merge } from './lib/decision';
@@ -46,12 +46,12 @@ import { bashNetworkInstall } from './rules/bash-network-install';
 import { bashRedirect } from './rules/bash-redirect';
 import { bashScopedRm } from './rules/bash-scoped-rm';
 import { bashTarExplosion } from './rules/bash-tar-explosion';
-import { bashToolPolicy } from './rules/bash-tool-policy';
 import { configCustom } from './rules/config-custom';
 import { lazyCode } from './rules/lazy-code';
 import { pathProtect } from './rules/path-protect';
 import { postSecretScrub } from './rules/post-secret-scrub';
 import { readProtect } from './rules/read-protect';
+import { toolPolicy } from './rules/tool-policy';
 
 const readStdin = async (): Promise<string> => {
   const chunks: Buffer[] = [];
@@ -200,33 +200,27 @@ interface Rule {
   readonly fn: RuleFn;
 }
 
-const collectPreToolUseRules = (tool: string, input: unknown, config: Config): Rule[] => {
+const collectPreToolUseRules = (tool: string, input: unknown, config: ResolvedConfig): Rule[] => {
   const rules: Rule[] = [];
   if (tool === 'Bash' && isBashInput(input)) {
     const i: BashInput = input;
     const segments = parseCommand(i.command);
     rules.push({ name: 'bash-deny', fn: () => bashDeny(segments, i.command) });
-    rules.push({
-      name: 'bash-git',
-      fn: () => bashGit(segments, i.command, config.git ?? { enforceConventionalCommits: true }),
-    });
+    rules.push({ name: 'bash-git', fn: () => bashGit(segments, i.command, config.git) });
     rules.push({
       name: 'bash-scoped-rm',
-      fn: () => bashScopedRm(segments, i.command, config.safePaths ?? {}),
+      fn: () => bashScopedRm(segments, i.command, config.safePaths),
     });
     rules.push({ name: 'bash-redirect', fn: () => bashRedirect(segments, i.command) });
     rules.push({ name: 'bash-network-install', fn: () => bashNetworkInstall(segments, i.command) });
     rules.push({ name: 'bash-tar-explosion', fn: () => bashTarExplosion(segments, i.command) });
-    rules.push({ name: 'bash-tool-policy', fn: () => bashToolPolicy(segments, i.command) });
+    rules.push({
+      name: 'tool-policy',
+      fn: () => toolPolicy(segments, i.command, config.toolPolicies),
+    });
     rules.push({
       name: 'config-custom',
-      fn: () =>
-        configCustom(
-          segments,
-          i.command,
-          config.blockedCommands ?? [],
-          config.allowedCommands ?? [],
-        ),
+      fn: () => configCustom(segments, i.command, config.blockedCommands, config.allowedCommands),
     });
     return rules;
   }
@@ -275,7 +269,7 @@ const runRulesSync = (rules: readonly Rule[]): Decision => {
   return merge(rules.map((r) => r.fn()));
 };
 
-const decide = (event: HookEvent, config: Config = getDefaultConfig()): Decision => {
+const decide = (event: HookEvent, config: Config = {}): Decision => {
   const mergedConfig = mergeWithDefaults(config);
   const tool = normalizeToolName(event.tool_name ?? '');
   if (event.hook_event_name === 'PreToolUse') {

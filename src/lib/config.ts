@@ -27,9 +27,24 @@ const SafePathsConfigSchema = Schema.Struct({
   absolute: Schema.optional(Schema.Array(Schema.String)),
 });
 
+const ToolPolicyMatchSchema = Schema.Struct({
+  argumentsIncludeAll: Schema.optional(Schema.Array(Schema.String)),
+  argumentsStartWith: Schema.optional(Schema.Array(Schema.String)),
+  shortFlagsIncludeAll: Schema.optional(Schema.Array(Schema.String)),
+});
+
+const ToolPolicySchema = Schema.Struct({
+  rule: Schema.String,
+  executables: Schema.Array(Schema.String),
+  action: Schema.Union([Schema.Literal('deny'), Schema.Literal('warn')]),
+  message: Schema.String,
+  match: Schema.optional(ToolPolicyMatchSchema),
+});
+
 const ConfigSchema = Schema.Struct({
   git: Schema.optional(GitConfigSchema),
   safePaths: Schema.optional(SafePathsConfigSchema),
+  toolPolicies: Schema.optional(Schema.Array(ToolPolicySchema)),
   blockedCommands: Schema.optional(Schema.Array(BlockRuleSchema)),
   allowedCommands: Schema.optional(Schema.Array(BlockRuleSchema)),
 });
@@ -59,22 +74,28 @@ const parseConfigJson = (raw: string): Effect.Effect<unknown, Error> =>
 const decodeConfig = (unknown: unknown): Effect.Effect<Config, Error> =>
   Schema.decodeUnknownEffect(ConfigSchema)(unknown, { onExcessProperty: 'error' });
 
-const getDefaultConfig = (): Config => ({
-  git: {
-    protectedBranches: ['main', 'master', 'develop', 'production', 'release'],
-    enforceConventionalCommits: true,
-  },
+const getDefaultConfig = (): ResolvedConfig => ({
+  git: { protectedBranches: [], enforceConventionalCommits: false },
   safePaths: {},
+  toolPolicies: [],
   blockedCommands: [],
   allowedCommands: [],
 });
 
-const mergeWithDefaults = (partial: Config): Config => ({
-  git: partial.git ?? getDefaultConfig().git,
-  safePaths: partial.safePaths ?? getDefaultConfig().safePaths,
-  blockedCommands: partial.blockedCommands ?? getDefaultConfig().blockedCommands,
-  allowedCommands: partial.allowedCommands ?? getDefaultConfig().allowedCommands,
-});
+const mergeWithDefaults = (partial: Config): ResolvedConfig => {
+  const defaults = getDefaultConfig();
+  return {
+    git: {
+      protectedBranches: partial.git?.protectedBranches ?? defaults.git.protectedBranches,
+      enforceConventionalCommits:
+        partial.git?.enforceConventionalCommits ?? defaults.git.enforceConventionalCommits,
+    },
+    safePaths: { ...defaults.safePaths, ...partial.safePaths },
+    toolPolicies: partial.toolPolicies ?? defaults.toolPolicies,
+    blockedCommands: partial.blockedCommands ?? defaults.blockedCommands,
+    allowedCommands: partial.allowedCommands ?? defaults.allowedCommands,
+  };
+};
 
 // A present-but-broken config (bad JSON, schema decode failure, timeout) must
 // Never be papered over with defaults — that silently drops all custom safety
@@ -82,7 +103,7 @@ const mergeWithDefaults = (partial: Config): Config => ({
 // Closed loudly (see `loadConfig` and the dispatcher). A *missing* file is the
 // One legitimate defaults case.
 type ConfigLoad =
-  | { readonly ok: true; readonly config: Config }
+  | { readonly ok: true; readonly config: ResolvedConfig }
   | { readonly ok: false; readonly error: string };
 
 export const loadConfigResult = (path: string = CONFIG_PATH): Effect.Effect<ConfigLoad> =>
@@ -109,7 +130,7 @@ export const loadConfigResult = (path: string = CONFIG_PATH): Effect.Effect<Conf
 // Loud loader for library consumers (e.g. the shim daemon) that expect a
 // `Config`. A broken config dies rather than silently defaulting, so the
 // Consumer fails closed visibly until the file is fixed.
-export const loadConfig = (path: string = CONFIG_PATH): Effect.Effect<Config> =>
+export const loadConfig = (path: string = CONFIG_PATH): Effect.Effect<ResolvedConfig> =>
   loadConfigResult(path).pipe(
     Effect.flatMap((result) =>
       result.ok
@@ -121,7 +142,19 @@ export const loadConfig = (path: string = CONFIG_PATH): Effect.Effect<Config> =>
 export type BlockRule = typeof BlockRuleSchema.Type;
 export type GitConfig = typeof GitConfigSchema.Type;
 export type SafePathsConfig = typeof SafePathsConfigSchema.Type;
+export type ToolPolicy = typeof ToolPolicySchema.Type;
 export type Config = typeof ConfigSchema.Type;
+
+export interface ResolvedConfig {
+  readonly git: {
+    readonly protectedBranches: readonly string[];
+    readonly enforceConventionalCommits: boolean;
+  };
+  readonly safePaths: SafePathsConfig;
+  readonly toolPolicies: readonly ToolPolicy[];
+  readonly blockedCommands: readonly BlockRule[];
+  readonly allowedCommands: readonly BlockRule[];
+}
 
 export type { ConfigLoad };
 export { CONFIG_PATH, ConfigSchema, getDefaultConfig, mergeWithDefaults };

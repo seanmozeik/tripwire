@@ -25,16 +25,8 @@ import { type Decision, allow, ask, deny, warn } from '../lib/decision';
 // `git -c key=value` are stripped before subcommand dispatch — `git -C ../foo
 // Reset --hard` is handled the same as `git reset --hard`.
 
-const DEFAULT_PROTECTED_BRANCHES: readonly string[] = [
-  'main',
-  'master',
-  'develop',
-  'production',
-  'release',
-];
-
 const getProtectedBranches = (config: GitConfig): readonly string[] =>
-  config.protectedBranches ?? DEFAULT_PROTECTED_BRANCHES;
+  config.protectedBranches ?? [];
 
 // Conventional Commits 1.0.0 — type(scope)?(!)?: description
 const CONVENTIONAL_RE =
@@ -326,7 +318,7 @@ const handleCommit: Handler = ({ subArgs, config, heredocBodies }) => {
       '`git commit` without `-m "..."` opens an editor and hangs the agent. Use `git commit -m "<conventional message>"`.',
     );
   }
-  if (msg !== null && config.enforceConventionalCommits !== false && !CONVENTIONAL_RE.test(msg)) {
+  if (msg !== null && config.enforceConventionalCommits === true && !CONVENTIONAL_RE.test(msg)) {
     return deny(
       'git-commit-non-conventional',
       [

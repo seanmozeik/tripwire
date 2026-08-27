@@ -1,6 +1,6 @@
 # tripwire
 
-Opinionated coding-agent hooks dispatcher. One Bun entry point fronts Claude
+Configurable coding-agent hooks dispatcher. One Bun entry point fronts Claude
 Code, Codex, Cursor Agent, and pi hook events; rule modules decide allow /
 block / rewrite. Blocks return actionable error messages so the agent knows the
 right alternative.
@@ -54,7 +54,8 @@ Pi events into the same canonical hook payload:
 }
 ```
 
-Settings.json stays one line per event. All policy lives in this repo, version-controlled.
+Settings.json stays one line per event. Built-in safety policy lives in this repo; local workflow
+preferences live in `~/.config/tripwire/config.json`.
 
 ## Layout
 
@@ -64,7 +65,7 @@ src/
   pi-extension.ts    # native Pi adapter; fails closed if dispatch cannot run
   rules/
     bash-deny.ts     # rm -rf /, fork bomb, force push, dd of=/dev/, …
-    bash-rewrite.ts  # find → fd, grep → rg (suggest, don't block)
+    tool-policy.ts   # config-driven package-manager and utility preferences
     path-protect.ts  # .env, .ssh/, *.pem — block reads/writes by absolute path
     diff-aware.ts    # bad-words check on *added* lines only
   lib/

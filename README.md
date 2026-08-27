@@ -36,19 +36,21 @@ Rules are pure, synchronous functions over the parsed command. Bash commands are
 
 ## What it protects against
 
-The defaults are opinionated but conservative. Nothing here blocks ordinary work.
+The built-in rules cover destructive and secret-bearing operations. Personal workflow preferences
+are opt-in configuration, so Tripwire does not impose a package manager, utility set, branch model,
+or commit convention on a new installation.
 
 **Catastrophic commands.** `rm -rf /`, fork bombs, `dd` to raw disks, and the handful of one-liners that have no safe use.
 
 **Scoped destruction.** `rm` and `find -delete` are allowed only inside build and cache directories (`dist`, `build`, `node_modules`, `.next`, `/tmp`, and the rest). A delete anywhere else is denied with a pointer to `trash` or a graveyard tool, both recoverable.
 
-**Git policy.** Read-only git is free. History rewriting (`rebase -i`, `filter-branch`, `commit --amend`), working-tree destruction (`reset --hard`, `clean -fd`, `checkout .`), force-push, and direct push to protected branches (`main`, `master`, `develop`, `production`, `release`) are blocked. Commits are required to use Conventional Commits format and an inline `-m` message.
+**Git policy.** Read-only git is free. History rewriting (`rebase -i`, `filter-branch`, `commit --amend`), working-tree destruction (`reset --hard`, `clean -fd`, `checkout .`), and force-push are blocked. Configure protected branches and Conventional Commits enforcement if they match your workflow.
 
 **Network install scripts.** `curl … | bash` and `wget … | sh` are denied. Unreviewed code from the network does not get a shell.
 
 **Tar bombs.** Extractions that would escape the target directory or overwrite outside it are caught before they unpack.
 
-**Package-manager and tool policy.** Configurable nudges toward a single toolchain (for example bun over npm/pnpm/yarn) and toward modern equivalents of common utilities.
+**Package-manager and tool policy.** Optional deny or warn rules can enforce a preferred toolchain or suggest installed alternatives without baking those preferences into Tripwire.
 
 **File protection.** Reads and writes to `.env`, `.ssh/`, `*.pem`, `id_rsa*`, and similar are blocked so credentials never enter agent context.
 
@@ -140,7 +142,7 @@ tripwire test --post --tool=Bash --stdout='ghp_TOKEN'    # a PostToolUse output 
 
 ## Configuration
 
-Drop a `~/.config/tripwire/config.json` to extend or adjust the defaults. Unknown keys are rejected loudly rather than ignored, so a typo fails fast instead of silently disabling a rule.
+Drop a `~/.config/tripwire/config.json` to add local policy. Unknown keys are rejected loudly rather than ignored, so a typo fails fast instead of silently disabling a rule.
 
 ```json
 {
@@ -152,6 +154,20 @@ Drop a `~/.config/tripwire/config.json` to extend or adjust the defaults. Unknow
     "relative": ["dist", "build", ".next", "node_modules"],
     "absolute": ["/tmp", "/var/tmp"]
   },
+  "toolPolicies": [
+    {
+      "rule": "use-project-package-manager",
+      "executables": ["npm", "pnpm", "yarn"],
+      "action": "deny",
+      "message": "Use the package manager selected by this workspace."
+    },
+    {
+      "rule": "prefer-modern-search",
+      "executables": ["grep"],
+      "action": "warn",
+      "message": "Consider the configured modern search tool."
+    }
+  ],
   "blockedCommands": [
     { "pattern": "dangerous-tool", "message": "Use safer-alternative instead", "action": "deny" }
   ],
@@ -165,8 +181,8 @@ Drop a `~/.config/tripwire/config.json` to extend or adjust the defaults. Unknow
 
 **`git`**
 
-- `protectedBranches` (string[], default `["main", "master", "develop", "production", "release"]`): branches that cannot be pushed to directly.
-- `enforceConventionalCommits` (boolean, default `true`): require Conventional Commits format for commit messages.
+- `protectedBranches` (string[], default `[]`): branches that cannot be pushed to directly.
+- `enforceConventionalCommits` (boolean, default `false`): require Conventional Commits format for commit messages.
 
 **`safePaths`**
 
@@ -174,6 +190,18 @@ Drop a `~/.config/tripwire/config.json` to extend or adjust the defaults. Unknow
 - `absolute` (string[]): additional absolute paths where destructive operations are allowed.
 
 Built-in safe paths already cover `dist`, `build`, `.next`, `node_modules`, `/tmp`, `/var/tmp`, and other common build and cache directories.
+
+**`toolPolicies`** is an ordered array of local package-manager and utility preferences:
+
+- `rule` (string): stable identifier reported in the decision.
+- `executables` (string[]): command names that use this policy. Absolute paths match by basename.
+- `action` (`"deny"` | `"warn"`): block the command or allow it with guidance.
+- `message` (string): actionable guidance for the agent.
+- `match.argumentsIncludeAll` (string[]): apply only when all listed arguments are present.
+- `match.argumentsStartWith` (string[]): apply only when the argument list starts with this sequence.
+- `match.shortFlagsIncludeAll` (string[]): apply when every listed short flag occurs, including in a combined group such as `-rn`.
+
+The first matching tool policy wins. A `tripwire-allow` reason bypasses these local preferences.
 
 **`blockedCommands`** is an array of custom denials:
 
