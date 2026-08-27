@@ -153,11 +153,8 @@ const writePostToolBlock = (decision: Decision, host: HookHost): void => {
   process.stdout.write(`${JSON.stringify(out)}\n`);
 };
 
-// Tool names vary across hosts. Claude Code uses `Bash`/`Read`/`Write`/
-// `Edit`/`MultiEdit`. Codex sends `apply_patch` for file edits. Devin sends
-// `exec` for shell. Pi (via pi-hooks) sends lowercase `bash`/`read`/`write`/
-// `edit`, plus `powershell`. Normalize everything to the Claude vocabulary so
-// the rest of the dispatcher only deals with one set of names.
+// Tool names vary across hosts. Normalize Claude Code, Codex, Cursor, Pi, and
+// Oh My Pi names to one canonical vocabulary before rules run.
 const normalizeToolName = (name: string): string => {
   const n = name.toLowerCase();
   if (n === 'bash' || n === 'exec' || n === 'shell' || n === 'run_command') {

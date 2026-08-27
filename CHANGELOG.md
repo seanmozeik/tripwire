@@ -14,9 +14,9 @@ This file records notable project changes. The format follows [Keep a Changelog]
 ### Changed
 
 - Updated the build to [Bun 1.4](https://bun.com/blog/bun-v1.4). The package contains one bytecode executable for Darwin arm64 and a separate bundled Pi adapter. Live hooks point directly to the executable.
-- Updated Effect and Platform Bun to [4.0.0-rc.112](https://github.com/Effect-TS/effect/releases/tag/effect%404.0.0-rc.112). Hook execution, process use, CLI commands, and schemas use the current Effect APIs.
-- Updated the project to [TypeScript 7](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/) strict mode. The compiler config declares the Bun types, source root, and generated output exclusions.
-- Updated Oxlint to [1.80.0](https://github.com/oxc-project/oxc/releases/tag/oxlint_v1.80.0), Oxfmt to 0.65.0, and Effect TSGo to 0.38.0. The lint config uses de-clank 0.1.7 with its Effect preset.
+- Updated Effect and Platform Bun to [4.0.0-rc.112](https://github.com/Effect-TS/effect/releases/tag/effect%404.0.0-rc.112). `Effect.try` error channels use `Data.TaggedError`, and the CLI post-tool flag has an explicit `Flag.withDefault(false)` value.
+- Pinned [TypeScript 7.0.2](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/) in strict mode. Bun globals now come from `bun-types` instead of `@types/bun`. The compiler config keeps explicit Bun types and output exclusions.
+- Updated Oxlint to [1.80.0](https://github.com/oxc-project/oxc/releases/tag/oxlint_v1.80.0), Oxfmt to 0.65.0, and Effect TSGo to 0.38.0. The lint command no longer passes a separate TypeScript config. The project composes de-clank 0.1.7 core and Effect configs with its local rules.
 - Moved package-manager, search-tool, branch, and commit preferences from source rules to personal config.
 - Restricted registry installation to Darwin arm64. Other systems build from source.
 - Added local format checking and one `verify` command for all release gates.
