@@ -125,6 +125,19 @@ describe('loadConfigResult', () => {
     const result = await Effect.runPromise(loadConfigResult(configPath));
     expect(result.ok).toBe(false);
   });
+
+  test('non-ENOENT read failure → ok:false', async () => {
+    const parentFile = path.join(dir, 'not-a-directory');
+    await writeFile(parentFile, 'file');
+
+    const result = await Effect.runPromise(loadConfigResult(path.join(parentFile, 'config.json')));
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('ConfigReadError');
+      expect(result.error).toContain('ENOTDIR');
+    }
+  });
 });
 
 describe('loadConfig (loud loader)', () => {
@@ -172,6 +185,45 @@ describe('dispatcher on broken config', () => {
     };
     expect(out.hookSpecificOutput?.permissionDecision).toBe('deny');
     expect(out.hookSpecificOutput?.permissionDecisionReason).toContain('config-error');
+
+    await rm(home, { force: true, recursive: true });
+  });
+
+  test('PostToolUse still scans output, then the next PreToolUse fails closed', async () => {
+    const home = await mkdtemp(path.join(tmpdir(), 'tripwire-home-'));
+    await mkdir(path.join(home, '.config', 'tripwire'), { recursive: true });
+    await writeFile(
+      path.join(home, '.config', 'tripwire', 'config.json'),
+      JSON.stringify({ rtk: {} }),
+    );
+
+    const run = (event: HookEvent) => {
+      const proc = Bun.spawnSync(['bun', 'src/dispatch.ts'], {
+        env: { ...process.env, HOME: home },
+        stdin: new TextEncoder().encode(JSON.stringify(event)),
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      expect(proc.exitCode).toBe(0);
+      return JSON.parse(proc.stdout.toString()) as {
+        decision?: string;
+        hookSpecificOutput?: { permissionDecision?: string };
+      };
+    };
+
+    const post = run({
+      hook_event_name: 'PostToolUse',
+      tool_name: 'Bash',
+      tool_response: { stdout: 'ghp_123456789012345678901234567890123456' },
+    });
+    expect(post.decision).toBe('block');
+
+    const nextPre = run({
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Bash',
+      tool_input: { command: 'echo hi' },
+    });
+    expect(nextPre.hookSpecificOutput?.permissionDecision).toBe('deny');
 
     await rm(home, { force: true, recursive: true });
   });

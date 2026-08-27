@@ -1,8 +1,8 @@
 // Config system using Effect Schema for validation and Effect for safe loading.
 // Config file: ~/.config/tripwire/config.json
-// Falls back to defaults if file doesn't exist or is invalid.
+// Falls back to defaults only if the file does not exist.
 
-import { accessSync, constants, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 
 import { Cause, Data, Effect, Schema } from 'effect';
@@ -55,21 +55,18 @@ class ConfigReadError extends Data.TaggedError('ConfigReadError')<{ readonly cau
 
 class ConfigParseError extends Data.TaggedError('ConfigParseError')<{ readonly cause: unknown }> {}
 
-const configExists = (path: string): Effect.Effect<boolean> =>
-  Effect.sync(() => {
-    try {
-      accessSync(path, constants.R_OK);
-      return true;
-    } catch {
-      return false;
-    }
-  });
+const isMissingFile = (cause: unknown): boolean =>
+  cause instanceof Error && 'code' in cause && cause.code === 'ENOENT';
 
-const readConfigFile = (path: string): Effect.Effect<string, Error> =>
+const readConfigFile = (path: string): Effect.Effect<string | null, ConfigReadError> =>
   Effect.try({
     try: () => readFileSync(path, 'utf8'),
     catch: (cause) => new ConfigReadError({ cause }),
-  });
+  }).pipe(
+    Effect.catchTag('ConfigReadError', (error) =>
+      isMissingFile(error.cause) ? Effect.succeed(null) : Effect.fail(error),
+    ),
+  );
 
 const parseConfigJson = (raw: string): Effect.Effect<unknown, Error> =>
   Effect.try({
@@ -118,13 +115,12 @@ type ConfigLoad =
 
 export const loadConfigResult = (path: string = CONFIG_PATH): Effect.Effect<ConfigLoad> =>
   Effect.gen(function* loadConfigResultEffect() {
-    const exists = yield* configExists(path);
-    if (!exists) {
+    const raw = yield* readConfigFile(path);
+    if (raw === null) {
       const result: ConfigLoad = { ok: true, config: getDefaultConfig() };
       return result;
     }
 
-    const raw = yield* readConfigFile(path);
     const parsed = yield* parseConfigJson(raw);
     const config = yield* decodeConfig(parsed);
     const result: ConfigLoad = { ok: true, config: mergeWithDefaults(config) };

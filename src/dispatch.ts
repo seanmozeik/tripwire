@@ -56,6 +56,7 @@ const readStdin = async (): Promise<string> => {
 };
 
 const NATIVE_HOST: HookHost = { kind: 'native' };
+const RULE_TIMEOUT_MS = 250;
 
 const writeAllow = (host: HookHost = NATIVE_HOST): void => {
   if (host.kind === 'cursor' && !host.post) {
@@ -151,8 +152,8 @@ const writePostToolBlock = (decision: Decision, host: HookHost): void => {
 // Tool names vary across hosts. Claude Code uses `Bash`/`Read`/`Write`/
 // `Edit`/`MultiEdit`. Codex sends `apply_patch` for file edits. Devin sends
 // `exec` for shell. Pi (via pi-hooks) sends lowercase `bash`/`read`/`write`/
-// `edit`. Normalize everything to the Claude vocabulary so the rest of the
-// Dispatcher only deals with one set of names.
+// `edit`, plus `powershell`. Normalize everything to the Claude vocabulary so
+// the rest of the dispatcher only deals with one set of names.
 const normalizeToolName = (name: string): string => {
   const n = name.toLowerCase();
   if (n === 'bash' || n === 'exec' || n === 'shell' || n === 'run_command') {
@@ -169,6 +170,9 @@ const normalizeToolName = (name: string): string => {
   }
   if (n === 'webfetch' || n === 'web_fetch' || n === 'fetch') {
     return 'WebFetch';
+  }
+  if (n === 'powershell') {
+    return 'PowerShell';
   }
   return name;
 };
@@ -204,6 +208,17 @@ interface Rule {
 
 const collectPreToolUseRules = (tool: string, input: unknown, config: ResolvedConfig): Rule[] => {
   const rules: Rule[] = [];
+  if (tool === 'PowerShell') {
+    rules.push({
+      name: 'powershell-unsupported',
+      fn: () =>
+        deny(
+          'powershell-unsupported',
+          'PowerShell commands are blocked because Tripwire cannot parse PowerShell grammar. Use the Bash tool, or add a PowerShell parser before you enable this tool.',
+        ),
+    });
+    return rules;
+  }
   if (tool === 'Bash' && isBashInput(input)) {
     const i: BashInput = input;
     const segments = parseCommand(i.command);
@@ -246,8 +261,11 @@ const collectPreToolUseRules = (tool: string, input: unknown, config: ResolvedCo
 };
 
 const collectPostToolUseRules = (tool: string, response: unknown): Rule[] => {
-  if (tool === 'Bash' || tool === 'Read' || tool === 'WebFetch') {
-    return [{ name: 'post-secret-scrub', fn: () => postSecretScrub({ toolName: tool, response }) }];
+  if (tool === 'Bash' || tool === 'PowerShell' || tool === 'Read' || tool === 'WebFetch') {
+    const scanTool = tool === 'PowerShell' ? 'Bash' : tool;
+    return [
+      { name: 'post-secret-scrub', fn: () => postSecretScrub({ toolName: scanTool, response }) },
+    ];
   }
   return [];
 };
@@ -268,7 +286,16 @@ const runRulesSync = (rules: readonly Rule[]): Decision => {
   if (rules.length === 0) {
     return allow('no-rules');
   }
-  return merge(rules.map((r) => r.fn()));
+  const decisions: Decision[] = [];
+  for (const rule of rules) {
+    try {
+      decisions.push(rule.fn());
+    } catch (cause) {
+      logError(rule.name, cause);
+      decisions.push(allow(rule.name));
+    }
+  }
+  return merge(decisions);
 };
 
 const decide = (event: HookEvent, config: Config = {}): Decision => {
@@ -367,8 +394,8 @@ const program = Effect.gen(function* tripwireProgram() {
   const event = decodeExit.value;
   const { host } = normalized;
 
-  if (!configLoad.ok) {
-    if (event.hook_event_name === 'PreToolUse') {
+  if (event.hook_event_name === 'PreToolUse') {
+    if (!configLoad.ok) {
       writePreToolGate(
         event.hook_event_name,
         deny('config-error', configErrorMessage(configLoad.error)),
@@ -376,16 +403,11 @@ const program = Effect.gen(function* tripwireProgram() {
       );
       return;
     }
-    // Config governs PreToolUse gating; PostToolUse secret-scrub is config-
-    // Independent and there is always an imminent next PreToolUse to surface the
-    // Deny, so don't block already-run output here.
-    writeAllow(host);
-    return;
-  }
-  const { config } = configLoad;
-
-  if (event.hook_event_name === 'PreToolUse') {
-    const decision = decide(event, config);
+    const tool = normalizeToolName(event.tool_name ?? '');
+    const decision = yield* runRules(
+      collectPreToolUseRules(tool, event.tool_input, configLoad.config),
+      RULE_TIMEOUT_MS,
+    );
     if (decision.kind === 'deny' || decision.kind === 'ask') {
       writePreToolGate(event.hook_event_name, decision, host);
       return;
@@ -395,7 +417,11 @@ const program = Effect.gen(function* tripwireProgram() {
   }
 
   if (event.hook_event_name === 'PostToolUse') {
-    const decision = decide(event, config);
+    const tool = normalizeToolName(event.tool_name ?? '');
+    const decision = yield* runRules(
+      collectPostToolUseRules(tool, event.tool_response),
+      RULE_TIMEOUT_MS,
+    );
     if (decision.kind === 'deny') {
       writePostToolBlock(decision, host);
       return;
