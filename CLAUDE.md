@@ -1,103 +1,169 @@
-# tripwire
+# Tripwire contributor guide
 
-Configurable coding-agent hooks dispatcher. One Bun entry point fronts Claude
-Code, Codex, Cursor Agent, and pi hook events; rule modules decide allow /
-block / rewrite. Blocks return actionable error messages so the agent knows the
-right alternative.
+Tripwire is a Bun and TypeScript hook dispatcher for Claude Code, Codex, Cursor Agent, Pi, and Oh My Pi. It applies deterministic rules to normalized tool events.
 
-## Hard rules
+## Required commands
 
-- **Bun only, never npm.** `bun install`, `bun run <script>`, `bunx`. No `npm`, `npx`.
-- **Effect v4 throughout.** Same patterns as `~/dev/vault/scripts/session-extract/extract.ts` — tagged errors, layered runtime, `Effect.timeout` on every rule, `Effect.exit` to isolate failures so one bad rule never blocks the agent.
-- **Lint + typecheck clean before declaring done.** `bun run check` exits 0.
-- **Hooks never throw to stderr or exit non-zero on internal error.** A buggy rule must default to `allow` and log to a file. A hung rule must hit its timeout and default to `allow`. The agent loop is more important than any single rule.
-- **No JSON audit log, no mode toggle.** This is not a security framework — it's a scalpel for known-dangerous patterns. State out of scope.
-- **Block messages are written for the agent, not the user.** When a rule blocks, the `permissionDecisionReason` must tell the agent the right alternative: "Use `rip` or `trash` instead of `rm`", "Use `fd` instead of `find`", not "denied for safety reasons".
-
-## Build
+Use Bun 1.4 or later.
 
 ```bash
-bun install
-bun run build      # → dist/tripwire (single compiled executable with bytecode)
-bun run check      # format + lint --fix + typecheck
-bun test           # unit tests on rule modules
+bun install --frozen-lockfile
+bun run format:check
+bun run lint
+bun run typecheck
+bun test
+bun run build
+bun run verify
 ```
 
-The compiled `dist/tripwire` is the CLI and hook executable. Package installation exposes it as
-both `tripwire` and `tripwire-hook`. The entry module loads only the selected command module.
+`bun run verify` runs the non-mutating format check, lint, TypeScript 7 strict type check, all tests, and the build. Run it before release work. Use `bun run format` when files need formatting.
 
-## Wiring
+The runtime uses Effect 4.0.0-rc.112. Read the installed Effect source and types before changing an API that may differ from Effect 3 or an earlier release candidate.
 
-`~/.claude/settings.json` calls the same binary for every Claude hook event,
-dispatching by `hook_event_name` read from stdin. Cursor uses the same binary
-with `--cursor-event <event>` because some Cursor payloads omit the event name.
-Pi loads `dist/tripwire-pi.js` as a native extension; the adapter translates
-Pi events into the same canonical hook payload:
+## Package contract
 
-```jsonc
-{
-  "hooks": {
-    "PreToolUse": [
-      { "hooks": [{ "type": "command", "command": "/path/to/tripwire/dist/tripwire" }] },
-    ],
-    "PostToolUse": [
-      { "hooks": [{ "type": "command", "command": "/path/to/tripwire/dist/tripwire" }] },
-    ],
-  },
-}
+The registry package has `os: [darwin]` and `cpu: [arm64]`. It contains one native bytecode executable at `dist/tripwire`.
+
+- `tripwire-hook` maps directly to `dist/tripwire`.
+- `tripwire` maps to `scripts/tripwire-cli`, a POSIX launcher for interactive commands.
+- The launcher executes its installed `tripwire-hook` sibling with a private force-CLI flag.
+- Live hooks do not use the launcher.
+
+Other systems must clone the repository and run `bun run build` on the target host. Do not claim registry support for Linux, Windows, or Intel macOS until target-specific packages exist.
+
+`scripts/build.ts` compiles to a temporary directory, runs executable and Pi adapter smoke tests, and publishes the files with same-directory atomic replacement. The build produces:
+
+```text
+dist/tripwire
+dist/tripwire-pi.js
 ```
 
-```jsonc
-{
-  "hooks": {
-    "beforeShellExecution": [{ "command": "tripwire-hook --cursor-event beforeShellExecution" }],
-  },
-}
-```
+## Entry routing
 
-Settings.json stays one line per event. Built-in safety policy lives in this repo; local workflow
-preferences live in `~/.config/tripwire/config.json`.
+`src/main.ts` is the only compiled entry point. It loads `src/dispatch.ts` for hooks and `src/cli.ts` for interactive commands. Keep the hook path small. Do not import CLI-only dependencies before entry routing.
 
-## Layout
+The private flags are internal package contracts:
 
-```
-src/
-  dispatch.ts        # entry — reads stdin, routes, writes JSON decision
-  pi-extension.ts    # native Pi adapter; fails closed if dispatch cannot run
-  rules/
-    bash-deny.ts     # rm -rf /, fork bomb, force push, dd of=/dev/, …
-    tool-policy.ts   # config-driven package-manager and utility preferences
-    path-protect.ts  # .env, .ssh/, *.pem — block reads/writes by absolute path
-    diff-aware.ts    # bad-words check on *added* lines only
-  lib/
-    decision.ts      # { kind: "allow" | "block" | "ask"; message?: string }
-    log.ts           # one file at ~/.claude/tripwire.log, append-only, errors only
-test/
-  rules/*.test.ts    # one test file per rule, table-driven
-```
+- `--tripwire-hook` selects hook mode and permits canonical event batches.
+- `--tripwire-force-cli` selects CLI mode for the installed launcher and is removed before Effect CLI parses arguments.
+- `--cursor-event <name>` supplies a missing Cursor event name.
 
 ## Rule contract
 
-Every rule exports a single function:
+Rules are synchronous functions that return a `Decision`:
 
 ```ts
-type Rule = (input: HookInput) => Effect.Effect<Decision, never, never>;
+type DecisionKind = 'allow' | 'warn' | 'ask' | 'deny';
 ```
 
-- `never` in the error channel — a rule that can't decide returns `Decision.allow()`.
-- The dispatcher composes rules with `Effect.timeout` (250ms each) and `Effect.exit`. A timeout or defect → `allow`, logged to `~/.claude/tripwire.log`.
-- Rules are pure where possible. Side effects (filesystem reads to confirm `.env` exists) wrap in `Effect.gen` and use `BunFileSystem`.
+The dispatcher evaluates every applicable rule and uses the most restrictive result. Production hook evaluation uses a per-rule Effect boundary. If a rule throws, Tripwire logs the defect, treats only that rule as `allow`, and continues. The public synchronous `decide` function has the same throw isolation.
 
-## Block message style
+The Effect timeout does not interrupt synchronous CPU work. Do not describe it as an interruptible execution limit. A rule that needs a hard timeout must use an interruptible process or Effect.
 
-Bad: `"Blocked: dangerous command"`
-Good: `"rm is blocked outside /tmp and build directories. Use rip or trash for recoverable deletion, or scope rm to a known-safe path."`
+Rule messages are read by an agent. A denial must name the rejected action and a safe next step.
 
-The agent reads this verbatim and routes around it. Vague denials cause retry loops.
+Weak:
 
-## Out of scope
+```text
+Blocked: dangerous command
+```
 
-- Audit logs, dashboards, stats — go use `aliou/pi-guardrails` if you want that.
-- Mode toggles — if you need to disable a rule, edit the source.
-- Secrets redaction in tool output — different concern; could live here later but not in v0.
-- Per-project overrides — start with one user-wide policy. Project rules later if needed.
+Useful:
+
+```text
+rm is blocked outside build and temporary paths. Use a recoverable deletion tool or limit the target to a configured safe path.
+```
+
+## Config contract
+
+Personal policy lives in `~/.config/tripwire/config.json`. Open-source defaults do not require a package manager, search tool, branch model, or commit convention.
+
+The config schema rejects unknown keys. Only `ENOENT` selects defaults. Invalid JSON, invalid values, permission errors, and other read errors are config failures.
+
+Pre-tool evaluation denies when a present config fails to load. Post-tool evaluation still runs with the default scanner settings, so a broken config cannot skip secret scanning.
+
+Supported config sections are:
+
+- `git`
+- `safePaths`
+- `toolPolicies`
+- `blockedCommands`
+- `allowedCommands`
+- `secretScanner`
+
+Betterleaks 1.5.0 or later is the default post-tool scanner. It receives content on stdin and returns JSON on stdout. Scanner errors must not expose scanned text, secret values, or raw stderr.
+
+## Host failure policy
+
+- Native malformed single-event input returns an allow response and logs the error.
+- A malformed private batch is denied.
+- Invalid Cursor pre-tool input is denied. Cursor post-tool output cannot be replaced after execution.
+- Pi and Oh My Pi deny pre-tool calls when the dispatcher fails or returns invalid output.
+- Pi and Oh My Pi abort the session after a post-tool denial or dispatcher failure.
+- A PowerShell pre-tool call is denied because there is no PowerShell parser. PowerShell post-tool output is scanned.
+
+Do not change a host failure policy without a lifecycle test.
+
+## Shell and path checks
+
+`src/lib/bash.ts` uses `shell-quote` 1.10.0, then adds command segmentation, wrapper unwrapping, compound-command checks, heredoc masking, command-substitution checks, and `Bun.Glob` expansion.
+
+Unsupported compound structures fail closed when Tripwire cannot identify every executable branch. Do not reparse quoted data or literal heredoc bodies as commands.
+
+The tar rule checks extraction flags and explicit destinations. It denies `tar` extraction to `/` or the home directory and applies the same destination rule to `unzip -d`. It does not inspect archive member paths.
+
+Protected-path rules compare submitted paths with resolved targets. New writes resolve the deepest existing parent. Keep read, write, edit, redirect, copy, and move classification on the shared path helper.
+
+A shell bypass must match this form:
+
+```text
+# tripwire-allow: non-empty reason
+```
+
+Bare and empty markers do not bypass a rule. Catastrophic rules remain non-bypassable.
+
+## Installer contract
+
+Installer functions accept one options shape with an injectable home directory. Tests must use temporary homes.
+
+All JSON and TOML files are parsed before the first write. Text settings use same-directory atomic replacement, preserve an existing file mode, and follow a config symlink to its real target. Unknown JSON fields and unrelated TOML bytes must remain.
+
+Codex validates `hooks.json` and `config.toml` before it writes either file. It writes hooks first, then enables the feature. A retry repairs a first-file-only state.
+
+Pi makes the extension link available before it removes old hook settings. Oh My Pi uses the same extension adapter path and has no settings rewrite.
+
+## Source layout
+
+```text
+src/
+  main.ts                  entry routing
+  cli.ts                   test and install commands
+  dispatch.ts              event decoding, rule isolation, host responses
+  pi-extension.ts          Pi and Oh My Pi lifecycle adapter
+  lib/
+    bash.ts                shell parsing and command extraction
+    config.ts              strict personal config loader
+    cursor.ts              Cursor event normalization
+    decision.ts            decision values and merge order
+    event.ts               canonical event schema and response extraction
+    install.ts             atomic host installers
+    log.ts                 best-effort error log
+    secrets.ts             Betterleaks process and redaction
+  rules/                   pre-tool and post-tool rules
+scripts/
+  build.ts                 staged native and adapter build
+  tripwire-cli             installed interactive launcher
+test/
+  package.test.ts          bin and launcher contract
+  pi-lifecycle.test.ts     source and compiled Pi lifecycle
+  security-regressions.test.ts
+  runtime-isolation.test.ts
+```
+
+## Review limits
+
+Keep personal workflow rules in config. Keep source defaults useful for an unconfigured public install.
+
+Add a focused regression test for each bug. Run the full verification command after focused tests pass.
+
+Do not publish, push, or tag a release unless the task gives explicit permission.

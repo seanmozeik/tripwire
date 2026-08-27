@@ -1,53 +1,78 @@
-# Host quirks
+# Host behavior
 
-Per-host parser quirks tripwire has to work around. These are **time-bound** — they'll expire when upstream fixes the linked issues. Pull this doc back to the README if the list shrinks to one or zero entries.
+Tripwire normalizes host payloads before it runs rules. Each host still has a different response format and failure policy.
 
-## Codex CLI
+## Claude Code
 
-Codex's PreToolUse handler is stricter than Claude Code's. Two specific rejections matter:
+Claude Code uses canonical `PreToolUse` and `PostToolUse` events. Warnings use `hookSpecificOutput.additionalContext`. A deny or ask decision uses `hookSpecificOutput.permissionDecision`.
 
-### `updatedInput` is rejected
+The installer updates `~/.claude/settings.json` and registers `tripwire-hook` for both event phases.
 
-Codex rejects `updatedInput` on PreToolUse responses outright — the `rewrite` outcome can't deliver a modified tool call back through Codex's hook surface.
+## Codex
 
-- Tracking: [openai/codex#18491](https://github.com/openai/codex/issues/18491)
-- Workaround: route `rewrite` outcomes through `deny + systemMessage` on Codex, advising the user (or agent) what to run instead. Lossier than rewriting in-place, but Codex is the host that's wrong here.
+Codex events include `turn_id`. Tripwire uses that field to select Codex response formatting.
 
-### `hookSpecificOutput.additionalContext` is rejected
+Codex warning responses use `systemMessage`. Tripwire does not send `hookSpecificOutput.additionalContext` to Codex. Pre-tool deny and ask decisions use the canonical permission fields.
 
-Codex also drops `hookSpecificOutput.additionalContext` — the field Claude Code uses to inject warnings into the agent's next turn.
+The installer validates both files before it writes either one:
 
-- Tracking: [openai/codex#19385](https://github.com/openai/codex/issues/19385)
-- Workaround: emit warnings via `systemMessage` instead on Codex. Dispatcher normalizes this per-host via `isCodex(event)`.
+- `~/.codex/hooks.json`
+- `~/.codex/config.toml`
 
-## Tool-name normalization
+It publishes `hooks.json` first, then sets `hooks = true` in the `[features]` TOML table. The first file is inactive until the feature is enabled. A retry repairs a first-file-only update.
 
-Each host names the bash tool differently. The dispatcher maps:
+## Cursor Agent
 
-| Host        | Tool name on PreToolUse                          |
-| ----------- | ------------------------------------------------ |
-| Claude Code | `Bash`                                           |
-| Codex CLI   | `exec` / `apply_patch`                           |
-| Pi          | `bash`                                           |
-| Devin       | reads Claude Code settings, normalizes to `Bash` |
+Cursor uses lower-camel event names and several event-specific payload shapes. Installed commands include `--cursor-event <name>` because some payloads omit that name.
 
-Rules accept either the canonical name (`Bash`) or the host-specific name; the per-host adapter does the translation before the rule fires.
+Cursor pre-tool events return `permission: allow` or `permission: deny`. An `ask` result becomes a deny because an unattended Cursor hook cannot ask a person.
 
-## Installation path
+Cursor post-tool hooks are observational. The tool has already returned output, so Tripwire cannot replace it through the Cursor response. Post-tool failures return the host allow shape.
 
-Binaries should land in `~/.local/bin/tripwire-hook` and `~/.local/bin/tripwire`. Host configs reference the absolute path:
+The installer updates `~/.cursor/hooks.json`.
 
-- Claude Code: `.claude/settings.json` → `hooks.PreToolUse[].command`
-- Codex: `~/.codex/hooks.json`
-- Pi: `npm:@hsingjui/pi-hooks` reads from `$HOME/.local/bin`
-- Devin: auto-reads Claude Code settings
+## Pi and Oh My Pi
 
-Reason: repo moves shouldn't break the hook wiring. A relative path in `~/dev/tripwire` would break the day the user clones to a new machine or moves the repo.
+Pi and Oh My Pi load `tripwire-pi.js` through their native extension API:
 
-## Companion: `betterleaks` for PostToolUse secret scrubbing
+- Pi: `~/.pi/agent/extensions/tripwire.js`
+- Oh My Pi: `~/.omp/agent/extensions/tripwire.js`
 
-`post-secret-scrub` uses [betterleaks](https://github.com/zricethezav/betterleaks) (Zach Rice's gitleaks fork) for the PostToolUse path. Install via `brew install betterleaks`. The rule wraps it in a timeout and redacts hits before they escape the dispatcher.
+The adapter resolves the native `tripwire` file beside the built extension. A multi-file edit becomes one canonical batch and one child process.
 
-## Glob expansion
+Pre-tool dispatcher failure, invalid JSON, and deny or ask results block the tool call. A post-tool denial or dispatcher failure reports an error and aborts the session. The adapter has a 60-second child-process timeout.
 
-`bash-scoped-rm` uses `shell-quote@^1.8` for tokenization. `ParseEntry`'s `op: 'glob'` needs explicit expansion — `shell-quote` returns it as a glob marker, not as expanded paths, so the rule has to walk it itself before path-matching.
+The Pi installer also reads `~/.pi/agent/settings.json`. It makes the extension link available before it removes old Claude-style Tripwire hook entries. Oh My Pi has no settings rewrite.
+
+## Tool names
+
+The dispatcher maps host tool names to its canonical names:
+
+| Input names                                     | Canonical name |
+| ----------------------------------------------- | -------------- |
+| `bash`, `exec`, `shell`, `run_command`          | `Bash`         |
+| `read`, `read_file`                             | `Read`         |
+| `write`, `write_file`                           | `Write`        |
+| `edit`, `edit_file`, `multiedit`, `apply_patch` | `Edit`         |
+| `webfetch`, `web_fetch`, `fetch`                | `WebFetch`     |
+| `powershell`                                    | `PowerShell`   |
+
+PowerShell pre-tool calls are denied because Tripwire has no PowerShell parser. PowerShell post-tool output is normalized for secret scanning.
+
+## Package paths
+
+The Darwin arm64 registry package installs two bin entries. `tripwire-hook` points directly to the native package file at `dist/tripwire`. `tripwire` is a POSIX launcher for interactive CLI use. Agent settings must use `tripwire-hook`.
+
+The package has no Linux, Windows, or Intel macOS binary. Clone the repository and run `bun run build` on those hosts.
+
+## Betterleaks
+
+Post-tool scanning requires Betterleaks 1.5.0 or later on `PATH`, unless personal config sets an absolute executable path. Tripwire sends tool output on stdin and reads the JSON report from stdout. It does not use a shell or a temporary scan file.
+
+Scanner execution has its own process timeout. Missing executables, timeouts, non-zero exits, and malformed reports produce a post-tool denial on hosts that support one.
+
+## Shell parsing
+
+Tripwire uses `shell-quote` 1.10.0 for initial tokenization. It expands glob entries with `Bun.Glob`, masks literal heredoc data, inspects command substitutions, unwraps supported command wrappers, and applies a conservative compound-command layer.
+
+The archive rule checks extraction mode and explicit destination flags. It does not inspect archive member paths.
