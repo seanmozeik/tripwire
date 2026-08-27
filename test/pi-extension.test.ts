@@ -14,9 +14,10 @@ import { tmpdir } from 'node:os';
 import pathModule from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { installPi } from '../src/lib/install';
+import { installOhMyPi, installPi } from '../src/lib/install';
 import {
   createTripwirePiExtension,
+  hookInputs,
   resolveShippedHookPath,
   tripwirePiDenialReason,
   type PiExtensionContext,
@@ -96,24 +97,93 @@ describe('Tripwire Pi extension', () => {
     );
   });
 
+  test('normalizes Pi and oh-my-pi file inputs for Tripwire rules', () => {
+    expect(
+      hookInputs(
+        { input: { path: '.env' }, toolCallId: 'read-1', toolName: 'read' },
+        'PreToolUse',
+        root,
+      ),
+    ).toMatchObject([{ tool_input: { file_path: '.env' }, tool_name: 'read' }]);
+
+    expect(
+      hookInputs(
+        {
+          input: {
+            edits: [{ newText: 'const value = 2;', oldText: 'const value = 1;' }],
+            path: 'src/value.ts',
+          },
+          toolCallId: 'edit-1',
+          toolName: 'edit',
+        },
+        'PreToolUse',
+        root,
+      ),
+    ).toMatchObject([
+      {
+        tool_input: {
+          file_path: 'src/value.ts',
+          new_string: 'const value = 2;',
+          old_string: 'const value = 1;',
+        },
+      },
+    ]);
+
+    const hashlineInputs = hookInputs(
+      {
+        input: { input: '¶one.ts#abcd\n+change', paths: ['one.ts', '.env'] },
+        toolCallId: 'edit-2',
+        toolName: 'edit',
+      },
+      'PreToolUse',
+      root,
+    );
+    expect(hashlineInputs).toHaveLength(2);
+    expect(hashlineInputs[1]).toMatchObject({
+      tool_input: { file_path: '.env', new_string: '¶one.ts#abcd\n+change' },
+    });
+  });
+
+  test('converts Pi text blocks into post-tool secret-scan input', () => {
+    expect(
+      hookInputs(
+        {
+          content: [
+            { text: 'first', type: 'text' },
+            { text: 'second', type: 'text' },
+          ],
+          details: {},
+          input: { command: 'printf output' },
+          isError: false,
+          toolCallId: 'bash-1',
+          toolName: 'bash',
+        },
+        'PostToolUse',
+        root,
+      ),
+    ).toMatchObject([
+      { hook_event_name: 'PostToolUse', tool_response: { stderr: '', stdout: 'first\nsecond' } },
+    ]);
+  });
+
   test('blocks tool calls when the dispatcher cannot run', async () => {
     let toolCall:
       | ((
           event: PiToolCallEvent,
           context: PiExtensionContext,
-        ) => Promise<{ readonly block: true; readonly reason: string } | undefined>)
+        ) => Promise<{ readonly block?: boolean; readonly reason?: string } | undefined>)
       | undefined;
     let toolResult:
       | ((event: PiToolResultEvent, context: PiExtensionContext) => Promise<void>)
       | undefined;
     const api: TripwirePiExtensionApi = {
-      on: ((event: 'tool_call' | 'tool_result', handler: typeof toolCall | typeof toolResult) => {
+      on: (event: 'tool_call' | 'tool_result', handler: typeof toolCall | typeof toolResult) => {
         if (event === 'tool_call') {
           toolCall = handler as typeof toolCall;
         } else {
           toolResult = handler as typeof toolResult;
         }
-      }) as TripwirePiExtensionApi['on'],
+      },
     };
     createTripwirePiExtension(pathModule.join(root, 'missing-dispatcher'))(api);
     expect(toolResult).toBeDefined();
@@ -162,12 +232,51 @@ describe('Pi installation', () => {
     const result = await installPi({ extensionSource, homeDirectory: root });
     expect(result.success).toBe(true);
     const installed = pathModule.join(agentDirectory, 'extensions', 'tripwire.js');
-    expect((await lstat(installed)).isSymbolicLink()).toBe(true);
+    const installedStatus = await lstat(installed);
+    expect(installedStatus.isSymbolicLink()).toBe(true);
     expect(await readlink(installed)).toBe(extensionSource);
     const settings = JSON.parse(
       await readFile(pathModule.join(agentDirectory, 'settings.json'), 'utf8'),
     ) as { hooks?: unknown; packages?: string[] };
     expect(settings.hooks).toBeUndefined();
     expect(settings.packages).toEqual(['pi-example']);
+  });
+
+  test('installs the same native extension for oh-my-pi', async () => {
+    const extensionSource = pathModule.join(root, 'tripwire-pi.js');
+    await writeFile(extensionSource, 'export default () => {};\n');
+
+    const result = await installOhMyPi({ extensionSource, homeDirectory: root });
+
+    expect(result.success).toBe(true);
+    const installed = pathModule.join(root, '.omp', 'agent', 'extensions', 'tripwire.js');
+    const installedStatus = await lstat(installed);
+    expect(installedStatus.isSymbolicLink()).toBe(true);
+    expect(await readlink(installed)).toBe(extensionSource);
+  });
+
+  test('updates an existing Tripwire extension symlink to the current build', async () => {
+    const oldDist = pathModule.join(root, 'old', 'dist');
+    const newDist = pathModule.join(root, 'new', 'dist');
+    const extensionDirectory = pathModule.join(root, '.omp', 'agent', 'extensions');
+    const oldSource = pathModule.join(oldDist, 'tripwire-pi.js');
+    const newSource = pathModule.join(newDist, 'tripwire-pi.js');
+    const installed = pathModule.join(extensionDirectory, 'tripwire.js');
+    await Promise.all([
+      mkdir(oldDist, { recursive: true }),
+      mkdir(newDist, { recursive: true }),
+      mkdir(extensionDirectory, { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(oldSource, 'export default () => {};\n'),
+      writeFile(newSource, 'export default () => {};\n'),
+      symlink(oldSource, installed),
+    ]);
+
+    const result = await installOhMyPi({ extensionSource: newSource, homeDirectory: root });
+
+    expect(result.success).toBe(true);
+    expect(result.message).toStartWith('Updated ');
+    expect(await readlink(installed)).toBe(newSource);
   });
 });

@@ -17,8 +17,11 @@ const isExtractFlag = (f: string): boolean =>
   /^-[xvzjJtf]+$/.test(f);
 
 const findChangeDir = (seg: Segment): string | null => {
-  for (let i = 0; i < seg.tokens.length; i++) {
-    const t = seg.tokens[i]!;
+  for (let i = 0; i < seg.tokens.length; i += 1) {
+    const t = seg.tokens[i];
+    if (t === undefined) {
+      continue;
+    }
     if (t === '-C' || t === '--directory') {
       return seg.tokens[i + 1] ?? null;
     }
@@ -58,7 +61,7 @@ const bashTarExplosion = (segments: readonly Segment[], cmd: string): Decision =
     if (seg.head !== 'unzip') {
       continue;
     }
-    for (let i = 0; i < seg.tokens.length; i++) {
+    for (let i = 0; i < seg.tokens.length; i += 1) {
       if (seg.tokens[i] === '-d') {
         const dest = seg.tokens[i + 1];
         if (dest !== undefined && isUnsafeExtractDest(dest)) {

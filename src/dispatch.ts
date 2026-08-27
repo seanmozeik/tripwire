@@ -1,18 +1,7 @@
 #!/usr/bin/env bun
-// Tripwire — Claude Code hooks dispatcher.
-//
-// Reads a hook event JSON payload on stdin, routes by hook_event_name +
-// Tool_name, runs rules with per-rule timeouts, merges decisions
-// (most-restrictive wins), scans PostToolUse output for secrets via
-// Betterleaks, and writes Claude Code's expected JSON response on stdout.
-//
-// Design rules:
-//   - A buggy or slow rule must never block the agent. Every rule runs
-//     Under a timeout; any defect or timeout collapses to `allow`, logged.
-//   - Block messages address the agent in second person and name the
-//     Concrete alternative tool / approach. No vague "denied for safety".
-//   - One bypass token: `tripwire-allow` (any comment syntax) on a code
-//     Line, or `# tripwire-allow` in a bash command.
+// Hook dispatcher: decode stdin, apply timed rules, and write the host response.
+// Rule defects and timeouts allow the tool call and write an error log.
+// Denials tell the agent which safe alternative to use.
 
 import { BunRuntime } from '@effect/platform-bun';
 import { Cause, Data, Effect, Exit, Schema } from 'effect';
@@ -56,7 +45,12 @@ import { toolPolicy } from './rules/tool-policy';
 const readStdin = async (): Promise<string> => {
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) {
-    chunks.push(chunk as Buffer);
+    const value: unknown = chunk;
+    if (value instanceof Uint8Array) {
+      chunks.push(Buffer.from(value));
+    } else {
+      throw new TypeError('Tripwire received a non-byte stdin chunk');
+    }
   }
   return Buffer.concat(chunks).toString('utf8');
 };
@@ -89,10 +83,8 @@ const writeCursorPreGate = (decision: Decision): void => {
   );
 };
 
-// Codex's PreToolUse hook rejects `hookSpecificOutput.additionalContext`
-// (openai/codex issue #19385). Detect Codex via its `turn_id` extension
-// And downgrade output accordingly. Claude Code accepts it, so we only
-// Narrow when we can confirm we're on Codex.
+// Codex rejects `hookSpecificOutput.additionalContext`. Its `turn_id`
+// extension selects the narrower output without changing Claude responses.
 const isCodex = (event: HookEvent): boolean => event.turn_id !== undefined;
 
 interface WarnOutput {
@@ -192,7 +184,7 @@ class HookInputParseError extends Data.TaggedError('HookInputParseError')<{
 }> {}
 
 const runRule = (name: string, fn: RuleFn, timeoutMs: number): Effect.Effect<Decision> =>
-  Effect.gen(function* () {
+  Effect.gen(function* runRuleEffect() {
     const exit = yield* Effect.exit(
       Effect.try({ try: fn, catch: (cause) => new RuleExecutionError({ cause }) }).pipe(
         Effect.timeout(timeoutMs),
@@ -215,23 +207,19 @@ const collectPreToolUseRules = (tool: string, input: unknown, config: ResolvedCo
   if (tool === 'Bash' && isBashInput(input)) {
     const i: BashInput = input;
     const segments = parseCommand(i.command);
-    rules.push({ name: 'bash-deny', fn: () => bashDeny(segments, i.command) });
-    rules.push({ name: 'bash-git', fn: () => bashGit(segments, i.command, config.git) });
-    rules.push({
-      name: 'bash-scoped-rm',
-      fn: () => bashScopedRm(segments, i.command, config.safePaths),
-    });
-    rules.push({ name: 'bash-redirect', fn: () => bashRedirect(segments, i.command) });
-    rules.push({ name: 'bash-network-install', fn: () => bashNetworkInstall(segments, i.command) });
-    rules.push({ name: 'bash-tar-explosion', fn: () => bashTarExplosion(segments, i.command) });
-    rules.push({
-      name: 'tool-policy',
-      fn: () => toolPolicy(segments, i.command, config.toolPolicies),
-    });
-    rules.push({
-      name: 'config-custom',
-      fn: () => configCustom(segments, i.command, config.blockedCommands, config.allowedCommands),
-    });
+    rules.push(
+      { name: 'bash-deny', fn: () => bashDeny(segments, i.command) },
+      { name: 'bash-git', fn: () => bashGit(segments, i.command, config.git) },
+      { name: 'bash-scoped-rm', fn: () => bashScopedRm(segments, i.command, config.safePaths) },
+      { name: 'bash-redirect', fn: () => bashRedirect(segments, i.command) },
+      { name: 'bash-network-install', fn: () => bashNetworkInstall(segments, i.command) },
+      { name: 'bash-tar-explosion', fn: () => bashTarExplosion(segments, i.command) },
+      { name: 'tool-policy', fn: () => toolPolicy(segments, i.command, config.toolPolicies) },
+      {
+        name: 'config-custom',
+        fn: () => configCustom(segments, i.command, config.blockedCommands, config.allowedCommands),
+      },
+    );
     return rules;
   }
   if (tool === 'Read' && isReadInput(input)) {
@@ -243,12 +231,16 @@ const collectPreToolUseRules = (tool: string, input: unknown, config: ResolvedCo
   const isWrite = tool === 'Write' && isWriteInput(input);
   if (isEdit) {
     const i: EditInput = input;
-    rules.push({ name: 'path-protect', fn: () => pathProtect(i) });
-    rules.push({ name: 'lazy-code', fn: () => lazyCode(i) });
+    rules.push(
+      { name: 'path-protect', fn: () => pathProtect(i) },
+      { name: 'lazy-code', fn: () => lazyCode(i) },
+    );
   } else if (isWrite) {
     const i: WriteInput = input;
-    rules.push({ name: 'path-protect', fn: () => pathProtect(i) });
-    rules.push({ name: 'lazy-code', fn: () => lazyCode(i) });
+    rules.push(
+      { name: 'path-protect', fn: () => pathProtect(i) },
+      { name: 'lazy-code', fn: () => lazyCode(i) },
+    );
   }
   return rules;
 };
@@ -261,7 +253,7 @@ const collectPostToolUseRules = (tool: string, response: unknown): Rule[] => {
 };
 
 const runRules = (rules: readonly Rule[], timeoutMs: number): Effect.Effect<Decision> =>
-  Effect.gen(function* () {
+  Effect.gen(function* runRulesEffect() {
     if (rules.length === 0) {
       return allow('no-rules');
     }
@@ -346,7 +338,7 @@ const writeHookFailure = (stage: string): void => {
   writeAllow(host);
 };
 
-const program = Effect.gen(function* () {
+const program = Effect.gen(function* tripwireProgram() {
   const configLoad = yield* loadConfigResult();
   const raw = yield* Effect.promise(readStdin);
 
@@ -373,7 +365,7 @@ const program = Effect.gen(function* () {
     return;
   }
   const event = decodeExit.value;
-  const host = normalized.host;
+  const { host } = normalized;
 
   if (!configLoad.ok) {
     if (event.hook_event_name === 'PreToolUse') {
@@ -390,7 +382,7 @@ const program = Effect.gen(function* () {
     writeAllow(host);
     return;
   }
-  const config = configLoad.config;
+  const { config } = configLoad;
 
   if (event.hook_event_name === 'PreToolUse') {
     const decision = decide(event, config);
@@ -416,6 +408,7 @@ const program = Effect.gen(function* () {
 });
 
 const handled = program.pipe(
+  // oxlint-disable-next-line de-clank-effect/no-silent-effect-error-swallow -- fatal causes are logged before the host receives its fail-policy response.
   Effect.catchCause((cause) => {
     logError('dispatch-fatal', Cause.pretty(cause));
     writeHookFailure('dispatcher failure');

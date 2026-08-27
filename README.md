@@ -78,6 +78,7 @@ tripwire install claude    # Claude Code
 tripwire install codex     # Codex
 tripwire install cursor    # Cursor Agent
 tripwire install pi        # Pi's native extension API
+tripwire install oh-my-pi  # oh-my-pi's compatible extension API
 tripwire install all       # every supported agent
 ```
 
@@ -123,11 +124,13 @@ therefore apply to Cursor's unsandboxed headless runs, including shell, file,
 and git protections. Cursor's post-tool shell hook is observational, so its
 secret scan can report a hit but cannot replace terminal output after execution.
 
-**Pi** loads Tripwire through `~/.pi/agent/extensions/tripwire.js`. The installer
-links that path to Tripwire's shipped `tripwire-pi.js` extension and removes any
-obsolete Claude-style Tripwire entries from Pi's settings. Pre-tool calls fail
-closed if the dispatcher cannot run or returns invalid output. A post-tool
-failure aborts the Pi session because the tool has already executed.
+**Pi and oh-my-pi** load the same adapter at
+`~/.pi/agent/extensions/tripwire.js` and
+`~/.omp/agent/extensions/tripwire.js`. The adapter converts each host's file
+and text-block shapes into Tripwire events, including multi-file oh-my-pi
+edits. The installer removes obsolete Claude-style entries from Pi settings.
+Pre-tool calls fail closed if the dispatcher cannot run or returns invalid
+output. A post-tool failure aborts the session because the tool has executed.
 
 **Devin** and other agents: configure the agent to call `tripwire-hook` on tool events.
 

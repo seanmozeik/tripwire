@@ -10,9 +10,12 @@ const SHELL_HEADS: ReadonlySet<string> = new Set(['bash', 'sh', 'zsh', 'fish']);
 const isFetchPipedToShell = (segments: readonly Segment[]): boolean => {
   // Shell-quote splits a pipeline `curl X | bash` into two segments. We
   // Detect the pattern by looking for adjacent fetch-then-shell heads.
-  for (let i = 0; i < segments.length - 1; i++) {
-    const a = segments[i]!;
-    const b = segments[i + 1]!;
+  for (let i = 0; i < segments.length - 1; i += 1) {
+    const a = segments[i];
+    const b = segments[i + 1];
+    if (a === undefined || b === undefined) {
+      continue;
+    }
     if (FETCH_HEADS.has(a.head) && SHELL_HEADS.has(b.head)) {
       return true;
     }

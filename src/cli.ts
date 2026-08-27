@@ -1,11 +1,6 @@
 #!/usr/bin/env bun
-// `tripwire test '<command>'` — pipe a synthetic event through the
-// Dispatcher and pretty-print the decision. Indispensable for tuning
-// Rules without going through Claude Code.
-//
-// `tripwire install <target>` — install Tripwire hooks or native extensions for AI agents.
-//
-// Usage:
+// CLI commands for testing policy and installing agent integrations.
+// Usage examples:
 //   Bun src/main.ts test 'rm -rf /etc'
 //   Bun src/main.ts test --tool=Read --path=.env
 //   Bun src/main.ts test --post --tool=Bash --stdout='ghp_<token>'
@@ -20,7 +15,14 @@ import { Effect, Option } from 'effect';
 import { Argument, Command, Flag } from 'effect/unstable/cli';
 
 import pkg from '../package.json' with { type: 'json' };
-import { installAll, installClaude, installCodex, installCursor, installPi } from './lib/install';
+import {
+  installAll,
+  installClaude,
+  installCodex,
+  installCursor,
+  installOhMyPi,
+  installPi,
+} from './lib/install';
 
 const hookCommand = (): string[] => {
   const isBunCli = /\/bun(?<ext>\.exe)?$/.test(process.execPath);
@@ -44,7 +46,7 @@ const buildToolInput = (
   command: string | undefined,
   path: string | undefined,
   content: string | undefined,
-): unknown => {
+) => {
   if (tool === 'Bash') {
     return { command: command ?? '' };
   }
@@ -57,7 +59,7 @@ const buildToolInput = (
   if (tool === 'Edit' || tool === 'MultiEdit') {
     return { file_path: path ?? '', old_string: '', new_string: content ?? '' };
   }
-  return undefined;
+  return null;
 };
 
 interface EventParams {
@@ -73,12 +75,13 @@ interface EventParams {
 const buildEvent = (params: EventParams): BuiltEvent => {
   const { tool, post, command, path, stdout, stderr, content } = params;
   const eventName = post ? 'PostToolUse' : 'PreToolUse';
+  const toolInput = buildToolInput(tool, command, path, content);
   const event: BuiltEvent = {
     hook_event_name: eventName,
     tool_name: tool,
     cwd: process.cwd(),
     session_id: 'tripwire-cli-test',
-    tool_input: buildToolInput(tool, command, path, content),
+    ...(toolInput !== null && { tool_input: toolInput }),
   };
   if (post) {
     event.tool_response =
@@ -167,10 +170,10 @@ const testCommand = Command.make(
 ).pipe(Command.withDescription('Test a synthetic hook event'));
 
 const runInstall = (target: string): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    if (!['claude', 'codex', 'cursor', 'pi', 'all'].includes(target)) {
+  Effect.gen(function* runInstallEffect() {
+    if (!['claude', 'codex', 'cursor', 'pi', 'oh-my-pi', 'omp', 'all'].includes(target)) {
       console.error(`error: unknown target "${target}"`);
-      console.error('Valid targets: claude, codex, cursor, pi, all');
+      console.error('Valid targets: claude, codex, cursor, pi, oh-my-pi, all');
       process.exit(1);
     }
 
@@ -193,6 +196,12 @@ const runInstall = (target: string): Effect.Effect<void> =>
       case 'pi': {
         const result = yield* Effect.promise(() => installPi());
         results = [{ target: 'pi', result }];
+        break;
+      }
+      case 'oh-my-pi':
+      case 'omp': {
+        const result = yield* Effect.promise(() => installOhMyPi());
+        results = [{ target: 'oh-my-pi', result }];
         break;
       }
       case 'cursor': {
@@ -231,7 +240,7 @@ const installCommand = Command.make(
   'install',
   {
     target: Argument.string('target').pipe(
-      Argument.withDescription('Target agent (claude, codex, cursor, pi, or all)'),
+      Argument.withDescription('Target agent (claude, codex, cursor, pi, oh-my-pi, or all)'),
     ),
   },
   ({ target }) => runInstall(target),
@@ -255,7 +264,7 @@ const runCli = async (): Promise<void> => {
 };
 
 if (import.meta.main) {
-  // oxlint-disable-next-line no-void
+  // oxlint-disable-next-line no-void -- runCli reports failures through process.exitCode.
   void runCli();
 }
 

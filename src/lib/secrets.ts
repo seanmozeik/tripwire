@@ -1,23 +1,10 @@
-// Secret scanning via the `betterleaks` binary (Zach Rice's gitleaks
-// Successor, MIT). We spawn it once per PostToolUse, write the tool
-// Output to a temp file, scan the file, parse JSON findings, redact
-// Matches in-place, and delete the temp file.
-//
-// Why subprocess vs. inline regex: betterleaks ships the curated
-// 100+-rule pack the gitleaks ecosystem has tuned over years (AWS, GH,
-// Stripe, OpenAI, Anthropic, mongo URLs, JWTs, private keys, plus ~70
-// Long-tail vendors). We get all of it for one fork+exec, ~250–300ms.
-//
-// Why a temp file vs. `--pipe`: betterleaks `--pipe` *adds* stdin to its
-// Scan but does not replace the directory walk, so it scans the cwd as
-// Well. Writing to a tempfile in /tmp and using `--source <file>` is
-// Scoped, deterministic, and only ~5ms slower.
+// Betterleaks supplies the maintained secret-rule set. Its `--pipe` mode also
+// Scans the working directory, so this adapter uses one scoped temporary file.
 
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-// oxlint-disable-next-line unicorn/import-style
-import { join } from 'node:path';
+import path from 'node:path';
 
 interface BetterleaksFinding {
   readonly RuleID: string;
@@ -33,6 +20,18 @@ interface ScanResult {
   readonly redacted: string;
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const isBetterleaksFinding = (value: unknown): value is BetterleaksFinding =>
+  isRecord(value) &&
+  typeof value['RuleID'] === 'string' &&
+  typeof value['Description'] === 'string' &&
+  typeof value['StartLine'] === 'number' &&
+  typeof value['EndLine'] === 'number' &&
+  typeof value['Secret'] === 'string' &&
+  typeof value['Match'] === 'string';
+
 const BETTERLEAKS_BIN = '/opt/homebrew/bin/betterleaks';
 
 const summarizeHits = (
@@ -45,7 +44,7 @@ const summarizeHits = (
   return [...counts.entries()].map(([rule, count]) => ({ rule, count }));
 };
 
-const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+const escapeRegExp = (s: string): string => s.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 
 // Replace every found secret in the original input with a tagged redaction.
 const redactWith = (input: string, findings: readonly BetterleaksFinding[]): string => {
@@ -66,9 +65,9 @@ const scanAndRedact = (input: string, timeoutMs = 5000): ScanResult => {
   if (input.length === 0) {
     return { hits: [], redacted: input };
   }
-  const dir = mkdtempSync(join(tmpdir(), 'tripwire-scan-'));
-  const inPath = join(dir, 'input');
-  const reportPath = join(dir, 'report.json');
+  const dir = mkdtempSync(path.join(tmpdir(), 'tripwire-scan-'));
+  const inPath = path.join(dir, 'input');
+  const reportPath = path.join(dir, 'report.json');
   try {
     writeFileSync(inPath, input);
     const result = spawnSync(
@@ -98,7 +97,7 @@ const scanAndRedact = (input: string, timeoutMs = 5000): ScanResult => {
     try {
       const raw = readFileSync(reportPath, 'utf8');
       const parsed = JSON.parse(raw || '[]') as unknown;
-      findings = Array.isArray(parsed) ? (parsed as BetterleaksFinding[]) : [];
+      findings = Array.isArray(parsed) ? parsed.filter((value) => isBetterleaksFinding(value)) : [];
     } catch {
       return { hits: [], redacted: input };
     }

@@ -2,28 +2,10 @@ import { type Segment, collectHeredocBodies, hasBypass, unwrapStaticString } fro
 import type { GitConfig } from '../lib/config';
 import { type Decision, allow, ask, deny, warn } from '../lib/decision';
 
-// Smart git policy. Replaces blanket git handling with intent-based decisions:
-//
-//   - Read-only ops (status, log, diff, show, blame, fetch, etc.) — silent allow.
-//   - Working-tree-destroying ops (reset --hard, clean -fd, checkout .,
-//     Restore <path>) — deny with concrete safer alternative.
-//   - History-rewriting ops (rebase -i, filter-branch, filter-repo,
-//     Commit --amend, gc --prune=now, reflog expire, update-ref) — deny.
-//   - Branch destruction (branch -D, branch -d on protected, push --delete,
-//     Push :branch) — deny.
-//   - Direct push to protected branches (main / master / develop /
-//     Production / release) — deny, route to PR.
-//   - Force push (--force / -f / --force-with-lease) — deny everywhere.
-//   - Commits — allow ONLY with Conventional Commits format on the first
-//     `-m` value. Auto-stage (-a / --all / -am) — ask. Editor mode (no -m
-//     And no -F) — deny (would hang the agent).
-//   - Rebase / cherry-pick / merge — ask (creates conflicts).
-//   - Config — allow read; deny write to --global / --system; deny local
-//     Write (the user's identity / workflow).
-//
-// `git -C <dir>`, `git --git-dir=<path>`, `git --work-tree=<path>`,
-// `git -c key=value` are stripped before subcommand dispatch — `git -C ../foo
-// Reset --hard` is handled the same as `git reset --hard`.
+// Git policy separates read operations from destructive worktree, history,
+// Branch, push, commit, and configuration changes. Global Git options are
+// Removed before subcommand dispatch so `git -C repo reset --hard` receives
+// The same decision as `git reset --hard`.
 
 const getProtectedBranches = (config: GitConfig): readonly string[] =>
   config.protectedBranches ?? [];
@@ -70,13 +52,16 @@ const parseGit = (seg: Segment): GitInvocation | null => {
   const toks = seg.tokens.slice(1);
   let i = 0;
   while (i < toks.length) {
-    const t = toks[i]!;
+    const t = toks[i];
+    if (t === undefined) {
+      break;
+    }
     if (PRE_SUB_FLAG_TAKES_VALUE.has(t)) {
       i += 2;
       continue;
     }
     if (PRE_SUB_FLAG_NO_VALUE.has(t)) {
-      i++;
+      i += 1;
       continue;
     }
     if (
@@ -86,12 +71,12 @@ const parseGit = (seg: Segment): GitInvocation | null => {
       t.startsWith('--super-prefix=') ||
       t.startsWith('--exec-path=')
     ) {
-      i++;
+      i += 1;
       continue;
     }
     if (t.startsWith('-')) {
       // Unknown pre-subcommand flag; assume no value, advance.
-      i++;
+      i += 1;
       continue;
     }
     return { subcommand: t, subArgs: toks.slice(i + 1) };
@@ -103,8 +88,11 @@ const messageOf = (
   subArgs: readonly string[],
   heredocBodies?: ReadonlyMap<string, string>,
 ): string | null => {
-  for (let i = 0; i < subArgs.length; i++) {
-    const t = subArgs[i]!;
+  for (let i = 0; i < subArgs.length; i += 1) {
+    const t = subArgs[i];
+    if (t === undefined) {
+      break;
+    }
     if (t === '-m' || t === '--message') {
       const raw = subArgs[i + 1];
       return raw === undefined ? null : unwrapStaticString(raw, heredocBodies);
@@ -139,8 +127,10 @@ const positionalOf = (subArgs: readonly string[]): string[] =>
 
 const flagsOf = (subArgs: readonly string[]): string[] => subArgs.filter((a) => a.startsWith('-'));
 
-const has = (subArgs: readonly string[], ...needles: readonly string[]): boolean =>
-  needles.some((n) => subArgs.includes(n));
+const has = (subArgs: readonly string[], ...needles: readonly string[]): boolean => {
+  const argumentSet = new Set(subArgs);
+  return needles.some((needle) => argumentSet.has(needle));
+};
 
 interface HandlerCtx {
   readonly subcommand: string;
@@ -210,7 +200,12 @@ const handleCheckout: Handler = ({ subArgs, positional }) => {
       '`git checkout -- <path>` discards uncommitted working-tree changes. Refuse — use `git stash push <path>` to preserve, or `git diff <path>` to inspect first.',
     );
   }
-  if (positional.length === 1 && (positional[0] === '.' || positional[0]!.startsWith('./'))) {
+  const [target] = positional;
+  if (
+    target !== undefined &&
+    positional.length === 1 &&
+    (target === '.' || target.startsWith('./'))
+  ) {
     return deny(
       'git-checkout-discard-all',
       '`git checkout .` discards ALL uncommitted working-tree changes. Refuse — `git stash` to preserve, or `git diff` to inspect first.',
@@ -271,7 +266,7 @@ const handleRebase: Handler = ({ subArgs, positional, config }) => {
       '`git rebase -i` rewrites history interactively. Refuse — too easy to lose commits in the agent loop. If this is genuinely required, do it manually outside the agent.',
     );
   }
-  const onto = positional[0];
+  const [onto] = positional;
   const branches = getProtectedBranches(config);
   if (onto !== undefined && branches.includes(onto)) {
     return ask(
@@ -376,8 +371,8 @@ const handleBranch: Handler = ({ subArgs, flags, positional, config }) => {
   );
   if (deleteFlag !== undefined) {
     const targets = positional;
-    const branches = getProtectedBranches(config);
-    const hit = targets.find((t) => branches.includes(t));
+    const branches = new Set(getProtectedBranches(config));
+    const hit = targets.find((target) => branches.has(target));
     if (hit !== undefined) {
       return deny('git-branch-delete-protected', `Refusing to delete protected branch \`${hit}\`.`);
     }
@@ -427,7 +422,7 @@ const handleGc: Handler = ({ flags }) => {
 };
 
 const handleRemote: Handler = ({ subArgs }) => {
-  const sub = subArgs[0];
+  const [sub] = subArgs;
   if (sub === 'add' || sub === 'remove' || sub === 'rm' || sub === 'set-url' || sub === 'rename') {
     return ask(
       'git-remote-mutate',

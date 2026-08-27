@@ -181,7 +181,7 @@ const parseSegment = (entries: readonly ParseEntry[], fdBudget: FdBudget): Segme
       const last = tokens.at(-1);
       if (last !== undefined && /^[0-9]+$/.test(last) && fdBudget.remaining > 0) {
         tokens.pop();
-        fdBudget.remaining--;
+        fdBudget.remaining -= 1;
       }
       const target = entries[i + 1];
       if (target !== undefined && isStringToken(target)) {
@@ -189,19 +189,19 @@ const parseSegment = (entries: readonly ParseEntry[], fdBudget: FdBudget): Segme
         i += 2;
         continue;
       }
-      i++;
+      i += 1;
       continue;
     }
     for (const t of entryToTokens(e)) {
       tokens.push(t);
     }
-    i++;
+    i += 1;
   }
 
   if (tokens.length === 0) {
     return null;
   }
-  for (let j = 1; j < tokens.length; j++) {
+  for (let j = 1; j < tokens.length; j += 1) {
     const t = tokens[j]!;
     if (t.startsWith('-') && t !== '-') {
       flags.push(t);
@@ -233,13 +233,13 @@ const PRESERVE_ENV = (key: string): string => `$${key}`;
 // `&>` / `&>>` before segment splitting.
 const mergeAmpRedirects = (entries: readonly ParseEntry[]): ParseEntry[] => {
   const out: ParseEntry[] = [];
-  for (let i = 0; i < entries.length; i++) {
+  for (let i = 0; i < entries.length; i += 1) {
     const e = entries[i]!;
     const next = entries[i + 1];
     if (getOp(e) === '&' && next !== undefined && (getOp(next) === '>' || getOp(next) === '>>')) {
       const merged = { op: getOp(next) === '>' ? '&>' : '&>>' } as unknown as ParseEntry;
       out.push(merged);
-      i++;
+      i += 1;
       continue;
     }
     // `>|file` is bash's noclobber-override redirect. shell-quote splits
@@ -249,7 +249,7 @@ const mergeAmpRedirects = (entries: readonly ParseEntry[]): ParseEntry[] => {
     // It's a write redirect to the following target).
     if (getOp(e) === '>' && next !== undefined && getOp(next) === '|') {
       out.push({ op: '>' } as unknown as ParseEntry);
-      i++;
+      i += 1;
       continue;
     }
     out.push(e);
@@ -284,20 +284,19 @@ const heredocFeedsShell = (line: string): boolean => SHELL_STDIN_HEAD_RE.test(li
 const maskLiteralHeredocBodies = (cmd: string): string => {
   const lines = cmd.split('\n');
   const out: string[] = [];
-  for (let i = 0; i < lines.length; i++) {
+  for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i]!;
     out.push(line);
     const delimiter = heredocDelimiterFromLine(line);
     if (delimiter === null || heredocFeedsShell(line)) {
       continue;
     }
-    i++;
+    i += 1;
     while (i < lines.length && lines[i]!.trim() !== delimiter) {
-      i++;
+      i += 1;
     }
     if (i < lines.length) {
-      out.push('__HEREDOC_BODY__');
-      out.push(lines[i]!);
+      out.push('__HEREDOC_BODY__', lines[i]!);
     }
   }
   return out.join('\n');
@@ -313,17 +312,17 @@ const maskLiteralHeredocBodies = (cmd: string): string => {
 const collectHeredocBodies = (cmd: string): ReadonlyMap<string, string> => {
   const map = new Map<string, string>();
   const lines = cmd.split('\n');
-  for (let i = 0; i < lines.length; i++) {
+  for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i]!;
     const delimiter = heredocDelimiterFromLine(line);
     if (delimiter === null || heredocFeedsShell(line)) {
       continue;
     }
     const body: string[] = [];
-    i++;
+    i += 1;
     while (i < lines.length && lines[i]!.trim() !== delimiter) {
       body.push(lines[i]!);
-      i++;
+      i += 1;
     }
     if (!map.has(delimiter)) {
       map.set(delimiter, body.join('\n'));
@@ -335,17 +334,17 @@ const collectHeredocBodies = (cmd: string): ReadonlyMap<string, string> => {
 const extractShellHeredocCommands = (cmd: string): string[] => {
   const lines = cmd.split('\n');
   const out: string[] = [];
-  for (let i = 0; i < lines.length; i++) {
+  for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i]!;
     const delimiter = heredocDelimiterFromLine(line);
     if (delimiter === null || !heredocFeedsShell(line)) {
       continue;
     }
     const body: string[] = [];
-    i++;
+    i += 1;
     while (i < lines.length && lines[i]!.trim() !== delimiter) {
       body.push(lines[i]!);
-      i++;
+      i += 1;
     }
     if (body.length > 0) {
       out.push(body.join('\n'));
@@ -365,10 +364,10 @@ const extractShellHeredocCommands = (cmd: string): string[] => {
 // A literal). Process/command substitutions can nest arbitrarily — a depth
 // Counter handles the balanced parens.
 const findBacktickEnd = (cmd: string, start: number): number | null => {
-  for (let i = start; i < cmd.length; i++) {
+  for (let i = start; i < cmd.length; i += 1) {
     const ch = cmd[i]!;
     if (ch === '\\') {
-      i++;
+      i += 1;
       continue;
     }
     if (ch === '`') {
@@ -381,10 +380,10 @@ const findBacktickEnd = (cmd: string, start: number): number | null => {
 const findSubstitutionEnd = (cmd: string, start: number): number | null => {
   let depth = 1;
   let quote: 'single' | 'double' | null = null;
-  for (let j = start; j < cmd.length; j++) {
+  for (let j = start; j < cmd.length; j += 1) {
     const cj = cmd[j]!;
     if (cj === '\\') {
-      j++;
+      j += 1;
       continue;
     }
     if (quote === 'single') {
@@ -402,11 +401,11 @@ const findSubstitutionEnd = (cmd: string, start: number): number | null => {
       continue;
     }
     if (cj === '(') {
-      depth++;
+      depth += 1;
       continue;
     }
     if (cj === ')') {
-      depth--;
+      depth -= 1;
       if (depth === 0) {
         return j;
       }
@@ -418,10 +417,10 @@ const findSubstitutionEnd = (cmd: string, start: number): number | null => {
 const extractInnerCommands = (cmd: string): string[] => {
   const inner: string[] = [];
   let quote: 'single' | 'double' | null = null;
-  for (let i = 0; i < cmd.length; i++) {
+  for (let i = 0; i < cmd.length; i += 1) {
     const ch = cmd[i]!;
     if (ch === '\\') {
-      i++;
+      i += 1;
       continue;
     }
     if (quote === 'single') {
@@ -572,13 +571,13 @@ const pickFdSearchRoot = (tokens: readonly string[], execFlagIdx: number): strin
       continue;
     }
     if (t.startsWith('-')) {
-      i++;
+      i += 1;
       continue;
     }
     if (pathLikeToken(t)) {
       candidates.push(t);
     }
-    i++;
+    i += 1;
   }
   if (candidates.length === 0) {
     return '.';
@@ -593,7 +592,7 @@ const pickFdSearchRoot = (tokens: readonly string[], execFlagIdx: number): strin
 // Path-shaped in the prefix region as candidates.
 const pickFindSearchRoot = (tokens: readonly string[], execFlagIdx: number): string => {
   const candidates: string[] = [];
-  for (let i = 1; i < execFlagIdx; i++) {
+  for (let i = 1; i < execFlagIdx; i += 1) {
     const t = tokens[i]!;
     if (t.startsWith('-')) {
       break;
@@ -641,8 +640,8 @@ const extractExecCommands = (seg: Segment): string[] => {
     return [];
   }
   const out: string[] = [];
-  const tokens = seg.tokens;
-  for (let i = 1; i < tokens.length; i++) {
+  const { tokens } = seg;
+  for (let i = 1; i < tokens.length; i += 1) {
     if (!spec.execFlags.has(tokens[i]!)) {
       continue;
     }
@@ -657,7 +656,7 @@ const extractExecCommands = (seg: Segment): string[] => {
         break;
       }
       inner.push(t);
-      j++;
+      j += 1;
     }
     if (inner.length === 0) {
       continue;
@@ -739,8 +738,8 @@ const extractShellWrappedCommands = (seg: Segment): string[] => {
   if (!SHELL_WRAPPER_HEADS.has(seg.head)) {
     return [];
   }
-  const tokens = seg.tokens;
-  for (let i = 1; i < tokens.length; i++) {
+  const { tokens } = seg;
+  for (let i = 1; i < tokens.length; i += 1) {
     const t = tokens[i]!;
     if (t === '-c' && i + 1 < tokens.length) {
       return [tokens[i + 1]!];
@@ -854,7 +853,7 @@ const skipHeadRenamingPrefix = (tokens: readonly string[]): number => {
   while (i < tokens.length) {
     const token = tokens[i]!;
     if (head === 'env' && tokenLooksLikeEnvAssignment(token)) {
-      i++;
+      i += 1;
       continue;
     }
     if (valueFlags.has(token)) {
@@ -862,15 +861,15 @@ const skipHeadRenamingPrefix = (tokens: readonly string[]): number => {
       continue;
     }
     if (token.includes('=') && valueFlags.has(token.slice(0, token.indexOf('=')))) {
-      i++;
+      i += 1;
       continue;
     }
     if (token.startsWith('--') && token !== '--') {
-      i++;
+      i += 1;
       continue;
     }
     if (token.startsWith('-') && token !== '-') {
-      i++;
+      i += 1;
       continue;
     }
     break;
@@ -883,7 +882,7 @@ const extractHeadRenamingCommands = (seg: Segment): string[] => {
     return [];
   }
   if (seg.head === 'script') {
-    for (let i = 1; i < seg.tokens.length - 1; i++) {
+    for (let i = 1; i < seg.tokens.length - 1; i += 1) {
       const token = seg.tokens[i]!;
       if (token === '-c' || token === '--command') {
         return [seg.tokens[i + 1]!];
@@ -947,7 +946,7 @@ const skipRtkGlobalFlags = (tokens: readonly string[]): number => {
   while (i < tokens.length) {
     const t = tokens[i]!;
     if (t.startsWith('-') && t !== '-' && t !== '--') {
-      i++;
+      i += 1;
       continue;
     }
     break;
@@ -956,7 +955,7 @@ const skipRtkGlobalFlags = (tokens: readonly string[]): number => {
 };
 
 const dashCommandArg = (tokens: readonly string[], start: number): string | null => {
-  for (let k = start; k < tokens.length; k++) {
+  for (let k = start; k < tokens.length; k += 1) {
     const t = tokens[k]!;
     if ((t === '-c' || t === '--command') && k + 1 < tokens.length) {
       return tokens[k + 1]!;
@@ -989,11 +988,11 @@ const extractRtkCommands = (seg: Segment): string[] => {
     while (j < seg.tokens.length) {
       const t = seg.tokens[j]!;
       if (t === '--') {
-        j++;
+        j += 1;
         break;
       }
       if (t.startsWith('-') && t !== '-') {
-        j++;
+        j += 1;
         continue;
       }
       break;
@@ -1063,15 +1062,15 @@ const extractPrefixWrapperCommands = (seg: Segment): string[] => {
       continue;
     }
     if (t.includes('=') && spec.valueFlags.has(t.slice(0, t.indexOf('=')))) {
-      i++;
+      i += 1;
       continue;
     }
     if (t === '--') {
-      i++;
+      i += 1;
       break;
     }
     if (t.startsWith('-') && t !== '-') {
-      i++;
+      i += 1;
       continue;
     }
     break;
@@ -1174,7 +1173,7 @@ const parseCommand = (cmd: string): Segment[] => {
   // Loop, but should only scan the segments that existed pre-extraction
   // To avoid re-processing extracted ones.
   const preExtractLen = out.length;
-  for (let k = 0; k < preExtractLen; k++) {
+  for (let k = 0; k < preExtractLen; k += 1) {
     const seg = out[k]!;
     for (const extract of SEGMENT_EXTRACTORS) {
       for (const sub of extract(seg)) {

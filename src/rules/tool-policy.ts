@@ -13,10 +13,9 @@ const matches = (segment: Segment, policy: ToolPolicy): boolean => {
   }
 
   const commandArguments = segment.tokens.slice(1);
+  const commandArgumentSet = new Set(commandArguments);
   if (
-    !(policy.match?.argumentsIncludeAll ?? []).every((argument) =>
-      commandArguments.includes(argument),
-    )
+    !(policy.match?.argumentsIncludeAll ?? []).every((argument) => commandArgumentSet.has(argument))
   ) {
     return false;
   }

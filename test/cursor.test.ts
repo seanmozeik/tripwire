@@ -111,14 +111,14 @@ describe('Cursor hook output', () => {
 });
 
 describe('Cursor hook installation', () => {
-  test('replaces an existing event hint instead of appending a second one', () => {
+  test('migrates a source-file hook to the installed command and current event', () => {
     const [hooks, changed] = addCursorHook(
       [{ command: 'bun /tmp/tripwire.js --cursor-event=preToolUse' }],
       'beforeShellExecution',
     );
 
     expect(changed).toBe(true);
-    expect(hooks[0]?.command).toBe('bun /tmp/tripwire.js --cursor-event beforeShellExecution');
+    expect(hooks[0]?.command).toBe('tripwire-hook --cursor-event beforeShellExecution');
     expect(hooks[0]?.failClosed).toBe(true);
   });
 

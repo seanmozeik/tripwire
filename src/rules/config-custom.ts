@@ -33,8 +33,11 @@ const flagPresent = (tokens: readonly string[], flag: string): boolean =>
   tokens.some((t) => t === flag || t.startsWith(`${flag}=`));
 
 const flagValue = (tokens: readonly string[], flag: string): string | null => {
-  for (let i = 0; i < tokens.length; i++) {
-    const t = tokens[i]!;
+  for (let i = 0; i < tokens.length; i += 1) {
+    const t = tokens[i];
+    if (t === undefined) {
+      continue;
+    }
     if (t === flag) {
       return tokens[i + 1] ?? '';
     }
@@ -48,16 +51,20 @@ const flagValue = (tokens: readonly string[], flag: string): string | null => {
 const subcommandTokens = (seg: Segment): string[] => {
   const out: string[] = [];
   const tokens = seg.tokens.slice(1);
-  for (let i = 0; i < tokens.length; i++) {
-    const t = tokens[i]!;
+  for (let i = 0; i < tokens.length; i += 1) {
+    const t = tokens[i];
+    if (t === undefined) {
+      continue;
+    }
     if (t.startsWith('-')) {
       // Without per-CLI flag metadata, we conservatively treat
       // `--flag value` / `-f value` as one option pair and `--flag=value`
       // As one token. This keeps global selectors like `--account X`
       // Out of the subcommand path, at the cost of not distinguishing
       // Boolean flags that precede positional args.
-      if (!t.includes('=') && tokens[i + 1] !== undefined && !tokens[i + 1]!.startsWith('-')) {
-        i++;
+      const nextToken = tokens[i + 1];
+      if (!t.includes('=') && nextToken !== undefined && !nextToken.startsWith('-')) {
+        i += 1;
       }
       continue;
     }
@@ -70,18 +77,20 @@ const subcommandTokens = (seg: Segment): string[] => {
 // This is more powerful than simple regex because it uses the same
 // Parsing logic as the rest of tripwire.
 const matchPattern = (segments: readonly Segment[], rule: BlockRule): boolean => {
-  const pattern = rule.pattern;
+  const { pattern } = rule;
   const patternSegs = parseCommand(pattern);
   if (patternSegs.length === 0) {
     return false;
   }
 
-  const patternTokens = patternSegs[0]!.tokens;
-  const patternHead = patternTokens[0];
+  const [patternSegment] = patternSegs;
+  if (patternSegment === undefined) {
+    return false;
+  }
+  const [patternHead, ...patternSubcommands] = patternSegment.tokens;
   if (patternHead === undefined) {
     return false;
   }
-  const patternSubcommands = patternTokens.slice(1);
 
   for (const seg of segments) {
     if (basename(seg.head) !== basename(patternHead)) {

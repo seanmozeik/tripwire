@@ -80,7 +80,7 @@ const parseConfigJson = (raw: string): Effect.Effect<unknown, Error> =>
 // `onExcessProperty: 'error'` rejects unknown keys (the default 'ignore' would
 // Silently strip them — a typo'd `blockedComands` would vanish unnoticed, the
 // Same silent-policy-drop class this whole change exists to kill). A stray key
-// Now fails loud, e.g. the `rtk` block that triggered MTA-137.
+// A stray key now fails loud instead of silently dropping policy.
 const decodeConfig = (unknown: unknown): Effect.Effect<Config, Error> =>
   Schema.decodeUnknownEffect(ConfigSchema)(unknown, { onExcessProperty: 'error' });
 
@@ -117,7 +117,7 @@ type ConfigLoad =
   | { readonly ok: false; readonly error: string };
 
 export const loadConfigResult = (path: string = CONFIG_PATH): Effect.Effect<ConfigLoad> =>
-  Effect.gen(function* () {
+  Effect.gen(function* loadConfigResultEffect() {
     const exists = yield* configExists(path);
     if (!exists) {
       const result: ConfigLoad = { ok: true, config: getDefaultConfig() };

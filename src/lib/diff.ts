@@ -18,8 +18,11 @@ const addedLines = (prev: string, next: string): string[] => {
 const readFileOrEmpty = (path: string): string => {
   try {
     return readFileSync(path, 'utf8');
-  } catch {
-    return '';
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      return '';
+    }
+    throw error;
   }
 };
 

@@ -381,8 +381,7 @@ describe('bash-scoped-rm', () => {
     expect(allRules('cd dist && rm -rf /etc/foo').rm.kind).toBe('deny');
   });
   test('fd-prefixed redirect does not become an rm target', () => {
-    // `2>&1` previously caused the `2` to be parsed as a positional arg
-    // To `rm`, denying an otherwise-safe `/tmp` deletion.
+    // The file descriptor in `2>&1` is not an rm target.
     expect(allRules('rm -rf /tmp/foo-* 2>&1').rm.kind).toBe('allow');
     expect(allRules('rm -rf /tmp/foo 2>/dev/null').rm.kind).toBe('allow');
     expect(allRules('rm -rf /tmp/foo 1>&2').rm.kind).toBe('allow');
@@ -394,14 +393,12 @@ describe('bash-scoped-rm', () => {
     expect(allRules('rm 2 >/tmp/log').rm.kind).toBe('deny');
   });
   test('|& pipes split into separate segments and analyze both sides', () => {
-    // Previously `cmd1 |& cmd2` collapsed into one segment with
-    // `__op_|&__` as a fake positional arg, hiding `cmd2` from rules.
+    // Both sides of the `|&` pipeline require analysis.
     expect(allRules('echo x |& rm -rf /etc').rm.kind).toBe('deny');
     expect(allRules('cat foo |& tee /tmp/log').rm.kind).toBe('allow');
   });
   test('>| noclobber-override redirect does not split the segment', () => {
-    // `echo x >|file` previously parsed as `>` then `|` (segment break),
-    // Losing the redirect target.
+    // The noclobber override remains a redirect, not a segment break.
     expect(allRules('echo TOKEN=abc >| .env').redirect.kind).toBe('deny');
   });
   test('inner command in process substitution is analyzed', () => {
@@ -450,9 +447,7 @@ describe('bash-scoped-rm', () => {
     expect(allRules('echo $(echo $(rm -rf /etc))').rm.kind).toBe('deny');
   });
   test('&> and &>> redirects do not split the segment', () => {
-    // Previously `rm x &>file` was parsed as two segments (`rm x` and
-    // `>file`), losing the redirect entirely. The merged `&>` op keeps
-    // The segment whole.
+    // The combined output redirect stays in the same command segment.
     expect(allRules('rm -rf /tmp/foo &>/tmp/log').rm.kind).toBe('allow');
     expect(allRules('rm -rf /tmp/foo &>>/tmp/log').rm.kind).toBe('allow');
   });
@@ -514,7 +509,8 @@ describe('bash-redirect', () => {
     expect(allRules('cp foo.txt .env').redirect.kind).toBe('deny');
   });
   test('blocks redirect into id_rsa', () => {
-    expect(allRules('echo X > /tmp/id_rsa').redirect.kind).toBe('allow'); // Id_rsa pattern requires path boundary; this is OK
+    // The id_rsa rule requires a protected path boundary.
+    expect(allRules('echo X > /tmp/id_rsa').redirect.kind).toBe('allow');
   });
   test('allows > tmp/foo.txt', () => {
     expect(allRules('echo X > tmp/foo.txt').redirect.kind).toBe('allow');

@@ -1,12 +1,11 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-// oxlint-disable-next-line unicorn/import-style
-import { dirname } from 'node:path';
+import path from 'node:path';
 
 const LOG_PATH = `${homedir()}/.claude/tripwire.log`;
 
 try {
-  mkdirSync(dirname(LOG_PATH), { recursive: true });
+  mkdirSync(path.dirname(LOG_PATH), { recursive: true });
 } catch {
   // Directory creation failure is non-fatal — logging is best-effort.
 }

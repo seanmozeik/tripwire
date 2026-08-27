@@ -12,8 +12,10 @@ interface Spec {
 
 const argsJoined = (seg: Segment): string => seg.tokens.slice(1).join(' ');
 
-const flagPresent = (seg: Segment, ...flags: readonly string[]): boolean =>
-  seg.flags.some((f) => flags.includes(f));
+const flagPresent = (seg: Segment, ...flags: readonly string[]): boolean => {
+  const segmentFlags = new Set(seg.flags);
+  return flags.some((flag) => segmentFlags.has(flag));
+};
 
 const SPECS: readonly Spec[] = [
   // ── catastrophic deletions ────────────────────────────────────────────

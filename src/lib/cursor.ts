@@ -111,7 +111,7 @@ const normalizeCursorToolName = (name: string): string => {
 const isFileTool = (tool: string): boolean =>
   tool === 'Read' || tool === 'Write' || tool === 'Edit';
 
-const normalizeBashInput = (input: unknown, required: boolean): unknown => {
+const normalizeBashInput = (input: unknown, required: boolean) => {
   let command: string | undefined;
   if (typeof input === 'string') {
     command = input;
@@ -177,7 +177,7 @@ const normalizeToolInput = (tool: string, input: unknown, required = true): unkn
   return normalizeFileInput(tool, input, required);
 };
 
-const normalizeToolResponse = (tool: string, response: unknown): unknown => {
+const normalizeToolResponse = (tool: string, response: unknown) => {
   if (typeof response !== 'string') {
     return response;
   }
@@ -238,12 +238,7 @@ const cursorTopLevelToolInput = (tool: string, raw: JsonRecord): JsonRecord => {
   return input;
 };
 
-const cursorToolInput = (
-  eventName: string,
-  tool: string,
-  raw: JsonRecord,
-  post: boolean,
-): unknown => {
+const cursorToolInput = (eventName: string, tool: string, raw: JsonRecord, post: boolean) => {
   const input = valueField(raw, 'tool_input', 'toolInput');
   const required = !post;
   if (eventName === 'beforeShellExecution' || eventName === 'afterShellExecution') {
@@ -261,7 +256,7 @@ const cursorToolInput = (
       tool,
       {
         file_path: required ? requiredString(filePath, 'file path') : (filePath ?? ''),
-        ...(Array.isArray(raw['edits']) ? { edits: raw['edits'] } : {}),
+        ...(Array.isArray(raw['edits']) && { edits: raw['edits'] }),
       },
       required,
     );
@@ -296,18 +291,17 @@ const normalizeCursorEvent = (
   const tool = cursorToolName(eventName, raw);
   const input = cursorToolInput(eventName, tool, raw, post);
   const response = post ? cursorToolResponse(eventName, tool, raw) : undefined;
+  const cwd = stringField(raw, 'cwd');
+  const sessionId = stringField(raw, 'conversation_id', 'session_id');
+  const toolUseId = stringField(raw, 'tool_use_id');
   const event: HookEvent = {
     hook_event_name: post ? 'PostToolUse' : 'PreToolUse',
-    ...(tool.length === 0 ? {} : { tool_name: tool }),
-    ...(input === undefined ? {} : { tool_input: input }),
-    ...(response === undefined ? {} : { tool_response: response }),
-    ...(stringField(raw, 'cwd') === undefined ? {} : { cwd: stringField(raw, 'cwd') }),
-    ...(stringField(raw, 'conversation_id', 'session_id') === undefined
-      ? {}
-      : { session_id: stringField(raw, 'conversation_id', 'session_id') }),
-    ...(stringField(raw, 'tool_use_id') === undefined
-      ? {}
-      : { tool_use_id: stringField(raw, 'tool_use_id') }),
+    ...(tool.length > 0 && { tool_name: tool }),
+    ...(input !== undefined && { tool_input: input }),
+    ...(response !== undefined && { tool_response: response }),
+    ...(cwd !== undefined && { cwd }),
+    ...(sessionId !== undefined && { session_id: sessionId }),
+    ...(toolUseId !== undefined && { tool_use_id: toolUseId }),
   };
   return { event, host: cursorHost(eventName) };
 };

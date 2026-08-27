@@ -46,45 +46,44 @@ interface ReadResponse {
   readonly file?: { readonly content?: string };
 }
 
-const isBashInput = (x: unknown): x is BashInput =>
-  typeof x === 'object' && x !== null && typeof (x as BashInput).command === 'string';
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const isBashInput = (x: unknown): x is BashInput => isRecord(x) && typeof x['command'] === 'string';
 
 const isEditInput = (x: unknown): x is EditInput =>
-  typeof x === 'object' &&
-  x !== null &&
-  typeof (x as EditInput).file_path === 'string' &&
-  typeof (x as EditInput).old_string === 'string' &&
-  typeof (x as EditInput).new_string === 'string';
+  isRecord(x) &&
+  typeof x['file_path'] === 'string' &&
+  typeof x['old_string'] === 'string' &&
+  typeof x['new_string'] === 'string';
 
 const isWriteInput = (x: unknown): x is WriteInput =>
-  typeof x === 'object' &&
-  x !== null &&
-  typeof (x as WriteInput).file_path === 'string' &&
-  typeof (x as WriteInput).content === 'string';
+  isRecord(x) && typeof x['file_path'] === 'string' && typeof x['content'] === 'string';
 
 const isReadInput = (x: unknown): x is ReadInput =>
-  typeof x === 'object' && x !== null && typeof (x as ReadInput).file_path === 'string';
+  isRecord(x) && typeof x['file_path'] === 'string';
 
 // Extract any string payload from a tool_response we can scan for secrets.
 // Returns concatenated stdout/stderr for Bash, content for Read, or '' if
 // Nothing is recognizable.
 const extractResponseText = (toolName: string, response: unknown): string => {
-  if (typeof response !== 'object' || response === null) {
+  if (!isRecord(response)) {
     return '';
   }
   if (toolName === 'Bash') {
-    const r = response as BashResponse;
-    return [r.stdout ?? '', r.stderr ?? ''].filter((s) => s.length > 0).join('\n');
+    const stdout = typeof response['stdout'] === 'string' ? response['stdout'] : '';
+    const stderr = typeof response['stderr'] === 'string' ? response['stderr'] : '';
+    return [stdout, stderr].filter((text) => text.length > 0).join('\n');
   }
   if (toolName === 'Read') {
-    const r = response as ReadResponse;
-    return r.content ?? r.file?.content ?? '';
+    if (typeof response['content'] === 'string') {
+      return response['content'];
+    }
+    const { file } = response;
+    return isRecord(file) && typeof file['content'] === 'string' ? file['content'] : '';
   }
   // Best-effort fallback: stringify and let the scanner do its thing.
-  if (typeof (response as { content?: string }).content === 'string') {
-    return (response as { content?: string }).content ?? '';
-  }
-  return '';
+  return typeof response['content'] === 'string' ? response['content'] : '';
 };
 
 export type {

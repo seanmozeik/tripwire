@@ -1,5 +1,4 @@
-// oxlint-disable-next-line unicorn/import-style
-import { resolve } from 'node:path';
+import path from 'node:path';
 
 import { type Decision, allow, deny } from '../lib/decision';
 import type { EditInput, WriteInput } from '../lib/event';
@@ -56,10 +55,10 @@ const protections: readonly Spec[] = [
 ];
 
 const pathProtect = (input: EditInput | WriteInput): Decision => {
-  const path = resolve(input.file_path);
-  for (const p of protections) {
-    if (p.pattern.test(path)) {
-      return deny(p.rule, p.message);
+  const resolvedPath = path.resolve(input.file_path);
+  for (const protection of protections) {
+    if (protection.pattern.test(resolvedPath)) {
+      return deny(protection.rule, protection.message);
     }
   }
   return allow('path-protect');
