@@ -1,6 +1,6 @@
 {
   "name": "@seanmozeik/tripwire-darwin-arm64",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Apple Silicon native executable for @seanmozeik/tripwire",
   "homepage": "https://github.com/seanmozeik/tripwire#readme",
   "bugs": {
