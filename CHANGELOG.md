@@ -4,6 +4,8 @@ This file records notable project changes. The format follows [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-27
+
 ### Added
 
 - Added native Pi and Oh My Pi extensions with batched multi-file policy checks.

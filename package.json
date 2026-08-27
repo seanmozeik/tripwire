@@ -1,6 +1,6 @@
 {
   "name": "@seanmozeik/tripwire",
-  "version": "0.6.7",
+  "version": "0.7.0",
   "description": "Configurable safety hooks for Claude Code, Codex, Cursor, Pi, and Oh My Pi",
   "keywords": [
     "ai-agents",
