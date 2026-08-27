@@ -4,17 +4,9 @@ import { type Decision, allow, deny } from '../lib/decision';
 // Block tar/zip/unzip extractions that would write into / or $HOME
 // (`tar -xf foo.tar.gz -C /` style explosions).
 
-const isExtractFlag = (f: string): boolean =>
-  f === '-x' ||
-  f === '-xf' ||
-  f === '-xzf' ||
-  f === '-xjf' ||
-  f === '-xJf' ||
-  f === '-xvf' ||
-  f === '-xvzf' ||
-  f === '-xvjf' ||
-  f === '--extract' ||
-  /^-[xvzjJtf]+$/.test(f);
+const isExtractFlag = (flag: string): boolean =>
+  flag === '--extract' ||
+  (flag.startsWith('-') && !flag.startsWith('--') && flag.slice(1).includes('x'));
 
 const findChangeDir = (seg: Segment): string | null => {
   for (let i = 0; i < seg.tokens.length; i += 1) {
@@ -44,7 +36,13 @@ const bashTarExplosion = (segments: readonly Segment[], cmd: string): Decision =
     if (seg.head !== 'tar') {
       continue;
     }
-    const extracting = seg.flags.some(isExtractFlag) || seg.tokens.includes('--extract');
+    const [, legacyOptionWord] = seg.tokens;
+    const extracting =
+      seg.flags.some(isExtractFlag) ||
+      seg.tokens.includes('--extract') ||
+      (legacyOptionWord !== undefined &&
+        /^[a-zA-Z]+$/.test(legacyOptionWord) &&
+        legacyOptionWord.includes('x'));
     if (!extracting) {
       continue;
     }

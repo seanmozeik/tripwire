@@ -1080,6 +1080,27 @@ const extractPrefixWrapperCommands = (seg: Segment): string[] => {
   return inner === '' ? [] : [inner];
 };
 
+// Shell control keywords keep an executable command on the same token vector.
+// For example, `then rm -rf /` arrives as one segment headed by `then`, which
+// hides `rm` from every policy rule. Reparse the tail as a command so nested
+// conditions and loop bodies pass through the normal rule pipeline.
+const COMPOUND_COMMAND_HEADS: ReadonlySet<string> = new Set([
+  'if',
+  'elif',
+  'then',
+  'else',
+  'while',
+  'until',
+  'do',
+]);
+
+const extractCompoundKeywordCommand = (seg: Segment): string[] => {
+  if (!COMPOUND_COMMAND_HEADS.has(seg.head) || seg.tokens.length < 2) {
+    return [];
+  }
+  return [quote(seg.tokens.slice(1))];
+};
+
 // Each extractor pulls the inner command(s) a wrapper hides on its own arg
 // Vector, to be re-parsed as additional segments so every rule sees what
 // Actually runs. Order is irrelevant — all results are unioned into `out`.
@@ -1090,7 +1111,30 @@ const SEGMENT_EXTRACTORS: readonly ((seg: Segment) => string[])[] = [
   extractEvalCommands,
   extractRtkCommands,
   extractPrefixWrapperCommands,
+  extractCompoundKeywordCommand,
 ];
+
+const UNSUPPORTED_SHELL_HEAD = '__tripwire_unsupported_shell__';
+
+const unsupportedShellSegment = (raw: string): Segment => ({
+  head: UNSUPPORTED_SHELL_HEAD,
+  tokens: [UNSUPPORTED_SHELL_HEAD],
+  args: [],
+  flags: [],
+  redirects: [],
+  raw,
+});
+
+const containsUnsupportedShellStructure = (segments: readonly Segment[]): boolean =>
+  segments.some((segment) => {
+    if (segment.head === 'case' || segment.head === 'function' || segment.head === '{') {
+      return true;
+    }
+    if (segment.tokens.includes('__op_(__') || segment.tokens.includes('__op_)__')) {
+      return true;
+    }
+    return COMPOUND_COMMAND_HEADS.has(segment.head) && segment.tokens[1] === '{';
+  });
 
 const normalizeTopLevelNewlines = (cmd: string): string => {
   let out = '';
@@ -1130,7 +1174,7 @@ const parseCommand = (cmd: string): Segment[] => {
   try {
     entries = parse(cmdForParsing, PRESERVE_ENV);
   } catch {
-    return [];
+    return [unsupportedShellSegment(cmdForParsing)];
   }
   entries = mergeAmpRedirects(entries);
   const fdBudget: FdBudget = { remaining: countFdPrefixRedirects(cmdForParsing) };
@@ -1152,6 +1196,10 @@ const parseCommand = (cmd: string): Segment[] => {
   const seg = parseSegment(buf, fdBudget);
   if (seg !== null) {
     out.push(seg);
+  }
+
+  if (containsUnsupportedShellStructure(out)) {
+    out.push(unsupportedShellSegment(cmdForParsing));
   }
 
   // Recursively analyze any embedded commands as additional segments. The
@@ -1269,11 +1317,12 @@ const safeScopesSummary = (
 // A legitimate bypass marker sits on the actual command line, which the
 // Mask leaves intact.
 const hasBypass = (cmd: string): boolean =>
-  /(?<prefix>^|\s)#\s*tripwire-allow\b/.test(maskLiteralHeredocBodies(cmd));
+  /(?<prefix>^|\s)#\s*tripwire-allow:[ \t]*\S[^\r\n]*/.test(maskLiteralHeredocBodies(cmd));
 
 export type { Redirect, Segment };
 export {
   EXEC_SPECS,
+  UNSUPPORTED_SHELL_HEAD,
   collectHeredocBodies,
   hasBypass,
   isSafePathTarget,

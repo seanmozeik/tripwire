@@ -38,7 +38,7 @@ const TEST_PATH_RE =
 
 // Comment-syntax-agnostic. Works in `//`, `#`, `--`, `/* */`, `<!-- -->`,
 // `;`, `%`, etc.
-const BYPASS_RE = /tripwire-allow\b/;
+const BYPASS_RE = /tripwire-allow:[ \t]*\S/;
 
 const matches = (line: string): boolean => {
   if (BYPASS_RE.test(line)) {

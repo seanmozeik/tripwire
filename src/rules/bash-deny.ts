@@ -1,4 +1,4 @@
-import { type Segment, hasBypass } from '../lib/bash';
+import { type Segment, UNSUPPORTED_SHELL_HEAD, hasBypass } from '../lib/bash';
 import { type Decision, allow, ask, deny, merge } from '../lib/decision';
 
 interface Spec {
@@ -18,6 +18,13 @@ const flagPresent = (seg: Segment, ...flags: readonly string[]): boolean => {
 };
 
 const SPECS: readonly Spec[] = [
+  {
+    rule: 'unsupported-shell-structure',
+    action: 'deny',
+    message:
+      'Tripwire cannot inspect every executable branch in this shell structure. Rewrite it as simple commands joined with `;`, `&&`, or `||` so each command can be checked.',
+    match: (seg) => seg.head === UNSUPPORTED_SHELL_HEAD,
+  },
   // ── catastrophic deletions ────────────────────────────────────────────
   {
     rule: 'rm-rf-root',
@@ -344,6 +351,7 @@ const SPECS: readonly Spec[] = [
 // Have no legitimate prompt-line override. If the user genuinely needs
 // One of these to run, they should do it in a terminal themselves.
 const UNBYPASSABLE_RULES: ReadonlySet<string> = new Set([
+  'unsupported-shell-structure',
   // Catastrophic / irreversible
   'rm-rf-root',
   'rm-rf-home',

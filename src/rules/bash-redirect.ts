@@ -1,11 +1,12 @@
 import { type Segment, hasBypass } from '../lib/bash';
 import { type Decision, allow, deny } from '../lib/decision';
+import { classifyProtectedPath, type ProtectedPathSpec } from './path-protect';
 
 // Block writes (via shell redirect, tee, cp, mv) that target sensitive
 // Files. Catches the exfil-via-redirect gap that path-protect can't see
 // Because it only watches Edit/Write tool calls.
 
-const PROTECTED_TARGET_RE: readonly { rule: string; pattern: RegExp; message: string }[] = [
+const PROTECTED_TARGET_RE: readonly ProtectedPathSpec[] = [
   {
     rule: 'redirect-env',
     pattern: /(?<prefix>^|\/)\.env(?<ext>\.[^/]+)?$/,
@@ -45,10 +46,9 @@ const PROTECTED_TARGET_RE: readonly { rule: string; pattern: RegExp; message: st
 ];
 
 const checkPath = (path: string): Decision | null => {
-  for (const p of PROTECTED_TARGET_RE) {
-    if (p.pattern.test(path)) {
-      return deny(p.rule, p.message);
-    }
+  const protection = classifyProtectedPath(path, 'write', PROTECTED_TARGET_RE);
+  if (protection !== null) {
+    return deny(protection.rule, protection.message);
   }
   return null;
 };

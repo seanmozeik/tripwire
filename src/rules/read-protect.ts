@@ -1,15 +1,8 @@
-import path from 'node:path';
-
 import { type Decision, allow, deny } from '../lib/decision';
 import type { ReadInput } from '../lib/event';
+import { classifyProtectedPath, type ProtectedPathSpec } from './path-protect';
 
-interface Spec {
-  readonly rule: string;
-  readonly pattern: RegExp;
-  readonly message: string;
-}
-
-const PROTECTIONS: readonly Spec[] = [
+const PROTECTIONS: readonly ProtectedPathSpec[] = [
   {
     rule: 'read-env',
     pattern: /(?<prefix>^|\/)\.env(?<ext>\.[^/]+)?$/,
@@ -54,11 +47,9 @@ const PROTECTIONS: readonly Spec[] = [
 ];
 
 const readProtect = (input: ReadInput): Decision => {
-  const resolvedPath = path.resolve(input.file_path);
-  for (const protection of PROTECTIONS) {
-    if (protection.pattern.test(resolvedPath)) {
-      return deny(protection.rule, protection.message);
-    }
+  const protection = classifyProtectedPath(input.file_path, 'read', PROTECTIONS);
+  if (protection !== null) {
+    return deny(protection.rule, protection.message);
   }
   return allow('read-protect');
 };
