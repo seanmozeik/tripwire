@@ -1,17 +1,39 @@
 // Agent installation module for Tripwire hooks and the native Pi extension.
 
-import { lstat, mkdir, readlink, rename, rm, symlink } from 'node:fs/promises';
+import {
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  readlink,
+  realpath,
+  rename,
+  rm,
+  stat,
+  symlink,
+  type FileHandle,
+} from 'node:fs/promises';
 import { homedir } from 'node:os';
 import pathModule from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { file } from 'bun';
+interface CommandHook extends Record<string, unknown> {
+  type: string;
+  command: string;
+  timeout?: number;
+}
 
-interface AgentHooksConfig {
-  hooks?: {
-    PreToolUse?: { hooks: { type: string; command: string; timeout?: number }[] }[];
-    PostToolUse?: { hooks: { type: string; command: string; timeout?: number }[] }[];
-  };
+interface HookGroup extends Record<string, unknown> {
+  hooks: CommandHook[];
+}
+
+interface AgentHooks extends Record<string, unknown> {
+  PreToolUse?: HookGroup[];
+  PostToolUse?: HookGroup[];
+}
+
+interface AgentHooksConfig extends Record<string, unknown> {
+  hooks?: AgentHooks;
 }
 
 const piExtensionSourceCandidates = [
@@ -20,9 +42,13 @@ const piExtensionSourceCandidates = [
   fileURLToPath(new URL('tripwire-pi.js', import.meta.url)),
 ];
 
-interface PiInstallOptions {
+export interface InstallOptions {
   readonly extensionSource?: string;
   readonly homeDirectory?: string;
+}
+
+interface AtomicTextReplaceOptions {
+  readonly beforeRename?: (pendingPath: string, targetPath: string) => Promise<void> | void;
 }
 
 interface ExtensionLinkResult {
@@ -30,14 +56,14 @@ interface ExtensionLinkResult {
   readonly success: boolean;
 }
 
-interface CursorHook {
+interface CursorHook extends Record<string, unknown> {
   command: string;
   type?: string;
   timeout?: number;
   failClosed?: boolean;
 }
 
-interface CursorConfig {
+interface CursorConfig extends Record<string, unknown> {
   version?: number;
   hooks?: Record<string, CursorHook[]>;
 }
@@ -45,17 +71,71 @@ interface CursorConfig {
 const isJsonRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-const isCommandHook = (
-  value: unknown,
-): value is { type: string; command: string; timeout?: number } =>
+const isErrno = (error: unknown, code: string): boolean =>
+  error instanceof Error && 'code' in error && error.code === code;
+
+export const replaceTextAtomically = async (
+  targetPath: string,
+  text: string,
+  options: AtomicTextReplaceOptions = {},
+): Promise<void> => {
+  let publicationPath = targetPath;
+  let targetIsSymlink = false;
+  try {
+    const targetStatus = await lstat(targetPath);
+    targetIsSymlink = targetStatus.isSymbolicLink();
+  } catch (error) {
+    if (!isErrno(error, 'ENOENT')) {
+      throw error;
+    }
+  }
+  if (targetIsSymlink) {
+    // A dangling link fails here instead of being replaced.
+    publicationPath = await realpath(targetPath);
+  }
+
+  const pendingPath = `${publicationPath}.${process.pid}.next`;
+  let handle: FileHandle | undefined;
+  let mode = 0o600;
+
+  try {
+    const targetStatus = await stat(publicationPath);
+    mode = targetStatus.mode & 0o7777;
+  } catch (error) {
+    if (!isErrno(error, 'ENOENT')) {
+      throw error;
+    }
+  }
+
+  await rm(pendingPath, { force: true });
+  try {
+    handle = await open(pendingPath, 'wx', mode);
+    await handle.writeFile(text, 'utf8');
+    // Chmod is explicit after writing because open applies the umask and writes can clear mode bits.
+    await handle.chmod(mode);
+    await handle.sync();
+    await handle.close();
+    handle = undefined;
+    await options.beforeRename?.(pendingPath, publicationPath);
+    await rename(pendingPath, publicationPath);
+  } finally {
+    try {
+      if (handle !== undefined) {
+        await handle.close();
+      }
+    } finally {
+      await rm(pendingPath, { force: true });
+    }
+  }
+};
+
+const isCommandHook = (value: unknown): value is CommandHook =>
   isJsonRecord(value) &&
   typeof value['type'] === 'string' &&
   typeof value['command'] === 'string' &&
   (value['timeout'] === undefined || typeof value['timeout'] === 'number');
 
-const isHookGroups = (
-  value: unknown,
-): value is { hooks: { type: string; command: string; timeout?: number }[] }[] =>
+const isHookGroups = (value: unknown): value is HookGroup[] =>
   Array.isArray(value) &&
   value.every(
     (group) =>
@@ -198,19 +278,16 @@ const addCursorHook = (
   return [[...normalized, newHook], true];
 };
 
-const addHookIfMissing = (
-  hooks: { hooks: { type: string; command: string; timeout?: number }[] }[] | undefined,
-): [{ hooks: { type: string; command: string; timeout?: number }[] }[], boolean] => {
+const addHookIfMissing = (hooks: HookGroup[] | undefined): [HookGroup[], boolean] => {
   if (!hooks) {
-    const newHooks: { hooks: { type: string; command: string; timeout?: number }[] }[] = [
-      { hooks: [{ type: 'command', command: TRIPWIRE_HOOK }] },
-    ];
+    const newHooks: HookGroup[] = [{ hooks: [{ type: 'command', command: TRIPWIRE_HOOK }] }];
     return [newHooks, false];
   }
 
   let needsNormalization = false;
 
   const normalizedHooks = hooks.map((h) => ({
+    ...h,
     hooks: h.hooks.map((hook) => {
       if (hook.command === TRIPWIRE_HOOK || hook.command.endsWith('/tripwire-hook')) {
         if (hook.command !== TRIPWIRE_HOOK) {
@@ -231,19 +308,20 @@ const addHookIfMissing = (
     return [normalizedHooks, !needsNormalization];
   }
 
-  const newHooks: { hooks: { type: string; command: string; timeout?: number }[] }[] = [
+  const newHooks: HookGroup[] = [
     ...normalizedHooks,
     { hooks: [{ type: 'command', command: TRIPWIRE_HOOK }] },
   ];
   return [newHooks, false];
 };
 
-export const installClaude = async (): Promise<{ success: boolean; message: string }> => {
-  const configPath = `${homedir()}/.claude/settings.json`;
-  const configFile = file(configPath);
-
+export const installClaude = async (
+  options: InstallOptions = {},
+): Promise<{ success: boolean; message: string }> => {
+  const homeDirectory = options.homeDirectory ?? homedir();
+  const configPath = `${homeDirectory}/.claude/settings.json`;
   try {
-    const raw = await configFile.text();
+    const raw = await readFile(configPath, 'utf8');
     const config = parseAgentHooksConfig(raw, 'Claude');
 
     config.hooks ??= {};
@@ -257,24 +335,23 @@ export const installClaude = async (): Promise<{ success: boolean; message: stri
       return { success: true, message: `Already configured: ${configPath}` };
     }
 
-    await configFile.write(`${JSON.stringify(config, null, 2)}\n`);
+    await replaceTextAtomically(configPath, `${JSON.stringify(config, null, 2)}\n`);
 
     return { success: true, message: `Updated ${configPath}` };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes('No such file')) {
+    if (isErrno(error, 'ENOENT')) {
       return { success: false, message: `Config file not found: ${configPath}` };
     }
+    const message = error instanceof Error ? error.message : String(error);
     return { success: false, message: `Failed to update Claude config: ${message}` };
   }
 };
 
 export const installPi = async (
-  options: PiInstallOptions = {},
+  options: InstallOptions = {},
 ): Promise<{ success: boolean; message: string }> => {
   const homeDirectory = options.homeDirectory ?? homedir();
   const configPath = `${homeDirectory}/.pi/agent/settings.json`;
-  const configFile = file(configPath);
   const extensionPath = `${homeDirectory}/.pi/agent/extensions/tripwire.js`;
 
   try {
@@ -284,13 +361,11 @@ export const installPi = async (
     if (source === undefined) {
       return { success: false, message: 'Built Pi extension not found; run `bun run build` first' };
     }
-    const raw = await configFile.text();
+    const raw = await readFile(configPath, 'utf8');
     let config = parseAgentHooksConfig(raw, 'Pi');
     if (config.hooks !== undefined) {
       const { PreToolUse, PostToolUse, ...otherHooks } = config.hooks;
-      const cleanGroups = (
-        groups: { hooks: { type: string; command: string; timeout?: number }[] }[] | undefined,
-      ) =>
+      const cleanGroups = (groups: HookGroup[] | undefined) =>
         groups
           ?.map((group) => ({
             ...group,
@@ -311,6 +386,10 @@ export const installPi = async (
         config.hooks = nextHooks;
       }
     }
+    const nextRaw = `${JSON.stringify(config, null, 2)}\n`;
+    const settingsChanged = nextRaw !== raw;
+
+    // The extension must be available before old hook settings are removed.
     const link = await installExtensionLink(source, extensionPath);
     if (!link.success) {
       return {
@@ -318,20 +397,25 @@ export const installPi = async (
         message: `Refusing to replace existing Pi extension: ${extensionPath}`,
       };
     }
-    await configFile.write(`${JSON.stringify(config, null, 2)}\n`);
+    if (settingsChanged) {
+      await replaceTextAtomically(configPath, nextRaw);
+    }
+    if (link.action === 'already' && !settingsChanged) {
+      return { success: true, message: `Already configured: ${extensionPath}` };
+    }
     const verb = link.action === 'updated' ? 'Updated' : 'Installed';
     return { success: true, message: `${verb} ${extensionPath}` };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes('No such file')) {
+    if (isErrno(error, 'ENOENT')) {
       return { success: false, message: `Config file not found: ${configPath}` };
     }
+    const message = error instanceof Error ? error.message : String(error);
     return { success: false, message: `Failed to update pi config: ${message}` };
   }
 };
 
 export const installOhMyPi = async (
-  options: PiInstallOptions = {},
+  options: InstallOptions = {},
 ): Promise<{ success: boolean; message: string }> => {
   const homeDirectory = options.homeDirectory ?? homedir();
   const extensionPath = `${homeDirectory}/.omp/agent/extensions/tripwire.js`;
@@ -360,112 +444,132 @@ export const installOhMyPi = async (
   }
 };
 
-export const installCodex = async (): Promise<{ success: boolean; message: string }> => {
-  const configTomlPath = `${homedir()}/.codex/config.toml`;
-  const hooksJsonPath = `${homedir()}/.codex/hooks.json`;
-  const hooksJsonFile = file(hooksJsonPath);
-  const configTomlFile = file(configTomlPath);
-
-  let hooksUpdated = false;
-  let tomlUpdated = false;
-
-  // First, update hooks.json
-  try {
-    const raw = await hooksJsonFile.text();
-    const config = parseAgentHooksConfig(raw, 'Codex');
-
-    config.hooks ??= {};
-    const [preToolUse, preSkipped] = addHookIfMissing(config.hooks.PreToolUse);
-    const [postToolUse, postSkipped] = addHookIfMissing(config.hooks.PostToolUse);
-
-    config.hooks.PreToolUse = preToolUse;
-    config.hooks.PostToolUse = postToolUse;
-
-    if (!preSkipped || !postSkipped) {
-      hooksUpdated = true;
-    }
-
-    // Add timeout to tripwire-hook if not present
-    let timeoutAdded = false;
-    const addTimeout = (
-      hooks: { hooks: { type: string; command: string; timeout?: number }[] }[] | undefined,
-    ): { hooks: { type: string; command: string; timeout?: number }[] }[] => {
-      return (
-        hooks?.map((h) => ({
-          hooks: h.hooks.map((hook) => {
-            if (hook.command === TRIPWIRE_HOOK && hook.timeout === undefined) {
-              timeoutAdded = true;
-              return { ...hook, timeout: 10 };
-            }
-            return hook;
-          }),
-        })) ?? []
-      );
-    };
-
-    config.hooks.PreToolUse = addTimeout(config.hooks.PreToolUse);
-    config.hooks.PostToolUse = addTimeout(config.hooks.PostToolUse);
-    hooksUpdated ||= timeoutAdded;
-
-    if (hooksUpdated) {
-      await hooksJsonFile.write(`${JSON.stringify(config, null, 2)}\n`);
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes('No such file')) {
-      return { success: false, message: `Config file not found: ${hooksJsonPath}` };
-    }
-    return { success: false, message: `Failed to update Codex hooks.json: ${message}` };
+const parseCodexFeatures = (raw: string): Record<string, unknown> | undefined => {
+  const parsed: unknown = Bun.TOML.parse(raw);
+  const features = isJsonRecord(parsed) ? parsed['features'] : undefined;
+  if (features !== undefined && !isJsonRecord(features)) {
+    throw new Error('Codex config.toml `features` must be a table');
   }
-
-  // Then, update config.toml to enable hooks
-  try {
-    const raw = await configTomlFile.text();
-    let toml = raw;
-
-    // Enable hooks in [features] section
-    if (toml.includes('hooks = true')) {
-      // Already enabled, nothing to do
-    } else {
-      tomlUpdated = true;
-      if (toml.includes('[features]')) {
-        // Find [features] section and add hooks = true
-        const featuresIndex = toml.indexOf('[features]');
-        const nextSectionIndex = toml.indexOf('\n[', featuresIndex + 1);
-        if (nextSectionIndex === -1) {
-          toml += '\nhooks = true';
-        } else {
-          toml = `${toml.slice(0, nextSectionIndex)}\nhooks = true${toml.slice(nextSectionIndex)}`;
-        }
-      } else {
-        toml += '\n[features]\nhooks = true';
-      }
-    }
-
-    if (tomlUpdated) {
-      await configTomlFile.write(toml);
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes('No such file')) {
-      return { success: false, message: `Config file not found: ${configTomlPath}` };
-    }
-    return { success: false, message: `Failed to update Codex config.toml: ${message}` };
-  }
-
-  if (!hooksUpdated && !tomlUpdated) {
-    return { success: true, message: `Already configured: ${configTomlPath} and ${hooksJsonPath}` };
-  }
-
-  return { success: true, message: `Updated ${configTomlPath} and ${hooksJsonPath}` };
+  return features;
 };
 
-export const installCursor = async (): Promise<{ success: boolean; message: string }> => {
-  const configPath = `${homedir()}/.cursor/hooks.json`;
-  const configFile = file(configPath);
+const enableCodexHooks = (raw: string): string => {
+  if (parseCodexFeatures(raw)?.['hooks'] === true) {
+    return raw;
+  }
+
+  const newline = raw.includes('\r\n') ? '\r\n' : '\n';
+  const featuresHeader = /^[\t ]*\[features\][\t ]*(?:#.*)?(?:\r?\n|$)/m.exec(raw);
+  let next: string;
+  if (featuresHeader === null) {
+    const separator = raw.length === 0 || raw.endsWith('\n') ? '' : newline;
+    const finalNewline = raw.length === 0 || raw.endsWith('\n') ? newline : '';
+    next = `${raw}${separator}[features]${newline}hooks = true${finalNewline}`;
+  } else {
+    const sectionStart = featuresHeader.index + featuresHeader[0].length;
+    const nextHeaderPattern = /^[\t ]*\[/gm;
+    nextHeaderPattern.lastIndex = sectionStart;
+    const nextHeader = nextHeaderPattern.exec(raw);
+    const sectionEnd = nextHeader?.index ?? raw.length;
+    const section = raw.slice(sectionStart, sectionEnd);
+    const assignment =
+      /^(?<prefix>[\t ]*hooks[\t ]*=[\t ]*)(?<value>[^#\r\n]*?)(?<suffix>[\t ]*(?:#.*)?)$/m.exec(
+        section,
+      );
+
+    if (assignment === null) {
+      const headerHasNewline = featuresHeader[0].endsWith('\n');
+      const insertion = headerHasNewline ? `hooks = true${newline}` : `${newline}hooks = true`;
+      next = `${raw.slice(0, sectionStart)}${insertion}${raw.slice(sectionStart)}`;
+    } else {
+      const prefix = assignment.groups?.['prefix'];
+      const value = assignment.groups?.['value'];
+      if (prefix === undefined || value === undefined) {
+        throw new Error('Could not locate Codex hooks value in config.toml');
+      }
+      const valueStart = sectionStart + assignment.index + prefix.length;
+      const valueEnd = valueStart + value.length;
+      next = `${raw.slice(0, valueStart)}true${raw.slice(valueEnd)}`;
+    }
+  }
+
+  if (parseCodexFeatures(next)?.['hooks'] !== true) {
+    throw new Error('Could not enable Codex hooks in config.toml');
+  }
+  return next;
+};
+
+export const installCodex = async (
+  options: InstallOptions = {},
+): Promise<{ success: boolean; message: string }> => {
+  const homeDirectory = options.homeDirectory ?? homedir();
+  const configTomlPath = `${homeDirectory}/.codex/config.toml`;
+  const hooksJsonPath = `${homeDirectory}/.codex/hooks.json`;
 
   try {
-    const raw = await configFile.text();
+    // Read and validate both files before the first write.
+    const [hooksRaw, tomlRaw] = await Promise.all([
+      readFile(hooksJsonPath, 'utf8'),
+      readFile(configTomlPath, 'utf8'),
+    ]);
+    const config = parseAgentHooksConfig(hooksRaw, 'Codex');
+    config.hooks ??= {};
+    const [preToolUse] = addHookIfMissing(config.hooks.PreToolUse);
+    const [postToolUse] = addHookIfMissing(config.hooks.PostToolUse);
+
+    const addTimeout = (hooks: HookGroup[]): HookGroup[] =>
+      hooks.map((group) => ({
+        ...group,
+        hooks: group.hooks.map((hook) =>
+          hook.command === TRIPWIRE_HOOK && hook.timeout === undefined
+            ? { ...hook, timeout: 10 }
+            : hook,
+        ),
+      }));
+
+    config.hooks.PreToolUse = addTimeout(preToolUse);
+    config.hooks.PostToolUse = addTimeout(postToolUse);
+    const nextHooksRaw = `${JSON.stringify(config, null, 2)}\n`;
+    const nextTomlRaw = enableCodexHooks(tomlRaw);
+    const hooksUpdated = nextHooksRaw !== hooksRaw;
+    const tomlUpdated = nextTomlRaw !== tomlRaw;
+
+    // Publish hooks.json first. It is inert while the feature is disabled, and a retry repairs
+    // a first-file-only partial update without changing the already published bytes.
+    if (hooksUpdated) {
+      await replaceTextAtomically(hooksJsonPath, nextHooksRaw);
+    }
+    if (tomlUpdated) {
+      await replaceTextAtomically(configTomlPath, nextTomlRaw);
+    }
+
+    if (!hooksUpdated && !tomlUpdated) {
+      return {
+        success: true,
+        message: `Already configured: ${configTomlPath} and ${hooksJsonPath}`,
+      };
+    }
+    return { success: true, message: `Updated ${configTomlPath} and ${hooksJsonPath}` };
+  } catch (error) {
+    if (isErrno(error, 'ENOENT')) {
+      const missingPath =
+        isJsonRecord(error) && typeof error['path'] === 'string'
+          ? error['path']
+          : `${configTomlPath} or ${hooksJsonPath}`;
+      return { success: false, message: `Config file not found: ${missingPath}` };
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    return { success: false, message: `Failed to update Codex config: ${message}` };
+  }
+};
+
+export const installCursor = async (
+  options: InstallOptions = {},
+): Promise<{ success: boolean; message: string }> => {
+  const homeDirectory = options.homeDirectory ?? homedir();
+  const configPath = `${homeDirectory}/.cursor/hooks.json`;
+  try {
+    const raw = await readFile(configPath, 'utf8');
     const config = parseCursorConfig(raw);
     config.version ??= 1;
     config.hooks ??= {};
@@ -480,26 +584,26 @@ export const installCursor = async (): Promise<{ success: boolean; message: stri
     if (!updated) {
       return { success: true, message: `Already configured: ${configPath}` };
     }
-    await configFile.write(`${JSON.stringify(config, null, 2)}\n`);
+    await replaceTextAtomically(configPath, `${JSON.stringify(config, null, 2)}\n`);
     return { success: true, message: `Updated ${configPath}` };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes('No such file')) {
+    if (isErrno(error, 'ENOENT')) {
       return { success: false, message: `Config file not found: ${configPath}` };
     }
+    const message = error instanceof Error ? error.message : String(error);
     return { success: false, message: `Failed to update Cursor hooks.json: ${message}` };
   }
 };
 
-export const installAll = async (): Promise<
-  { target: string; success: boolean; message: string }[]
-> => {
+export const installAll = async (
+  options: InstallOptions = {},
+): Promise<{ target: string; success: boolean; message: string }[]> => {
   return [
-    { target: 'claude', ...(await installClaude()) },
-    { target: 'codex', ...(await installCodex()) },
-    { target: 'cursor', ...(await installCursor()) },
-    { target: 'pi', ...(await installPi()) },
-    { target: 'oh-my-pi', ...(await installOhMyPi()) },
+    { target: 'claude', ...(await installClaude(options)) },
+    { target: 'codex', ...(await installCodex(options)) },
+    { target: 'cursor', ...(await installCursor(options)) },
+    { target: 'pi', ...(await installPi(options)) },
+    { target: 'oh-my-pi', ...(await installOhMyPi(options)) },
   ];
 };
 

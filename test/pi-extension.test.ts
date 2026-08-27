@@ -377,8 +377,10 @@ describe('Pi installation', () => {
           hooks: {
             PostToolUse: [{ hooks: [{ command: 'tripwire-hook', type: 'command' }] }],
             PreToolUse: [{ hooks: [{ command: 'tripwire-hook', type: 'command' }] }],
+            customEvent: [{ hooks: [{ command: 'custom-hook', type: 'command' }] }],
           },
           packages: ['pi-example'],
+          sentinel: 'keep-top-level',
         })}\n`,
       ),
     ]);
@@ -390,9 +392,21 @@ describe('Pi installation', () => {
     expect(await readlink(installed)).toBe(extensionSource);
     const settings = JSON.parse(
       await readFile(pathModule.join(agentDirectory, 'settings.json'), 'utf8'),
-    ) as { hooks?: unknown; packages?: string[] };
-    expect(settings.hooks).toBeUndefined();
+    ) as {
+      hooks?: { customEvent?: { hooks: { command: string }[] }[] };
+      packages?: string[];
+      sentinel?: string;
+    };
+    expect(settings.hooks?.customEvent?.[0]?.hooks[0]?.command).toBe('custom-hook');
     expect(settings.packages).toEqual(['pi-example']);
+    expect(settings.sentinel).toBe('keep-top-level');
+
+    const settingsPath = pathModule.join(agentDirectory, 'settings.json');
+    const firstRaw = await readFile(settingsPath, 'utf8');
+    const second = await installPi({ extensionSource, homeDirectory: root });
+    expect(second.message).toStartWith('Already configured:');
+    expect(await readFile(settingsPath, 'utf8')).toBe(firstRaw);
+    expect(await readlink(installed)).toBe(extensionSource);
   });
 
   test('installs the same native extension for oh-my-pi', async () => {
@@ -405,6 +419,10 @@ describe('Pi installation', () => {
     const installed = pathModule.join(root, '.omp', 'agent', 'extensions', 'tripwire.js');
     const installedStatus = await lstat(installed);
     expect(installedStatus.isSymbolicLink()).toBe(true);
+    expect(await readlink(installed)).toBe(extensionSource);
+
+    const second = await installOhMyPi({ extensionSource, homeDirectory: root });
+    expect(second.message).toStartWith('Already configured:');
     expect(await readlink(installed)).toBe(extensionSource);
   });
 

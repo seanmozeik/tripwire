@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'bun:test';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import pathModule from 'node:path';
 
 import { normalizeHookInput } from '../src/lib/cursor';
-import { addCursorHook, parseCursorConfig } from '../src/lib/install';
+import { addCursorHook, installCursor, parseCursorConfig } from '../src/lib/install';
 
 const runCursorDispatch = (eventName: string, input: unknown): unknown => {
   const processResult = Bun.spawnSync(['bun', 'src/dispatch.ts', '--cursor-event', eventName], {
@@ -134,5 +137,47 @@ describe('Cursor hook installation', () => {
 
   test('rejects malformed Cursor hook config shapes', () => {
     expect(() => parseCursorConfig('{"hooks":[]}')).toThrow('hooks` must be an object');
+  });
+
+  test('uses the injected home, preserves unknown fields, and is byte-idempotent', async () => {
+    const homeDirectory = await mkdtemp(pathModule.join(tmpdir(), 'tripwire-cursor-'));
+    try {
+      const configDirectory = pathModule.join(homeDirectory, '.cursor');
+      const configPath = pathModule.join(configDirectory, 'hooks.json');
+      await mkdir(configDirectory, { recursive: true });
+      await writeFile(
+        configPath,
+        `${JSON.stringify({
+          hooks: {
+            customEvent: [{ command: 'custom-hook', sentinel: 'keep-hook' }],
+            preToolUse: [
+              {
+                command: 'bun /tmp/tripwire.js --cursor-event preToolUse',
+                sentinel: 'keep-tripwire-field',
+              },
+            ],
+          },
+          sentinel: 'keep-top-level',
+          version: 1,
+        })}\n`,
+      );
+
+      const first = await installCursor({ homeDirectory });
+      expect(first.success).toBe(true);
+      const firstRaw = await readFile(configPath, 'utf8');
+      const config = JSON.parse(firstRaw) as {
+        hooks: Record<string, { command: string; sentinel?: string }[]>;
+        sentinel?: string;
+      };
+      expect(config.sentinel).toBe('keep-top-level');
+      expect(config.hooks['customEvent']?.[0]?.sentinel).toBe('keep-hook');
+      expect(config.hooks['preToolUse']?.[0]?.sentinel).toBe('keep-tripwire-field');
+
+      const second = await installCursor({ homeDirectory });
+      expect(second.message).toStartWith('Already configured:');
+      expect(await readFile(configPath, 'utf8')).toBe(firstRaw);
+    } finally {
+      await rm(homeDirectory, { force: true, recursive: true });
+    }
   });
 });
