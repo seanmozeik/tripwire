@@ -1,17 +1,43 @@
 {
   "name": "@seanmozeik/tripwire",
   "version": "0.6.7",
-  "description": "Opinionated hooks dispatcher for AI coding agents with configurable safety rules",
+  "description": "Configurable safety hooks for Claude Code, Codex, Cursor, Pi, and Oh My Pi",
+  "keywords": [
+    "ai-agents",
+    "bun",
+    "claude-code",
+    "codex",
+    "cursor",
+    "hooks",
+    "safety"
+  ],
+  "homepage": "https://github.com/seanmozeik/tripwire#readme",
+  "bugs": {
+    "url": "https://github.com/seanmozeik/tripwire/issues"
+  },
   "license": "MIT",
+  "author": "Sean Mozeik",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/seanmozeik/tripwire.git"
+  },
   "bin": {
-    "tripwire": "./dist/tripwire",
+    "tripwire": "./scripts/tripwire-cli",
     "tripwire-hook": "./dist/tripwire"
   },
   "files": [
-    "dist",
+    "dist/tripwire-pi.js",
+    "LICENSE",
     "package.json",
+    "scripts/tripwire-cli",
     "src",
     "README.md"
+  ],
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
   ],
   "type": "module",
   "exports": {
@@ -22,14 +48,16 @@
   },
   "scripts": {
     "build": "bun scripts/build.ts",
-    "prepublishOnly": "bun run build",
+    "prepublishOnly": "bun run verify",
     "check": "bun run format && bun run lint:fix && bun run typecheck",
     "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
     "lint": "oxlint .",
     "lint:fix": "oxlint --format agent --fix .",
     "prepare": "bunx effect-tsgo patch",
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify": "bun run format:check && bun run lint && bun run typecheck && bun test && bun run build"
   },
   "dependencies": {
     "shell-quote": "1.10.0"

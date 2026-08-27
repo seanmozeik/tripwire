@@ -1,0 +1,12 @@
+#!/bin/sh
+
+case $0 in
+  */*) launcher_directory=${0%/*} ;;
+  *)
+    launcher_path=$(command -v "$0") || exit 127
+    launcher_directory=${launcher_path%/*}
+    ;;
+esac
+
+[ -n "$launcher_directory" ] || launcher_directory=/
+exec "$launcher_directory/tripwire-hook" --tripwire-force-cli "$@"

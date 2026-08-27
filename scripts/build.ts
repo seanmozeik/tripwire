@@ -27,11 +27,16 @@ const run = (arguments_: readonly string[], label: string, cwd = process.cwd()):
 
 const publishArtifact = (source: string, target: string, executable = false): void => {
   const pending = `${target}.${process.pid}.next`;
-  copyFileSync(source, pending);
-  if (executable) {
-    chmodSync(pending, 0o755);
+  rmSync(pending, { force: true });
+  try {
+    copyFileSync(source, pending);
+    if (executable) {
+      chmodSync(pending, 0o755);
+    }
+    renameSync(pending, target);
+  } finally {
+    rmSync(pending, { force: true });
   }
-  renameSync(pending, target);
 };
 
 type SmokeToolCallHandler = (
