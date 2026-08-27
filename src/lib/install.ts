@@ -17,6 +17,8 @@ import { homedir } from 'node:os';
 import pathModule from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { readRuntimeEnvironment } from './environment';
+
 interface CommandHook extends Record<string, unknown> {
   type: string;
   command: string;
@@ -36,7 +38,9 @@ interface AgentHooksConfig extends Record<string, unknown> {
   hooks?: AgentHooks;
 }
 
+const { packageDist } = readRuntimeEnvironment();
 const piExtensionSourceCandidates = [
+  ...(packageDist === undefined ? [] : [pathModule.join(packageDist, 'tripwire-pi.js')]),
   pathModule.join(pathModule.dirname(process.execPath), 'tripwire-pi.js'),
   fileURLToPath(new URL('../../dist/tripwire-pi.js', import.meta.url)),
   fileURLToPath(new URL('tripwire-pi.js', import.meta.url)),
@@ -45,6 +49,7 @@ const piExtensionSourceCandidates = [
 export interface InstallOptions {
   readonly extensionSource?: string;
   readonly homeDirectory?: string;
+  readonly hookCommand?: string;
 }
 
 interface AtomicTextReplaceOptions {
@@ -241,6 +246,7 @@ const CURSOR_FAIL_CLOSED_EVENTS = new Set(['preToolUse', 'beforeShellExecution',
 const isTripwireCommand = (command: string): boolean =>
   command === TRIPWIRE_HOOK ||
   command.startsWith(`${TRIPWIRE_HOOK} `) ||
+  command.includes('/tripwire-darwin-arm64/') ||
   command.includes('/tripwire-hook') ||
   command.includes('/tripwire.js') ||
   command.includes('/dist/tripwire');
@@ -248,10 +254,11 @@ const isTripwireCommand = (command: string): boolean =>
 const addCursorHook = (
   hooks: CursorHook[] | undefined,
   eventName: string,
+  hookCommand = TRIPWIRE_HOOK,
 ): [CursorHook[], boolean] => {
   const failClosed = CURSOR_FAIL_CLOSED_EVENTS.has(eventName);
   const newHook = {
-    command: `${TRIPWIRE_HOOK} --cursor-event ${eventName}`,
+    command: `${hookCommand} --cursor-event ${eventName}`,
     ...(failClosed && { failClosed: true }),
   };
   if (hooks === undefined) {
@@ -260,7 +267,7 @@ const addCursorHook = (
 
   let changed = false;
   const hasTripwire = hooks.some((hook) => isTripwireCommand(hook.command));
-  const desiredCommand = `${TRIPWIRE_HOOK} --cursor-event ${eventName}`;
+  const desiredCommand = `${hookCommand} --cursor-event ${eventName}`;
   const normalized = hooks.map((hook) => {
     if (!isTripwireCommand(hook.command)) {
       return hook;
@@ -278,9 +285,12 @@ const addCursorHook = (
   return [[...normalized, newHook], true];
 };
 
-const addHookIfMissing = (hooks: HookGroup[] | undefined): [HookGroup[], boolean] => {
+const addHookIfMissing = (
+  hooks: HookGroup[] | undefined,
+  hookCommand = TRIPWIRE_HOOK,
+): [HookGroup[], boolean] => {
   if (!hooks) {
-    const newHooks: HookGroup[] = [{ hooks: [{ type: 'command', command: TRIPWIRE_HOOK }] }];
+    const newHooks: HookGroup[] = [{ hooks: [{ type: 'command', command: hookCommand }] }];
     return [newHooks, false];
   }
 
@@ -289,10 +299,10 @@ const addHookIfMissing = (hooks: HookGroup[] | undefined): [HookGroup[], boolean
   const normalizedHooks = hooks.map((h) => ({
     ...h,
     hooks: h.hooks.map((hook) => {
-      if (hook.command === TRIPWIRE_HOOK || hook.command.endsWith('/tripwire-hook')) {
-        if (hook.command !== TRIPWIRE_HOOK) {
+      if (isTripwireCommand(hook.command)) {
+        if (hook.command !== hookCommand) {
           needsNormalization = true;
-          return { ...hook, command: TRIPWIRE_HOOK };
+          return { ...hook, command: hookCommand };
         }
         return hook;
       }
@@ -301,7 +311,7 @@ const addHookIfMissing = (hooks: HookGroup[] | undefined): [HookGroup[], boolean
   }));
 
   const hasTripwire = normalizedHooks.some((h) =>
-    h.hooks.some((hook) => hook.command === TRIPWIRE_HOOK),
+    h.hooks.some((hook) => hook.command === hookCommand),
   );
 
   if (hasTripwire) {
@@ -310,7 +320,7 @@ const addHookIfMissing = (hooks: HookGroup[] | undefined): [HookGroup[], boolean
 
   const newHooks: HookGroup[] = [
     ...normalizedHooks,
-    { hooks: [{ type: 'command', command: TRIPWIRE_HOOK }] },
+    { hooks: [{ type: 'command', command: hookCommand }] },
   ];
   return [newHooks, false];
 };
@@ -319,14 +329,15 @@ export const installClaude = async (
   options: InstallOptions = {},
 ): Promise<{ success: boolean; message: string }> => {
   const homeDirectory = options.homeDirectory ?? homedir();
+  const hookCommand = options.hookCommand ?? TRIPWIRE_HOOK;
   const configPath = `${homeDirectory}/.claude/settings.json`;
   try {
     const raw = await readFile(configPath, 'utf8');
     const config = parseAgentHooksConfig(raw, 'Claude');
 
     config.hooks ??= {};
-    const [preToolUse, preSkipped] = addHookIfMissing(config.hooks.PreToolUse);
-    const [postToolUse, postSkipped] = addHookIfMissing(config.hooks.PostToolUse);
+    const [preToolUse, preSkipped] = addHookIfMissing(config.hooks.PreToolUse, hookCommand);
+    const [postToolUse, postSkipped] = addHookIfMissing(config.hooks.PostToolUse, hookCommand);
 
     config.hooks.PreToolUse = preToolUse;
     config.hooks.PostToolUse = postToolUse;
@@ -503,6 +514,7 @@ export const installCodex = async (
   options: InstallOptions = {},
 ): Promise<{ success: boolean; message: string }> => {
   const homeDirectory = options.homeDirectory ?? homedir();
+  const hookCommand = options.hookCommand ?? TRIPWIRE_HOOK;
   const configTomlPath = `${homeDirectory}/.codex/config.toml`;
   const hooksJsonPath = `${homeDirectory}/.codex/hooks.json`;
 
@@ -514,14 +526,14 @@ export const installCodex = async (
     ]);
     const config = parseAgentHooksConfig(hooksRaw, 'Codex');
     config.hooks ??= {};
-    const [preToolUse] = addHookIfMissing(config.hooks.PreToolUse);
-    const [postToolUse] = addHookIfMissing(config.hooks.PostToolUse);
+    const [preToolUse] = addHookIfMissing(config.hooks.PreToolUse, hookCommand);
+    const [postToolUse] = addHookIfMissing(config.hooks.PostToolUse, hookCommand);
 
     const addTimeout = (hooks: HookGroup[]): HookGroup[] =>
       hooks.map((group) => ({
         ...group,
         hooks: group.hooks.map((hook) =>
-          hook.command === TRIPWIRE_HOOK && hook.timeout === undefined
+          hook.command === hookCommand && hook.timeout === undefined
             ? { ...hook, timeout: 10 }
             : hook,
         ),
@@ -567,6 +579,7 @@ export const installCursor = async (
   options: InstallOptions = {},
 ): Promise<{ success: boolean; message: string }> => {
   const homeDirectory = options.homeDirectory ?? homedir();
+  const hookCommand = options.hookCommand ?? TRIPWIRE_HOOK;
   const configPath = `${homeDirectory}/.cursor/hooks.json`;
   try {
     const raw = await readFile(configPath, 'utf8');
@@ -576,7 +589,7 @@ export const installCursor = async (
 
     let updated = false;
     for (const eventName of CURSOR_HOOK_EVENTS) {
-      const [hooks, changed] = addCursorHook(config.hooks[eventName], eventName);
+      const [hooks, changed] = addCursorHook(config.hooks[eventName], eventName, hookCommand);
       config.hooks[eventName] = hooks;
       updated ||= changed;
     }

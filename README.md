@@ -13,28 +13,22 @@ $ tripwire test 'git status'
 
 ## Package support
 
-The published package contains a Bun 1.4 bytecode executable for Darwin arm64. Its package metadata rejects registry installation on Linux, Windows, and Intel macOS.
+The main package installs on every platform supported by Bun 1.4. It contains a minified Bun runtime bundle, a separate library bundle, and TypeScript declarations.
 
 ```bash
 bun install --global @seanmozeik/tripwire
 ```
 
-The package installs two commands:
+On Apple Silicon Macs, npm also installs the optional `@seanmozeik/tripwire-darwin-arm64` package. Tripwire selects its compiled Bun bytecode executable. On Linux, Windows, and Intel Macs, Tripwire runs the portable JavaScript bundle with the installed Bun runtime.
 
-- `tripwire-hook` points directly to the native executable. Agent hooks use this path.
-- `tripwire` is a small POSIX launcher for interactive CLI commands. It executes the same native file in CLI mode.
+The main package installs two commands:
 
-Other platforms must build from source on the target host:
+- `tripwire` runs interactive commands.
+- `tripwire-hook` handles agent hook events.
 
-```bash
-git clone https://github.com/seanmozeik/tripwire.git
-cd tripwire
-bun install --frozen-lockfile
-bun run build
-./dist/tripwire --version
-```
+Run `tripwire install <host>` after installation. On Apple Silicon, the installer writes the direct native executable path into agent settings to keep hook startup fast. Other platforms use Bun and the portable bundle. Pi and Oh My Pi use the same runtime selection through their adapter.
 
-The source build uses the current host. A later release can add target-specific registry packages for other systems.
+Library imports always use `dist/index.js` and `dist/types`. They do not load or execute the platform binary.
 
 ## Secret scanner requirement
 
@@ -222,9 +216,17 @@ bun run build
 bun run verify
 ```
 
-`bun run build` compiles `dist/tripwire` as one Bun bytecode executable. The entry module loads either the hook dispatcher or the interactive CLI. The build also emits `dist/tripwire-pi.js` for Pi and Oh My Pi.
+`bun run build` creates these artifacts:
+
+- `dist/tripwire.js`: minified portable runtime for Bun 1.4 or later.
+- `dist/index.js` and `dist/types`: public library bundle and declarations.
+- `dist/tripwire-cli.js` and `dist/tripwire-hook.js`: runtime-selecting command launchers.
+- `dist/tripwire-pi.js`: Pi and Oh My Pi adapter.
+- `packages/darwin-arm64/bin/tripwire`: Apple Silicon bytecode executable.
 
 `bun run verify` runs the format check, lint, type check, tests, and build. `prepublishOnly` calls the same local command.
+
+Publish `@seanmozeik/tripwire-darwin-arm64` before `@seanmozeik/tripwire` for each release. The main package uses an exact optional dependency on the matching native package version.
 
 ## License
 

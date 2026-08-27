@@ -135,6 +135,20 @@ describe('Cursor hook installation', () => {
     expect(hooks).toHaveLength(1);
   });
 
+  test('preserves another command that uses the private flag text', () => {
+    const [hooks, changed] = addCursorHook(
+      [{ command: 'other-tool --tripwire-hook' }],
+      'preToolUse',
+    );
+
+    expect(changed).toBe(true);
+    expect(hooks).toContainEqual({ command: 'other-tool --tripwire-hook' });
+    expect(hooks).toContainEqual({
+      command: 'tripwire-hook --cursor-event preToolUse',
+      failClosed: true,
+    });
+  });
+
   test('rejects malformed Cursor hook config shapes', () => {
     expect(() => parseCursorConfig('{"hooks":[]}')).toThrow('hooks` must be an object');
   });

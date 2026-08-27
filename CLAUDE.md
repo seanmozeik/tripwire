@@ -22,20 +22,27 @@ The runtime uses Effect 4.0.0-rc.112. Read the installed Effect source and types
 
 ## Package contract
 
-The registry package has `os: [darwin]` and `cpu: [arm64]`. It contains one native bytecode executable at `dist/tripwire`.
+The root registry package is portable. It contains a minified Bun runtime, a library bundle, declarations, runtime-selecting launchers, and the Pi adapter. It has no `os` or `cpu` restriction.
 
-- `tripwire-hook` maps directly to `dist/tripwire`.
-- `tripwire` maps to `scripts/tripwire-cli`, a POSIX launcher for interactive commands.
-- The launcher executes its installed `tripwire-hook` sibling with a private force-CLI flag.
-- Live hooks do not use the launcher.
+- `tripwire` maps to `dist/tripwire-cli.js`.
+- `tripwire-hook` maps to `dist/tripwire-hook.js`.
+- Both launchers select `@seanmozeik/tripwire-darwin-arm64` on Apple Silicon when it is available.
+- All other hosts run `dist/tripwire.js` with Bun.
+- The public import resolves to `dist/index.js` and `dist/types/index.d.ts` on every host.
+- Host installers write the direct native executable path on Apple Silicon. This keeps live hook startup free of launcher overhead.
 
-Other systems must clone the repository and run `bun run build` on the target host. Do not claim registry support for Linux, Windows, or Intel macOS until target-specific packages exist.
+The `@seanmozeik/tripwire-darwin-arm64` workspace package has `os: [darwin]` and `cpu: [arm64]`. The root package lists the exact matching version as an optional dependency. Publish the platform package before the root package.
 
 `scripts/build.ts` compiles to a temporary directory, runs executable and Pi adapter smoke tests, and publishes the files with same-directory atomic replacement. The build produces:
 
 ```text
-dist/tripwire
+dist/index.js
+dist/tripwire.js
+dist/tripwire-cli.js
+dist/tripwire-hook.js
 dist/tripwire-pi.js
+dist/types/
+packages/darwin-arm64/bin/tripwire
 ```
 
 ## Entry routing
@@ -136,6 +143,9 @@ Pi makes the extension link available before it removes old hook settings. Oh My
 
 ```text
 src/
+  bin/
+    cli.ts                   interactive runtime launcher
+    hook.ts                  hook runtime launcher
   main.ts                  entry routing
   cli.ts                   test and install commands
   dispatch.ts              event decoding, rule isolation, host responses
@@ -148,11 +158,14 @@ src/
     event.ts               canonical event schema and response extraction
     install.ts             atomic host installers
     log.ts                 best-effort error log
+    environment.ts         runtime environment boundary
+    runtime-command.ts     native or portable runtime selection
     secrets.ts             Betterleaks process and redaction
   rules/                   pre-tool and post-tool rules
 scripts/
-  build.ts                 staged native and adapter build
-  tripwire-cli             installed interactive launcher
+  build.ts                 staged native, portable, library, and adapter build
+packages/
+  darwin-arm64/            optional Apple Silicon executable package
 test/
   package.test.ts          bin and launcher contract
   pi-lifecycle.test.ts     source and compiled Pi lifecycle

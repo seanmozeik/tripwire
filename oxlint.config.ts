@@ -13,6 +13,10 @@ const projectConfig = defineConfig({
   rules: {
     'no-continue': 'off',
     'require-unicode-regexp': 'off',
+    'de-clank/no-environment-access-outside-boundary': [
+      'error',
+      { allowedFilePatterns: [String.raw`/src/lib/environment\.ts$`] },
+    ],
     'de-clank/no-personal-test-data': ['error', loadPersonalData()],
     'de-clank/no-test-only-production-code': [
       'error',

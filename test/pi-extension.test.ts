@@ -18,7 +18,7 @@ import { installOhMyPi, installPi } from '../src/lib/install';
 import {
   createTripwirePiExtension,
   hookInputs,
-  resolveShippedHookPath,
+  resolveShippedHookCommand,
   tripwirePiDenialReason,
   type PiExtensionContext,
   type PiToolCallEvent,
@@ -37,17 +37,19 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  delete process.env['TRIPWIRE_BUN'];
+  delete process.env['TRIPWIRE_FORCE_PORTABLE'];
   await rm(root, { force: true, recursive: true });
 });
 
 describe('Tripwire Pi extension', () => {
-  test('resolves the Bun dispatcher through the Pi extension symlink', async () => {
+  test('resolves the portable Bun dispatcher through the Pi extension symlink', async () => {
     const dist = pathModule.join(root, 'dist');
     const extensions = pathModule.join(root, '.pi', 'agent', 'extensions');
     await mkdir(dist, { recursive: true });
     await mkdir(extensions, { recursive: true });
     const extensionSource = pathModule.join(dist, 'tripwire-pi.js');
-    const hook = pathModule.join(dist, 'tripwire');
+    const hook = pathModule.join(dist, 'tripwire.js');
     const installed = pathModule.join(extensions, 'tripwire.js');
     await Promise.all([
       writeFile(extensionSource, 'export default () => {};\n'),
@@ -55,7 +57,13 @@ describe('Tripwire Pi extension', () => {
       symlink(extensionSource, installed),
     ]);
 
-    expect(resolveShippedHookPath(pathToFileURL(installed).href)).toBe(realpathSync(hook));
+    process.env['TRIPWIRE_BUN'] = process.execPath;
+    process.env['TRIPWIRE_FORCE_PORTABLE'] = '1';
+    expect(resolveShippedHookCommand(pathToFileURL(installed).href)).toEqual({
+      arguments: [realpathSync(hook)],
+      executable: process.execPath,
+      kind: 'portable',
+    });
   });
 
   test('understands Tripwire denials and fails closed on invalid output', () => {

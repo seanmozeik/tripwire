@@ -1,6 +1,7 @@
 # JS / TS
 node_modules/
 dist/
+/packages/darwin-arm64/bin/
 *.tsbuildinfo
 
 # Python

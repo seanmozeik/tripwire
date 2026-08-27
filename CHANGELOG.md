@@ -4,6 +4,20 @@ This file records notable project changes. The format follows [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-08-27
+
+### Added
+
+- Added a minified Bun runtime bundle for Linux, Windows, and Intel macOS.
+- Added a platform-neutral library bundle and TypeScript declarations for package imports.
+- Added runtime-selecting launchers and Pi adapter support for native and portable installations.
+
+### Changed
+
+- Moved the Apple Silicon bytecode executable into the optional `@seanmozeik/tripwire-darwin-arm64` package.
+- Removed the operating system and CPU restrictions from the main package.
+- Updated host installers to write the direct native executable path when it is available.
+
 ## [0.7.0] - 2026-08-27
 
 ### Added

@@ -1,0 +1,36 @@
+{
+  "name": "@seanmozeik/tripwire-darwin-arm64",
+  "version": "0.7.1",
+  "description": "Apple Silicon native executable for @seanmozeik/tripwire",
+  "homepage": "https://github.com/seanmozeik/tripwire#readme",
+  "bugs": {
+    "url": "https://github.com/seanmozeik/tripwire/issues"
+  },
+  "license": "MIT",
+  "author": "Sean Mozeik",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/seanmozeik/tripwire.git",
+    "directory": "packages/darwin-arm64"
+  },
+  "files": [
+    "bin/tripwire",
+    "LICENSE",
+    "README.md"
+  ],
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "exports": {
+    ".": "./bin/tripwire"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "prepublishOnly": "bun ../../scripts/verify-platform-package.ts"
+  }
+}

@@ -1,6 +1,6 @@
 {
   "name": "@seanmozeik/tripwire",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Configurable safety hooks for Claude Code, Codex, Cursor, Pi, and Oh My Pi",
   "keywords": [
     "ai-agents",
@@ -22,26 +22,26 @@
     "url": "git+https://github.com/seanmozeik/tripwire.git"
   },
   "bin": {
-    "tripwire": "./scripts/tripwire-cli",
-    "tripwire-hook": "./dist/tripwire"
+    "tripwire": "./dist/tripwire-cli.js",
+    "tripwire-hook": "./dist/tripwire-hook.js"
   },
+  "workspaces": [
+    "packages/*"
+  ],
   "files": [
-    "dist/tripwire-pi.js",
+    "dist",
     "LICENSE",
     "package.json",
-    "scripts/tripwire-cli",
-    "src",
     "README.md"
   ],
-  "os": [
-    "darwin"
-  ],
-  "cpu": [
-    "arm64"
-  ],
   "type": "module",
+  "types": "./dist/types/index.d.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
   },
   "publishConfig": {
     "access": "public"
@@ -76,6 +76,9 @@
   "peerDependencies": {
     "@effect/platform-bun": "4.0.0-rc.112",
     "effect": "4.0.0-rc.112"
+  },
+  "optionalDependencies": {
+    "@seanmozeik/tripwire-darwin-arm64": "0.7.1"
   },
   "engines": {
     "bun": ">=1.4"

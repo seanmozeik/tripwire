@@ -10,6 +10,8 @@
 //   Bun src/main.ts install pi
 //   Bun src/main.ts install all
 
+import pathModule from 'node:path';
+
 import { BunServices } from '@effect/platform-bun';
 import { Effect, Option } from 'effect';
 import { Argument, Command, Flag } from 'effect/unstable/cli';
@@ -25,12 +27,25 @@ import {
 } from './lib/install';
 
 const hookCommand = (): string[] => {
-  const isBunCli = /\/bun(?<ext>\.exe)?$/.test(process.execPath);
+  const isBunCli = /(?:^|[/\\])bun(?:\.exe)?$/iu.test(process.execPath);
   if (isBunCli) {
-    return [process.execPath, new URL('main.ts', import.meta.url).pathname, '--tripwire-hook'];
+    const modulePath = import.meta.filename;
+    if (pathModule.basename(modulePath) === 'tripwire.js') {
+      return ['tripwire-hook'];
+    }
+    const entryPath = pathModule.join(import.meta.dirname, 'main.ts');
+    return [process.execPath, entryPath, '--tripwire-hook'];
   }
   return [process.execPath, '--tripwire-hook'];
 };
+
+const shellArgument = (value: string): string =>
+  /^[A-Za-z0-9_/:=.,+@%-]+$/u.test(value) ? value : `'${value.replaceAll("'", String.raw`'\''`)}'`;
+
+const hookCommandText = (): string =>
+  hookCommand()
+    .map((value) => shellArgument(value))
+    .join(' ');
 
 interface BuiltEvent {
   hook_event_name: string;
@@ -181,36 +196,37 @@ const runInstall = (target: string): Effect.Effect<void> =>
       readonly target: string;
       readonly result: { readonly success: boolean; readonly message: string };
     }[];
+    const installOptions = { hookCommand: hookCommandText() };
 
     switch (target) {
       case 'claude': {
-        const result = yield* Effect.promise(() => installClaude());
+        const result = yield* Effect.promise(() => installClaude(installOptions));
         results = [{ target: 'claude', result }];
         break;
       }
       case 'codex': {
-        const result = yield* Effect.promise(() => installCodex());
+        const result = yield* Effect.promise(() => installCodex(installOptions));
         results = [{ target: 'codex', result }];
         break;
       }
       case 'pi': {
-        const result = yield* Effect.promise(() => installPi());
+        const result = yield* Effect.promise(() => installPi(installOptions));
         results = [{ target: 'pi', result }];
         break;
       }
       case 'oh-my-pi':
       case 'omp': {
-        const result = yield* Effect.promise(() => installOhMyPi());
+        const result = yield* Effect.promise(() => installOhMyPi(installOptions));
         results = [{ target: 'oh-my-pi', result }];
         break;
       }
       case 'cursor': {
-        const result = yield* Effect.promise(() => installCursor());
+        const result = yield* Effect.promise(() => installCursor(installOptions));
         results = [{ target: 'cursor', result }];
         break;
       }
       case 'all': {
-        const installResults = yield* Effect.promise(() => installAll());
+        const installResults = yield* Effect.promise(() => installAll(installOptions));
         results = installResults.map((r) => ({ target: r.target, result: r }));
         break;
       }

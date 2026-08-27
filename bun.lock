@@ -18,10 +18,17 @@
         "oxlint-tsgolint": "7.0.2001",
         "typescript": "7.0.2",
       },
+      "optionalDependencies": {
+        "@seanmozeik/tripwire-darwin-arm64": "0.7.1",
+      },
       "peerDependencies": {
         "@effect/platform-bun": "4.0.0-rc.112",
         "effect": "4.0.0-rc.112",
       },
+    },
+    "packages/darwin-arm64": {
+      "name": "@seanmozeik/tripwire-darwin-arm64",
+      "version": "0.7.1",
     },
   },
   "packages": {
@@ -188,6 +195,8 @@
     "@oxlint/plugins": ["@oxlint/plugins@1.79.0", "", {}, "sha512-S0uyoxakDINJ4DPgqxGlEEvrdSMeQb7Z2lKVjxoY2gwsbZbfg2Xr8Klfeo5ZeraHmmdBCELFUHkSe6KEmBpMvg=="],
 
     "@seanmozeik/de-clank": ["@seanmozeik/de-clank@0.1.7", "", { "dependencies": { "@oxlint/plugins": "1.79.0", "oxc-parser": "0.146.0", "oxlint-plugin-react-doctor": "0.9.12" }, "peerDependencies": { "oxfmt": ">=0.64.0", "oxlint": ">=1.79.0", "oxlint-tsgolint": ">=7.0.2001" }, "optionalPeers": ["oxfmt"] }, "sha512-sGjRkhOKqT1YmjCfNrSwtiLdBVx7PEKZ474wYWqyqA543Z6iH1rzG67gjwh+gQ2W9cPgPcVi6g0skfAcXXezkw=="],
+
+    "@seanmozeik/tripwire-darwin-arm64": ["@seanmozeik/tripwire-darwin-arm64@workspace:packages/darwin-arm64"],
 
     "@shaderfrog/glsl-parser": ["@shaderfrog/glsl-parser@7.0.1", "", {}, "sha512-8mpfsoPeRhesY3pOrzNZBL8uG6N5GVX1EHLBYbd4gzKs+c7vaEIqpTNK5VrffU33qQN4cwpP2v3u4aPPBU32sw=="],
 

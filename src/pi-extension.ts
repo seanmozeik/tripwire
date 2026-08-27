@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { realpathSync } from 'node:fs';
-import path from 'node:path';
 import type { Readable } from 'node:stream';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import { resolveTripwireCommand, type RuntimeCommand } from './lib/runtime-command';
 
 interface PiToolCallEvent {
   readonly input: Record<string, unknown>;
@@ -45,12 +46,15 @@ interface HookResult {
   readonly stdout: string;
 }
 
-type TripwireProcessRunner = (hookPath: string, input: unknown) => Promise<HookResult>;
+type TripwireProcessRunner = (command: RuntimeCommand, input: unknown) => Promise<HookResult>;
+type TripwireCommandInput = RuntimeCommand | string;
 
 const TIMEOUT_MS = 60_000;
 
-/** Resolve the Bun hook next to the built extension, following install symlinks. */
-const resolveShippedHookPath = (extensionUrl: string | URL = import.meta.url): string => {
+/** Resolve the optional native hook or the portable Bun bundle, following install symlinks. */
+const resolveShippedHookCommand = (
+  extensionUrl: string | URL = import.meta.url,
+): RuntimeCommand => {
   const extensionPath = fileURLToPath(extensionUrl);
   let resolved = extensionPath;
   try {
@@ -58,10 +62,10 @@ const resolveShippedHookPath = (extensionUrl: string | URL = import.meta.url): s
   } catch {
     // Keep the unresolved path when the module is not on disk yet (unit tests).
   }
-  return path.join(path.dirname(resolved), 'tripwire');
+  return resolveTripwireCommand({ moduleUrl: pathToFileURL(resolved) });
 };
 
-const shippedHookPath = resolveShippedHookPath();
+const shippedHookCommand = resolveShippedHookCommand();
 
 const requiredStringField = (
   value: Record<string, unknown>,
@@ -208,8 +212,10 @@ const readStream = async (stream: Readable): Promise<string> => {
   return output;
 };
 
-const runTripwire = async (hookPath: string, input: unknown): Promise<HookResult> => {
-  const child = spawn(hookPath, ['--tripwire-hook'], { stdio: ['pipe', 'pipe', 'pipe'] });
+const runTripwire = async (command: RuntimeCommand, input: unknown): Promise<HookResult> => {
+  const child = spawn(command.executable, [...command.arguments, '--tripwire-hook'], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
   const state = { timedOut: false };
   const timeout = setTimeout(() => {
     state.timedOut = true;
@@ -277,9 +283,15 @@ const tripwirePiDenialReason = (result: HookResult): string | undefined => {
   }
 };
 
-const createTripwirePiExtension =
-  (hookPath: string, processRunner: TripwireProcessRunner = runTripwire) =>
-  (pi: TripwirePiExtensionApi): void => {
+const createTripwirePiExtension = (
+  commandInput: TripwireCommandInput,
+  processRunner: TripwireProcessRunner = runTripwire,
+) => {
+  const command: RuntimeCommand =
+    typeof commandInput === 'string'
+      ? { arguments: [], executable: commandInput, kind: 'native' }
+      : commandInput;
+  return (pi: TripwirePiExtensionApi): void => {
     pi.on('tool_call', async (event, context) => {
       try {
         const inputs = hookInputs(event, 'PreToolUse', context.cwd);
@@ -287,7 +299,7 @@ const createTripwirePiExtension =
         if (input === undefined) {
           throw new Error('Tripwire could not normalize the Pi tool call');
         }
-        const reason = tripwirePiDenialReason(await processRunner(hookPath, input));
+        const reason = tripwirePiDenialReason(await processRunner(command, input));
         if (reason !== undefined) {
           return { block: true, reason };
         }
@@ -306,7 +318,7 @@ const createTripwirePiExtension =
         if (input === undefined) {
           throw new Error('Tripwire could not normalize the Pi tool result');
         }
-        const reason = tripwirePiDenialReason(await processRunner(hookPath, input));
+        const reason = tripwirePiDenialReason(await processRunner(command, input));
         if (reason !== undefined) {
           context.ui.notify(`Tripwire stopped the session: ${reason}`, 'error');
           context.abort();
@@ -320,18 +332,20 @@ const createTripwirePiExtension =
       }
     });
   };
+};
 
-export default createTripwirePiExtension(shippedHookPath);
+export default createTripwirePiExtension(shippedHookCommand);
 
 export {
   createTripwirePiExtension,
   hookInputs,
-  resolveShippedHookPath,
+  resolveShippedHookCommand,
   tripwirePiDenialReason,
   type HookResult,
   type PiExtensionContext,
   type PiToolCallEvent,
   type PiToolResultEvent,
   type TripwirePiExtensionApi,
+  type TripwireCommandInput,
   type TripwireProcessRunner,
 };

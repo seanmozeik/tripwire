@@ -65,7 +65,7 @@ let compiledExtension: Extension | undefined;
 
 beforeAll(async () => {
   root = await mkdtemp(path.join(tmpdir(), 'tripwire-pi-lifecycle-'));
-  hookPath = path.join(root, 'tripwire');
+  hookPath = path.join(root, 'tripwire.js');
   const stagedExtension = path.join(root, 'tripwire-pi.js');
   await writeFile(hookPath, fixtureHook);
   await chmod(hookPath, 0o755);
@@ -86,7 +86,15 @@ beforeAll(async () => {
   if (build.exitCode !== 0) {
     throw new Error(`Pi lifecycle fixture build failed: ${build.stderr.toString()}`);
   }
-  const loaded: unknown = await import(`${pathToFileURL(stagedExtension).href}?test=${Date.now()}`);
+  let loaded: unknown;
+  try {
+    process.env['TRIPWIRE_BUN'] = process.execPath;
+    process.env['TRIPWIRE_FORCE_PORTABLE'] = '1';
+    loaded = await import(`${pathToFileURL(stagedExtension).href}?test=${Date.now()}`);
+  } finally {
+    delete process.env['TRIPWIRE_BUN'];
+    delete process.env['TRIPWIRE_FORCE_PORTABLE'];
+  }
   if (
     typeof loaded !== 'object' ||
     loaded === null ||

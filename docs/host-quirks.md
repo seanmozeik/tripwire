@@ -61,9 +61,9 @@ PowerShell pre-tool calls are denied because Tripwire has no PowerShell parser. 
 
 ## Package paths
 
-The Darwin arm64 registry package installs two bin entries. `tripwire-hook` points directly to the native package file at `dist/tripwire`. `tripwire` is a POSIX launcher for interactive CLI use. Agent settings must use `tripwire-hook`.
+The main registry package installs `tripwire` and `tripwire-hook` as Bun launchers. It also provides the public library bundle at `dist/index.js` and declarations under `dist/types`.
 
-The package has no Linux, Windows, or Intel macOS binary. Clone the repository and run `bun run build` on those hosts.
+On Darwin arm64, the launchers select the optional `@seanmozeik/tripwire-darwin-arm64` executable. Host installers write this direct executable path into agent settings. On other systems, the launchers and installed hooks run `dist/tripwire.js` with Bun. `TRIPWIRE_FORCE_PORTABLE=1` forces this fallback for diagnostics.
 
 ## Betterleaks
 

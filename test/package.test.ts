@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { chmod, copyFile, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import pathModule from 'node:path';
 
 import packageJson from '../package.json' with { type: 'json' };
+import platformPackageJson from '../packages/darwin-arm64/package.json' with { type: 'json' };
 
 let root = '';
 
@@ -16,35 +17,25 @@ afterEach(async () => {
 });
 
 describe('package command contract', () => {
-  test('maps the live hook directly to the native executable', () => {
+  test('publishes a portable root package with an optional native executable', () => {
     expect(packageJson.bin).toEqual({
-      tripwire: './scripts/tripwire-cli',
-      'tripwire-hook': './dist/tripwire',
+      tripwire: './dist/tripwire-cli.js',
+      'tripwire-hook': './dist/tripwire-hook.js',
     });
-    expect(packageJson.os).toEqual(['darwin']);
-    expect(packageJson.cpu).toEqual(['arm64']);
-  });
-
-  test('the CLI launcher delegates for absolute and no-slash PATH invocation', async () => {
-    const binDirectory = pathModule.join(root, 'bin');
-    const launcher = pathModule.join(binDirectory, 'tripwire');
-    const hook = pathModule.join(binDirectory, 'tripwire-hook');
-    const output = pathModule.join(root, 'arguments.txt');
-    await mkdir(binDirectory, { recursive: true });
-    await copyFile(pathModule.join(import.meta.dir, '..', 'scripts', 'tripwire-cli'), launcher);
-    await writeFile(hook, `#!/bin/sh\nprintf '%s\\n' "$@" > "${output}"\n`);
-    await Promise.all([chmod(launcher, 0o755), chmod(hook, 0o755)]);
-
-    const result = Bun.spawnSync([launcher, 'test', 'printf safe']);
-
-    expect(result.exitCode).toBe(0);
-    expect(await Bun.file(output).text()).toBe('--tripwire-force-cli\ntest\nprintf safe\n');
-
-    const pathResult = Bun.spawnSync(['tripwire', '--version'], {
-      env: { ...process.env, PATH: binDirectory },
+    expect('os' in packageJson).toBe(false);
+    expect('cpu' in packageJson).toBe(false);
+    expect(packageJson.optionalDependencies).toEqual({
+      '@seanmozeik/tripwire-darwin-arm64': packageJson.version,
     });
-    expect(pathResult.exitCode).toBe(0);
-    expect(await Bun.file(output).text()).toBe('--tripwire-force-cli\n--version\n');
+    expect(packageJson.exports['.']).toEqual({
+      default: './dist/index.js',
+      import: './dist/index.js',
+      types: './dist/types/index.d.ts',
+    });
+    expect(platformPackageJson.version).toBe(packageJson.version);
+    expect(platformPackageJson.os).toEqual(['darwin']);
+    expect(platformPackageJson.cpu).toEqual(['arm64']);
+    expect(platformPackageJson.exports['.']).toBe('./bin/tripwire');
   });
 
   test('the private flag overrides tripwire-hook argv0 and is hidden from the CLI', async () => {

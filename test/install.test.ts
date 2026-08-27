@@ -89,6 +89,7 @@ describe('atomic settings replacement', () => {
 
 describe('Claude installation', () => {
   test('preserves unknown fields and is byte-idempotent after the first update', async () => {
+    const nativeCommand = '/opt/tripwire/bin/tripwire --tripwire-hook';
     const configDirectory = pathModule.join(homeDirectory, '.claude');
     const configPath = pathModule.join(configDirectory, 'settings.json');
     await mkdir(configDirectory, { recursive: true });
@@ -107,18 +108,27 @@ describe('Claude installation', () => {
       })}\n`,
     );
 
-    const first = await installClaude({ homeDirectory });
+    const first = await installClaude({ homeDirectory, hookCommand: nativeCommand });
     expect(first.success).toBe(true);
     const firstRaw = await readFile(configPath, 'utf8');
     const config = JSON.parse(firstRaw) as {
-      hooks: { PreToolUse: { hooks: { label?: string }[]; label?: string }[] };
+      hooks: {
+        PostToolUse: { hooks: { command?: string }[] }[];
+        PreToolUse: { hooks: { command?: string; label?: string }[]; label?: string }[];
+      };
       theme?: string;
     };
     expect(config.theme).toBe('keep-top-level');
     expect(config.hooks.PreToolUse[0]?.label).toBe('keep-group');
     expect(config.hooks.PreToolUse[0]?.hooks[0]?.label).toBe('keep-hook');
+    expect(
+      config.hooks.PreToolUse.flatMap((group) => group.hooks).map((hook) => hook.command),
+    ).toContain(nativeCommand);
+    expect(
+      config.hooks.PostToolUse.flatMap((group) => group.hooks).map((hook) => hook.command),
+    ).toContain(nativeCommand);
 
-    const second = await installClaude({ homeDirectory });
+    const second = await installClaude({ homeDirectory, hookCommand: nativeCommand });
     expect(second.message).toStartWith('Already configured:');
     expect(await readFile(configPath, 'utf8')).toBe(firstRaw);
   });
@@ -155,6 +165,7 @@ describe('Codex installation', () => {
   });
 
   test('preserves unknown JSON fields and TOML bytes outside the hook value', async () => {
+    const nativeCommand = '/opt/tripwire/bin/tripwire --tripwire-hook';
     const originalToml =
       '# leading comment\r\n[features] # keep section comment\r\nother = true\r\nhooks = false # keep value comment\r\n\r\n[notice]\r\nhide = false\r\n';
     const [hooksPath, tomlPath] = await createCodexFiles(
@@ -172,16 +183,25 @@ describe('Codex installation', () => {
       originalToml,
     );
 
-    const result = await installCodex({ homeDirectory });
+    const result = await installCodex({ homeDirectory, hookCommand: nativeCommand });
 
     expect(result.success).toBe(true);
     const hooks = JSON.parse(await readFile(hooksPath, 'utf8')) as {
-      hooks: { PreToolUse: { hooks: { sentinel?: string }[]; sentinel?: string }[] };
+      hooks: {
+        PostToolUse: { hooks: { command?: string }[] }[];
+        PreToolUse: { hooks: { command?: string; sentinel?: string }[]; sentinel?: string }[];
+      };
       sentinel?: string;
     };
     expect(hooks.sentinel).toBe('keep-top-level');
     expect(hooks.hooks.PreToolUse[0]?.sentinel).toBe('keep-group');
     expect(hooks.hooks.PreToolUse[0]?.hooks[0]?.sentinel).toBe('keep-hook');
+    expect(
+      hooks.hooks.PreToolUse.flatMap((group) => group.hooks).map((hook) => hook.command),
+    ).toContain(nativeCommand);
+    expect(
+      hooks.hooks.PostToolUse.flatMap((group) => group.hooks).map((hook) => hook.command),
+    ).toContain(nativeCommand);
     expect(await readFile(tomlPath, 'utf8')).toBe(originalToml.replace('false #', 'true #'));
   });
 
