@@ -24,9 +24,13 @@ import {
   type PiToolCallEvent,
   type PiToolResultEvent,
   type TripwirePiExtensionApi,
+  type TripwireProcessRunner,
 } from '../src/pi-extension';
 
 let root = '';
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 beforeEach(async () => {
   root = await mkdtemp(pathModule.join(tmpdir(), 'tripwire-pi-'));
@@ -164,6 +168,155 @@ describe('Tripwire Pi extension', () => {
     ).toMatchObject([
       { hook_event_name: 'PostToolUse', tool_response: { stderr: '', stdout: 'first\nsecond' } },
     ]);
+  });
+
+  test('starts one dispatcher process and checks all five edit paths', async () => {
+    let toolCall:
+      | ((
+          event: PiToolCallEvent,
+          context: PiExtensionContext,
+        ) => Promise<{ readonly block?: boolean; readonly reason?: string } | undefined>)
+      | undefined;
+    let processCalls = 0;
+    let receivedInput: unknown;
+    const receivedPaths: string[] = [];
+    const processRunner: TripwireProcessRunner = (_hookPath, input) => {
+      processCalls += 1;
+      receivedInput = input;
+      const events: readonly unknown[] = Array.isArray(input) ? input : [input];
+      const blocked = events.some((event) => {
+        if (!isRecord(event)) {
+          return false;
+        }
+        const toolInput = event['tool_input'];
+        if (!isRecord(toolInput) || typeof toolInput['file_path'] !== 'string') {
+          return false;
+        }
+        receivedPaths.push(toolInput['file_path']);
+        return toolInput['file_path'] === '.env';
+      });
+      return Promise.resolve({
+        exitCode: 0,
+        stderr: '',
+        stdout: JSON.stringify(
+          blocked
+            ? {
+                hookSpecificOutput: {
+                  hookEventName: 'PreToolUse',
+                  permissionDecision: 'deny',
+                  permissionDecisionReason: 'Protected path .env',
+                },
+              }
+            : { continue: true },
+        ),
+      });
+    };
+    const api: TripwirePiExtensionApi = {
+      on: (event, handler) => {
+        if (event === 'tool_call') {
+          toolCall = handler as typeof toolCall;
+        }
+      },
+    };
+    createTripwirePiExtension('/unused/tripwire', processRunner)(api);
+
+    let aborted = false;
+    const notifications: string[] = [];
+    const result = await toolCall?.(
+      {
+        input: {
+          new_string: 'safe replacement',
+          old_string: 'old value',
+          paths: ['one.ts', 'two.ts', 'three.ts', 'four.ts', '.env'],
+        },
+        toolCallId: 'batch-edit-1',
+        toolName: 'edit',
+      },
+      {
+        abort: () => {
+          aborted = true;
+        },
+        cwd: root,
+        ui: {
+          notify: (message) => {
+            notifications.push(message);
+          },
+        },
+      },
+    );
+
+    expect(processCalls).toBe(1);
+    expect(receivedInput).toBeArrayOfSize(5);
+    expect(receivedPaths).toEqual(['one.ts', 'two.ts', 'three.ts', 'four.ts', '.env']);
+    expect(result).toEqual({ block: true, reason: 'Protected path .env' });
+    expect(aborted).toBe(false);
+    expect(notifications).toEqual([]);
+  });
+
+  test('evaluates canonical private batches with one merged response', () => {
+    const run = (input: unknown) => {
+      const child = Bun.spawnSync([process.execPath, 'src/dispatch.ts', '--tripwire-hook'], {
+        env: { ...process.env, HOME: root },
+        stdin: new TextEncoder().encode(JSON.stringify(input)),
+        stderr: 'pipe',
+        stdout: 'pipe',
+      });
+      expect(child.exitCode).toBe(0);
+      return JSON.parse(child.stdout.toString()) as {
+        continue?: boolean;
+        hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string };
+      };
+    };
+    const event = (filePath: string) => ({
+      cwd: root,
+      hook_event_name: 'PreToolUse',
+      tool_input: { file_path: filePath, new_string: 'new', old_string: 'old' },
+      tool_name: 'Edit',
+      tool_use_id: `edit-${filePath}`,
+    });
+
+    expect(run([event('one.ts'), event('two.ts')])).toEqual({ continue: true });
+    const denied = run([event('safe.ts'), event('.env')]);
+    expect(denied.hookSpecificOutput?.permissionDecision).toBe('deny');
+    expect(denied.hookSpecificOutput?.permissionDecisionReason).toContain('.env');
+  });
+
+  test('rejects empty, mixed-phase, and mixed-host private batches', () => {
+    const run = (input: unknown) => {
+      const child = Bun.spawnSync([process.execPath, 'src/dispatch.ts', '--tripwire-hook'], {
+        env: { ...process.env, HOME: root },
+        stdin: new TextEncoder().encode(JSON.stringify(input)),
+        stderr: 'pipe',
+        stdout: 'pipe',
+      });
+      expect(child.exitCode).toBe(0);
+      return child.stdout.toString();
+    };
+    const event = {
+      cwd: root,
+      hook_event_name: 'PreToolUse',
+      tool_input: { command: 'printf safe' },
+      tool_name: 'Bash',
+    };
+
+    expect(run([])).toContain('tripwire-batch-error');
+    expect(run([{}])).toContain('tripwire-batch-error');
+    expect(run([event, { ...event, hook_event_name: 'PostToolUse' }])).toContain(
+      'tripwire-batch-error',
+    );
+    expect(run([event, { ...event, turn_id: 'codex-turn' }])).toContain('tripwire-batch-error');
+  });
+
+  test('keeps the native failure response for invalid single-event JSON', () => {
+    const child = Bun.spawnSync([process.execPath, 'src/dispatch.ts', '--tripwire-hook'], {
+      env: { ...process.env, HOME: root },
+      stdin: new TextEncoder().encode('{invalid'),
+      stderr: 'pipe',
+      stdout: 'pipe',
+    });
+
+    expect(child.exitCode).toBe(0);
+    expect(child.stdout.toString()).toBe('{"continue": true}\n');
   });
 
   test('blocks tool calls when the dispatcher cannot run', async () => {

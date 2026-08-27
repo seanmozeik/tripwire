@@ -59,6 +59,8 @@ const readStdin = async (): Promise<string> => {
 
 const NATIVE_HOST: HookHost = { kind: 'native' };
 const RULE_TIMEOUT_MS = 250;
+const PRIVATE_HOOK_FLAG = '--tripwire-hook';
+const HookEventBatchSchema = Schema.Array(HookEventSchema).check(Schema.isMinLength(1));
 
 const writeAllow = (host: HookHost = NATIVE_HOST): void => {
   if (host.kind === 'cursor' && !host.post) {
@@ -357,13 +359,26 @@ const cursorEventNameFromArgs = (): string | undefined => {
   return value?.slice('--cursor-event='.length);
 };
 
+const isPrivateHookInvocation = (): boolean => process.argv.includes(PRIVATE_HOOK_FLAG);
+
 const cursorHostFromArgs = (): HookHost => {
   const eventName = cursorEventNameFromArgs();
   return eventName === undefined ? NATIVE_HOST : cursorHost(eventName);
 };
 
-const writeHookFailure = (stage: string): void => {
+const writeHookFailure = (stage: string, batch = false): void => {
   const host = cursorHostFromArgs();
+  if (batch) {
+    writePreToolGate(
+      'PreToolUse',
+      deny(
+        'tripwire-batch-error',
+        `Tripwire batch input could not be processed (${stage}). Failing closed.`,
+      ),
+      host,
+    );
+    return;
+  }
   if (host.kind === 'cursor' && !host.post) {
     writeCursorPreGate(
       deny(
@@ -375,6 +390,80 @@ const writeHookFailure = (stage: string): void => {
   }
   writeAllow(host);
 };
+
+const hookHostKey = (event: HookEvent, host: HookHost): string => {
+  if (host.kind === 'cursor') {
+    return `cursor:${host.eventName}`;
+  }
+  return isCodex(event) ? 'codex' : 'native';
+};
+
+const mergedDecisions = (decisions: readonly Decision[]): Decision =>
+  decisions.length === 1 ? (decisions[0] ?? allow('no-rules')) : merge(decisions);
+
+type PreparedHookInput =
+  | {
+      readonly ok: true;
+      readonly events: readonly HookEvent[];
+      readonly firstEvent: HookEvent;
+      readonly host: HookHost;
+      readonly phase: string;
+    }
+  | { readonly ok: false };
+
+const prepareHookInput = (input: unknown): Effect.Effect<PreparedHookInput> =>
+  Effect.gen(function* prepareHookInputEffect() {
+    const batchInput = Array.isArray(input);
+    if (batchInput && !isPrivateHookInvocation()) {
+      logError('decode', 'Batch hook input is only available through --tripwire-hook');
+      writeHookFailure('unsupported batch input');
+      return { ok: false };
+    }
+
+    let events: readonly HookEvent[];
+    let host: HookHost;
+    if (batchInput) {
+      const decodeExit = yield* Effect.exit(Schema.decodeEffect(HookEventBatchSchema)(input));
+      if (Exit.isFailure(decodeExit)) {
+        logError('decode', Cause.pretty(decodeExit.cause));
+        writeHookFailure('unsupported batch event shape', true);
+        return { ok: false };
+      }
+      events = decodeExit.value;
+      host = cursorHostFromArgs();
+    } else {
+      const normalized = normalizeHookInput(input, cursorEventNameFromArgs());
+      const decodeExit = yield* Effect.exit(
+        Schema.decodeUnknownEffect(HookEventSchema)(normalized.event),
+      );
+      if (Exit.isFailure(decodeExit)) {
+        logError('decode', Cause.pretty(decodeExit.cause));
+        writeHookFailure('unsupported event shape');
+        return { ok: false };
+      }
+      events = [decodeExit.value];
+      ({ host } = normalized);
+    }
+
+    const [firstEvent] = events;
+    if (firstEvent === undefined) {
+      writeHookFailure('empty batch', true);
+      return { ok: false };
+    }
+    const phase = firstEvent.hook_event_name;
+    const hostKey = hookHostKey(firstEvent, host);
+    if (events.some((event) => event.hook_event_name !== phase)) {
+      logError('decode', 'Batch hook input mixes event phases');
+      writeHookFailure('mixed event phases', true);
+      return { ok: false };
+    }
+    if (events.some((event) => hookHostKey(event, host) !== hostKey)) {
+      logError('decode', 'Batch hook input mixes hosts');
+      writeHookFailure('mixed hosts', true);
+      return { ok: false };
+    }
+    return { ok: true, events, firstEvent, host, phase };
+  });
 
 const program = Effect.gen(function* tripwireProgram() {
   const configLoad = yield* loadConfigResult();
@@ -392,50 +481,51 @@ const program = Effect.gen(function* tripwireProgram() {
     return;
   }
 
-  const normalized = normalizeHookInput(parseExit.value, cursorEventNameFromArgs());
-
-  const decodeExit = yield* Effect.exit(
-    Schema.decodeUnknownEffect(HookEventSchema)(normalized.event),
-  );
-  if (Exit.isFailure(decodeExit)) {
-    logError('decode', Cause.pretty(decodeExit.cause));
-    writeHookFailure('unsupported event shape');
+  const prepared = yield* prepareHookInput(parseExit.value);
+  if (!prepared.ok) {
     return;
   }
-  const event = decodeExit.value;
-  const { host } = normalized;
+  const { events, firstEvent, host, phase } = prepared;
 
-  if (event.hook_event_name === 'PreToolUse') {
+  if (phase === 'PreToolUse') {
     if (!configLoad.ok) {
-      writePreToolGate(
-        event.hook_event_name,
-        deny('config-error', configErrorMessage(configLoad.error)),
-        host,
+      writePreToolGate(phase, deny('config-error', configErrorMessage(configLoad.error)), host);
+      return;
+    }
+    const decisions: Decision[] = [];
+    for (const event of events) {
+      const tool = normalizeToolName(event.tool_name ?? '');
+      decisions.push(
+        yield* runRules(
+          collectPreToolUseRules(tool, event.tool_input, configLoad.config),
+          RULE_TIMEOUT_MS,
+        ),
       );
-      return;
     }
-    const tool = normalizeToolName(event.tool_name ?? '');
-    const decision = yield* runRules(
-      collectPreToolUseRules(tool, event.tool_input, configLoad.config),
-      RULE_TIMEOUT_MS,
-    );
+    const decision = mergedDecisions(decisions);
     if (decision.kind === 'deny' || decision.kind === 'ask') {
-      writePreToolGate(event.hook_event_name, decision, host);
+      writePreToolGate(phase, decision, host);
       return;
     }
-    handleAllow(event, decision, host);
+    handleAllow(firstEvent, decision, host);
     return;
   }
 
-  if (event.hook_event_name === 'PostToolUse') {
-    const tool = normalizeToolName(event.tool_name ?? '');
+  if (phase === 'PostToolUse') {
     const secretScanner = configLoad.ok
       ? configLoad.config.secretScanner
       : getDefaultConfig().secretScanner;
-    const decision = yield* runRules(
-      collectPostToolUseRules(tool, event.tool_response, secretScanner),
-      RULE_TIMEOUT_MS,
-    );
+    const decisions: Decision[] = [];
+    for (const event of events) {
+      const tool = normalizeToolName(event.tool_name ?? '');
+      decisions.push(
+        yield* runRules(
+          collectPostToolUseRules(tool, event.tool_response, secretScanner),
+          RULE_TIMEOUT_MS,
+        ),
+      );
+    }
+    const decision = mergedDecisions(decisions);
     if (decision.kind === 'deny') {
       writePostToolBlock(decision, host);
       return;

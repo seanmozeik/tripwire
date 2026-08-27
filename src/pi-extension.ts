@@ -45,6 +45,8 @@ interface HookResult {
   readonly stdout: string;
 }
 
+type TripwireProcessRunner = (hookPath: string, input: unknown) => Promise<HookResult>;
+
 const TIMEOUT_MS = 60_000;
 
 /** Resolve the Bun hook next to the built extension, following install symlinks. */
@@ -276,15 +278,18 @@ const tripwirePiDenialReason = (result: HookResult): string | undefined => {
 };
 
 const createTripwirePiExtension =
-  (hookPath: string) =>
+  (hookPath: string, processRunner: TripwireProcessRunner = runTripwire) =>
   (pi: TripwirePiExtensionApi): void => {
     pi.on('tool_call', async (event, context) => {
       try {
-        for (const input of hookInputs(event, 'PreToolUse', context.cwd)) {
-          const reason = tripwirePiDenialReason(await runTripwire(hookPath, input));
-          if (reason !== undefined) {
-            return { block: true, reason };
-          }
+        const inputs = hookInputs(event, 'PreToolUse', context.cwd);
+        const input = inputs.length === 1 ? inputs[0] : inputs;
+        if (input === undefined) {
+          throw new Error('Tripwire could not normalize the Pi tool call');
+        }
+        const reason = tripwirePiDenialReason(await processRunner(hookPath, input));
+        if (reason !== undefined) {
+          return { block: true, reason };
         }
         return {};
       } catch (error) {
@@ -301,7 +306,7 @@ const createTripwirePiExtension =
         if (input === undefined) {
           throw new Error('Tripwire could not normalize the Pi tool result');
         }
-        const reason = tripwirePiDenialReason(await runTripwire(hookPath, input));
+        const reason = tripwirePiDenialReason(await processRunner(hookPath, input));
         if (reason !== undefined) {
           context.ui.notify(`Tripwire stopped the session: ${reason}`, 'error');
           context.abort();
@@ -323,8 +328,10 @@ export {
   hookInputs,
   resolveShippedHookPath,
   tripwirePiDenialReason,
+  type HookResult,
   type PiExtensionContext,
   type PiToolCallEvent,
   type PiToolResultEvent,
   type TripwirePiExtensionApi,
+  type TripwireProcessRunner,
 };
