@@ -1,6 +1,9 @@
+import { Result, Schema } from 'effect';
+
 import type { HookEvent } from './event';
 
-type JsonRecord = Record<string, unknown>;
+const JsonRecordSchema = Schema.Record(Schema.String, Schema.Unknown);
+type JsonRecord = typeof JsonRecordSchema.Type;
 
 type HookHost =
   | { readonly kind: 'native' }
@@ -227,22 +230,30 @@ const cursorTopLevelToolInput = (tool: string, raw: JsonRecord): JsonRecord => {
   if (tool === 'Bash') {
     return { command: inputStringField(raw, undefined, 'command', 'cmd') };
   }
-  const input: JsonRecord = { file_path: stringField(raw, 'file_path', 'filePath', 'path') };
+  const fileInput = { file_path: stringField(raw, 'file_path', 'filePath', 'path') };
   if (tool === 'Write') {
-    input['content'] = stringField(raw, 'content', 'fileText', 'text');
+    return { ...fileInput, content: stringField(raw, 'content', 'fileText', 'text') };
   }
   if (tool === 'Edit') {
-    input['old_string'] = stringField(raw, 'old_string', 'oldString');
-    input['new_string'] = stringField(raw, 'new_string', 'newString');
+    return {
+      ...fileInput,
+      old_string: stringField(raw, 'old_string', 'oldString'),
+      new_string: stringField(raw, 'new_string', 'newString'),
+    };
   }
-  return input;
+  return fileInput;
 };
 
 const cursorToolInput = (eventName: string, tool: string, raw: JsonRecord, post: boolean) => {
-  const input = valueField(raw, 'tool_input', 'toolInput');
+  const decoded = Schema.decodeUnknownResult(JsonRecordSchema)(raw);
+  if (Result.isFailure(decoded)) {
+    throw new Error('Cursor sent an invalid tool event');
+  }
+  const boundary = decoded.success;
+  const input = valueField(boundary, 'tool_input', 'toolInput');
   const required = !post;
   if (eventName === 'beforeShellExecution' || eventName === 'afterShellExecution') {
-    const command = inputStringField(raw, input, 'command', 'cmd');
+    const command = inputStringField(boundary, input, 'command', 'cmd');
     return { command: required ? requiredString(command, 'command') : (command ?? '') };
   }
   if (
@@ -251,18 +262,18 @@ const cursorToolInput = (eventName: string, tool: string, raw: JsonRecord, post:
     eventName === 'afterFileEdit' ||
     eventName === 'afterTabFileEdit'
   ) {
-    const filePath = inputStringField(raw, input, 'file_path', 'filePath', 'path');
+    const filePath = inputStringField(boundary, input, 'file_path', 'filePath', 'path');
     return normalizeToolInput(
       tool,
       {
         file_path: required ? requiredString(filePath, 'file path') : (filePath ?? ''),
-        ...(Array.isArray(raw['edits']) && { edits: raw['edits'] }),
+        ...(Array.isArray(boundary['edits']) && { edits: boundary['edits'] }),
       },
       required,
     );
   }
   if (input === undefined && ['Bash', 'Read', 'Write', 'Edit'].includes(tool)) {
-    return normalizeToolInput(tool, cursorTopLevelToolInput(tool, raw), required);
+    return normalizeToolInput(tool, cursorTopLevelToolInput(tool, boundary), required);
   }
   return normalizeToolInput(tool, input, required);
 };

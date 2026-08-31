@@ -97,6 +97,7 @@ Supported config sections are:
 - `blockedCommands`
 - `allowedCommands`
 - `secretScanner`
+- `shell.executionCarrierAliases`
 
 Betterleaks 1.5.0 or later is the default post-tool scanner. It receives content on stdin and returns JSON on stdout. Scanner errors must not expose scanned text, secret values, or raw stderr.
 
@@ -113,9 +114,9 @@ Do not change a host failure policy without a lifecycle test.
 
 ## Shell and path checks
 
-`src/lib/bash.ts` uses `shell-quote` 1.10.0, then adds command segmentation, wrapper unwrapping, compound-command checks, heredoc masking, command-substitution checks, and `Bun.Glob` expansion.
+`src/lib/bash/` uses `unbash` 4.0.10 as its only Bash parser. One exhaustive AST pass produces typed shell values, normalized executable invocations, redirects, pipelines, inspection diagnostics, and same-program temporary-path provenance. Rules consume that shared program model.
 
-Unsupported compound structures fail closed when Tripwire cannot identify every executable branch. Do not reparse quoted data or literal heredoc bodies as commands.
+Parse errors, unresolved executable names, unresolved nested-shell source, `eval`, unresolved function or alias execution, and computed policy discriminators fail closed. Static scalar assignments, conditionals, loops, cases, brace groups, subshells, substitutions, local functions, and local aliases expose every executable node to the normal policy rules. Do not reparse quoted data or literal heredoc bodies as commands.
 
 The tar rule checks extraction flags and explicit destinations. It denies `tar` extraction to `/` or the home directory and applies the same destination rule to `unzip -d`. It does not inspect archive member paths.
 

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import * as bunTest from 'bun:test';
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -9,17 +9,14 @@ import {
   type PiExtensionContext,
   type PiToolCallEvent,
   type PiToolResultEvent,
-  type TripwirePiExtensionApi,
 } from '../src/pi-extension';
-
-type ToolCallHandler = (
-  event: PiToolCallEvent,
-  context: PiExtensionContext,
-) => Promise<{ readonly block?: boolean; readonly reason?: string } | undefined>;
-
-type ToolResultHandler = (event: PiToolResultEvent, context: PiExtensionContext) => Promise<void>;
-
-type Extension = (pi: TripwirePiExtensionApi) => void;
+import {
+  isPiExtension,
+  PiHandlerCollector,
+  type PiExtension,
+  type ToolCallHandler,
+  type ToolResultHandler,
+} from './support/pi';
 
 interface LifecycleState {
   readonly context: PiExtensionContext;
@@ -61,9 +58,9 @@ if (phase === 'PreToolUse' && protectedPath !== undefined) {
 
 let root = '';
 let hookPath = '';
-let compiledExtension: Extension | undefined;
+let compiledExtension: PiExtension | undefined;
 
-beforeAll(async () => {
+bunTest.beforeAll(async () => {
   root = await mkdtemp(path.join(tmpdir(), 'tripwire-pi-lifecycle-'));
   hookPath = path.join(root, 'tripwire.js');
   const stagedExtension = path.join(root, 'tripwire-pi.js');
@@ -99,36 +96,23 @@ beforeAll(async () => {
     typeof loaded !== 'object' ||
     loaded === null ||
     !('default' in loaded) ||
-    typeof loaded.default !== 'function'
+    !isPiExtension(loaded.default)
   ) {
     throw new Error('Compiled Pi lifecycle fixture has no default extension');
   }
-  compiledExtension = loaded.default as Extension;
+  compiledExtension = loaded.default;
 });
 
-afterAll(async () => {
+bunTest.afterAll(async () => {
   await rm(root, { force: true, recursive: true });
 });
 
 const registerHandlers = (
-  extension: Extension,
+  extension: PiExtension,
 ): { readonly toolCall: ToolCallHandler; readonly toolResult: ToolResultHandler } => {
-  let toolCall: ToolCallHandler | undefined;
-  let toolResult: ToolResultHandler | undefined;
-  const api = {
-    on: (event: 'tool_call' | 'tool_result', handler: ToolCallHandler | ToolResultHandler) => {
-      if (event === 'tool_call') {
-        toolCall = handler as ToolCallHandler;
-      } else {
-        toolResult = handler as ToolResultHandler;
-      }
-    },
-  } as TripwirePiExtensionApi;
-  extension(api);
-  if (toolCall === undefined || toolResult === undefined) {
-    throw new Error('Pi lifecycle fixture did not register both handlers');
-  }
-  return { toolCall, toolResult };
+  const collector = new PiHandlerCollector();
+  extension(collector);
+  return { toolCall: collector.requireToolCall(), toolResult: collector.requireToolResult() };
 };
 
 const lifecycleState = (): LifecycleState => {
@@ -167,16 +151,16 @@ const toolResultEvent = (toolName: string, text: string): PiToolResultEvent => (
   isError: false,
 });
 
-const compiledLifecycleExtension = (): Extension => {
+const compiledLifecycleExtension = (): PiExtension => {
   if (compiledExtension === undefined) {
     throw new Error('Compiled Pi extension is not loaded');
   }
   return compiledExtension;
 };
 
-const lifecycleTests = (name: string, extension: () => Extension): void => {
-  describe(`${name} Pi adapter lifecycle`, () => {
-    test('allows a safe pre-tool call', async () => {
+const lifecycleTests = (name: string, extension: () => PiExtension): void => {
+  bunTest.describe(`${name} Pi adapter lifecycle`, () => {
+    bunTest.test('allows a safe pre-tool call', async () => {
       const { toolCall } = registerHandlers(extension());
       const state = lifecycleState();
 
@@ -185,60 +169,60 @@ const lifecycleTests = (name: string, extension: () => Extension): void => {
         state.context,
       );
 
-      expect(result).toEqual({});
-      expect(state.aborted).toBe(false);
-      expect(state.notifications).toEqual([]);
+      bunTest.expect(result).toEqual({});
+      bunTest.expect(state.aborted).toBe(false);
+      bunTest.expect(state.notifications).toEqual([]);
     });
 
-    test('blocks a denied pre-tool call', async () => {
+    bunTest.test('blocks a denied pre-tool call', async () => {
       const { toolCall } = registerHandlers(extension());
       const state = lifecycleState();
 
       const result = await toolCall(toolCallEvent('read', { path: '.env' }), state.context);
 
-      expect(result?.block).toBe(true);
-      expect(result?.reason).toContain('path-protect');
-      expect(state.aborted).toBe(false);
+      bunTest.expect(result?.block).toBe(true);
+      bunTest.expect(result?.reason).toContain('path-protect');
+      bunTest.expect(state.aborted).toBe(false);
     });
 
-    test('allows a safe post-tool result', async () => {
+    bunTest.test('allows a safe post-tool result', async () => {
       const { toolResult } = registerHandlers(extension());
       const state = lifecycleState();
 
       await toolResult(toolResultEvent('bash', 'safe output'), state.context);
 
-      expect(state.aborted).toBe(false);
-      expect(state.notifications).toEqual([]);
+      bunTest.expect(state.aborted).toBe(false);
+      bunTest.expect(state.notifications).toEqual([]);
     });
 
-    test('aborts on a post-tool scanner denial', async () => {
+    bunTest.test('aborts on a post-tool scanner denial', async () => {
       const { toolResult } = registerHandlers(extension());
       const state = lifecycleState();
 
       await toolResult(toolResultEvent('bash', 'POST_SCANNER_DENY'), state.context);
 
-      expect(state.aborted).toBe(true);
-      expect(state.notifications).toHaveLength(1);
-      expect(state.notifications[0]).toContain('secret-scanner-failed');
+      bunTest.expect(state.aborted).toBe(true);
+      bunTest.expect(state.notifications).toHaveLength(1);
+      bunTest.expect(state.notifications[0]).toContain('secret-scanner-failed');
     });
 
-    test('fails closed when the dispatcher fails', async () => {
+    bunTest.test('fails closed when the dispatcher fails', async () => {
       const handlers = registerHandlers(extension());
       const preState = lifecycleState();
       const preResult = await handlers.toolCall(
         toolCallEvent('dispatcher-failure', {}),
         preState.context,
       );
-      expect(preResult?.block).toBe(true);
-      expect(preResult?.reason).toContain('fixture dispatcher failure');
+      bunTest.expect(preResult?.block).toBe(true);
+      bunTest.expect(preResult?.reason).toContain('fixture dispatcher failure');
 
       const postState = lifecycleState();
       await handlers.toolResult(
         toolResultEvent('dispatcher-failure', 'unused output'),
         postState.context,
       );
-      expect(postState.aborted).toBe(true);
-      expect(postState.notifications[0]).toContain('fixture dispatcher failure');
+      bunTest.expect(postState.aborted).toBe(true);
+      bunTest.expect(postState.notifications[0]).toContain('fixture dispatcher failure');
     });
   });
 };

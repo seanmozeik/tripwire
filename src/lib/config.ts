@@ -7,6 +7,9 @@ import { homedir } from 'node:os';
 
 import { Cause, Data, Effect, Schema } from 'effect';
 
+import { ShellConfigSchema, type ExecutionCarrierAlias } from './bash/config';
+import { RuleActionsSchema, type RuleActions } from './rule-actions';
+
 const BlockRuleSchema = Schema.Struct({
   pattern: Schema.String,
   message: Schema.String,
@@ -52,7 +55,9 @@ const ConfigSchema = Schema.Struct({
   toolPolicies: Schema.optional(Schema.Array(ToolPolicySchema)),
   blockedCommands: Schema.optional(Schema.Array(BlockRuleSchema)),
   allowedCommands: Schema.optional(Schema.Array(BlockRuleSchema)),
+  ruleActions: Schema.optional(RuleActionsSchema),
   secretScanner: Schema.optional(SecretScannerConfigSchema),
+  shell: Schema.optional(ShellConfigSchema),
 });
 
 const CONFIG_PATH = `${homedir()}/.config/tripwire/config.json`;
@@ -90,7 +95,9 @@ const getDefaultConfig = (): ResolvedConfig => ({
   toolPolicies: [],
   blockedCommands: [],
   allowedCommands: [],
+  ruleActions: {},
   secretScanner: { executable: 'betterleaks', timeoutMs: 5000 },
+  shell: { executionCarrierAliases: [] },
 });
 
 const mergeWithDefaults = (partial: Config): ResolvedConfig => {
@@ -105,7 +112,12 @@ const mergeWithDefaults = (partial: Config): ResolvedConfig => {
     toolPolicies: partial.toolPolicies ?? defaults.toolPolicies,
     blockedCommands: partial.blockedCommands ?? defaults.blockedCommands,
     allowedCommands: partial.allowedCommands ?? defaults.allowedCommands,
+    ruleActions: { ...defaults.ruleActions, ...partial.ruleActions },
     secretScanner: partial.secretScanner ?? defaults.secretScanner,
+    shell: {
+      executionCarrierAliases:
+        partial.shell?.executionCarrierAliases ?? defaults.shell.executionCarrierAliases,
+    },
   };
 };
 
@@ -150,6 +162,7 @@ export type GitConfig = typeof GitConfigSchema.Type;
 export type SafePathsConfig = typeof SafePathsConfigSchema.Type;
 export type ToolPolicy = typeof ToolPolicySchema.Type;
 export type SecretScannerConfig = typeof SecretScannerConfigSchema.Type;
+export type { ExecutionCarrierAlias, ShellConfig } from './bash/config';
 export type Config = typeof ConfigSchema.Type;
 
 export interface ResolvedConfig {
@@ -161,7 +174,9 @@ export interface ResolvedConfig {
   readonly toolPolicies: readonly ToolPolicy[];
   readonly blockedCommands: readonly BlockRule[];
   readonly allowedCommands: readonly BlockRule[];
+  readonly ruleActions: RuleActions;
   readonly secretScanner: SecretScannerConfig;
+  readonly shell: { readonly executionCarrierAliases: readonly ExecutionCarrierAlias[] };
 }
 
 export type { ConfigLoad };

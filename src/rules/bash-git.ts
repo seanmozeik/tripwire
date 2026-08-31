@@ -1,4 +1,4 @@
-import { type Segment, collectHeredocBodies, hasBypass, unwrapStaticString } from '../lib/bash';
+import type { ShellInvocation, ShellProgram } from '../lib/bash';
 import type { GitConfig } from '../lib/config';
 import { type Decision, allow, ask, deny, warn } from '../lib/decision';
 
@@ -12,7 +12,7 @@ const getProtectedBranches = (config: GitConfig): readonly string[] =>
 
 // Conventional Commits 1.0.0 — type(scope)?(!)?: description
 const CONVENTIONAL_RE =
-  /^(?<type>feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(?<scope>\([\w./\- ]+\))?!?:\s+\S/;
+  /^(?<type>feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(?<scope>\([\w./\- ]+\))?!?:\s+\S/u;
 
 const PRE_SUB_FLAG_TAKES_VALUE: ReadonlySet<string> = new Set([
   '-C',
@@ -42,10 +42,44 @@ const PRE_SUB_FLAG_NO_VALUE: ReadonlySet<string> = new Set([
 
 interface GitInvocation {
   readonly subcommand: string;
+  readonly subcommandIndex: number;
   readonly subArgs: readonly string[];
 }
 
-const parseGit = (seg: Segment): GitInvocation | null => {
+const READ_ONLY: ReadonlySet<string> = new Set([
+  'status',
+  'diff',
+  'diff-tree',
+  'log',
+  'show',
+  'blame',
+  'rev-parse',
+  'rev-list',
+  'ls-files',
+  'ls-tree',
+  'cat-file',
+  'reflog',
+  'describe',
+  'shortlog',
+  'whatchanged',
+  'archive',
+  'bundle',
+  'fsck',
+  'fetch',
+  'ls-remote',
+  'help',
+  'version',
+  'grep',
+  'name-rev',
+  'merge-base',
+  'symbolic-ref',
+  'check-ignore',
+  'count-objects',
+  'verify-commit',
+  'verify-tag',
+]);
+
+const parseGit = (seg: ShellInvocation): GitInvocation | null => {
   if (seg.head !== 'git') {
     return null;
   }
@@ -58,13 +92,9 @@ const parseGit = (seg: Segment): GitInvocation | null => {
     }
     if (PRE_SUB_FLAG_TAKES_VALUE.has(t)) {
       i += 2;
-      continue;
-    }
-    if (PRE_SUB_FLAG_NO_VALUE.has(t)) {
+    } else if (PRE_SUB_FLAG_NO_VALUE.has(t)) {
       i += 1;
-      continue;
-    }
-    if (
+    } else if (
       t.startsWith('--git-dir=') ||
       t.startsWith('--work-tree=') ||
       t.startsWith('--namespace=') ||
@@ -72,22 +102,17 @@ const parseGit = (seg: Segment): GitInvocation | null => {
       t.startsWith('--exec-path=')
     ) {
       i += 1;
-      continue;
-    }
-    if (t.startsWith('-')) {
+    } else if (t.startsWith('-')) {
       // Unknown pre-subcommand flag; assume no value, advance.
       i += 1;
-      continue;
+    } else {
+      return { subcommand: t, subcommandIndex: i + 1, subArgs: toks.slice(i + 1) };
     }
-    return { subcommand: t, subArgs: toks.slice(i + 1) };
   }
   return null;
 };
 
-const messageOf = (
-  subArgs: readonly string[],
-  heredocBodies?: ReadonlyMap<string, string>,
-): string | null => {
+const messageOf = (subArgs: readonly string[]): string | null => {
   for (let i = 0; i < subArgs.length; i += 1) {
     const t = subArgs[i];
     if (t === undefined) {
@@ -95,16 +120,16 @@ const messageOf = (
     }
     if (t === '-m' || t === '--message') {
       const raw = subArgs[i + 1];
-      return raw === undefined ? null : unwrapStaticString(raw, heredocBodies);
+      return raw ?? null;
     }
     if (t.startsWith('--message=')) {
-      return unwrapStaticString(t.slice('--message='.length), heredocBodies);
+      return t.slice('--message='.length);
     }
     // Combined short flags like `-am`, `-ma`, `-amS` carry the message
     // In the next positional arg — same as `-m` alone.
-    if (/^-[a-zA-Z]*m[a-zA-Z]*$/.test(t)) {
+    if (/^-[a-zA-Z]*m[a-zA-Z]*$/u.test(t)) {
       const raw = subArgs[i + 1];
-      return raw === undefined ? null : unwrapStaticString(raw, heredocBodies);
+      return raw ?? null;
     }
   }
   return null;
@@ -138,7 +163,6 @@ interface HandlerCtx {
   readonly flags: readonly string[];
   readonly positional: readonly string[];
   readonly config: GitConfig;
-  readonly heredocBodies: ReadonlyMap<string, string>;
 }
 
 type Handler = (ctx: HandlerCtx) => Decision;
@@ -246,8 +270,11 @@ const handleReset: Handler = ({ subArgs, flags, positional }) => {
   );
 };
 
-const handleClean: Handler = ({ flags }) => {
-  if (flags.some((f) => /^-[a-zA-Z]*[df]/.test(f) || f === '--force')) {
+const handleClean: Handler = ({ subArgs, flags }) => {
+  if (has(subArgs, '-n', '--dry-run') || flags.some((flag) => /^-[a-zA-Z]*n/u.test(flag))) {
+    return allow('bash-git');
+  }
+  if (flags.some((f) => /^-[a-zA-Z]*[df]/u.test(f) || f === '--force')) {
     return deny(
       'git-clean-fd',
       '`git clean -fd` deletes untracked files (often your in-progress work). Refuse — inspect with `git clean -dn` (dry run) first. If genuinely needed, append ` # tripwire-allow: <reason>`.',
@@ -297,14 +324,14 @@ const handleMerge: Handler = ({ subArgs }) => {
   return ask('git-merge', '`git merge <branch>` may create merge conflicts. Confirm intent.');
 };
 
-const handleCommit: Handler = ({ subArgs, config, heredocBodies }) => {
+const handleCommit: Handler = ({ subArgs, config }) => {
   if (has(subArgs, '--amend')) {
     return deny(
       'git-commit-amend',
       '`git commit --amend` rewrites the last commit. If it has been pushed, this causes upstream divergence. Refuse — surface the intent.',
     );
   }
-  const msg = messageOf(subArgs, heredocBodies);
+  const msg = messageOf(subArgs);
   const hasFile = has(subArgs, '-F', '--file', '-c', '-C', '--reuse-message', '--reedit-message');
   const hasNoEdit = has(subArgs, '--no-edit');
   if (msg === null && !hasFile && !hasNoEdit) {
@@ -328,7 +355,7 @@ const handleCommit: Handler = ({ subArgs, config, heredocBodies }) => {
       ].join('\n'),
     );
   }
-  if (has(subArgs, '-a', '--all') || subArgs.some((t) => /^-[a-zA-Z]*a[a-zA-Z]*$/.test(t))) {
+  if (has(subArgs, '-a', '--all') || subArgs.some((t) => /^-[a-zA-Z]*a[a-zA-Z]*$/u.test(t))) {
     return ask(
       'git-commit-auto-stage',
       '`git commit -a / --all` auto-stages every tracked change. Explicit `git add <files>` first is usually clearer about what is being committed. Confirm.',
@@ -366,8 +393,8 @@ const handleBranch: Handler = ({ subArgs, flags, positional, config }) => {
       f === '-D' ||
       f === '-d' ||
       f === '--delete' ||
-      /^-[a-zA-Z]*D/.test(f) ||
-      /^-[a-zA-Z]*d/.test(f),
+      /^-[a-zA-Z]*D/u.test(f) ||
+      /^-[a-zA-Z]*d/u.test(f),
   );
   if (deleteFlag !== undefined) {
     const targets = positional;
@@ -423,13 +450,39 @@ const handleGc: Handler = ({ flags }) => {
 
 const handleRemote: Handler = ({ subArgs }) => {
   const [sub] = subArgs;
-  if (sub === 'add' || sub === 'remove' || sub === 'rm' || sub === 'set-url' || sub === 'rename') {
+  if (
+    sub !== undefined &&
+    [
+      'add',
+      'prune',
+      'remove',
+      'rename',
+      'rm',
+      'set-branches',
+      'set-head',
+      'set-url',
+      'update',
+    ].includes(sub)
+  ) {
     return ask(
       'git-remote-mutate',
       `\`git remote ${sub}\` changes which remote you're pushing to. Confirm — accidentally pointing at the wrong remote is high blast-radius.`,
     );
   }
   return allow('bash-git');
+};
+
+const handleCheckoutIndex: Handler = ({ subArgs }) => {
+  if (has(subArgs, '-f', '--force')) {
+    return deny(
+      'git-checkout-index-force',
+      '`git checkout-index --force` can overwrite working-tree files. Refuse.',
+    );
+  }
+  return ask(
+    'git-checkout-index',
+    '`git checkout-index` writes files from the index into the working tree. Confirm the target and intent.',
+  );
 };
 
 const handleSubmoduleOrWorktree: Handler = ({ subcommand, subArgs }) => {
@@ -484,6 +537,8 @@ const HANDLERS: ReadonlyMap<string, Handler> = new Map<string, Handler>([
   ['remote', handleRemote],
   ['submodule', handleSubmoduleOrWorktree],
   ['worktree', handleSubmoduleOrWorktree],
+  ['checkout-index', handleCheckoutIndex],
+  ['write-tree', () => allow('bash-git')],
   [
     'init',
     ({ subcommand }) =>
@@ -502,47 +557,12 @@ const HANDLERS: ReadonlyMap<string, Handler> = new Map<string, Handler>([
   ],
 ]);
 
-const evalGit = (
-  inv: GitInvocation,
-  config: GitConfig,
-  heredocBodies: ReadonlyMap<string, string>,
-): Decision | null => {
+const evalGit = (inv: GitInvocation, config: GitConfig): Decision | null => {
   const { subcommand, subArgs } = inv;
   const flags = flagsOf(subArgs);
   const positional = positionalOf(subArgs);
 
   // ── read-only / inspection ───────────────────────────────────────────
-  const READ_ONLY: ReadonlySet<string> = new Set([
-    'status',
-    'diff',
-    'log',
-    'show',
-    'blame',
-    'rev-parse',
-    'rev-list',
-    'ls-files',
-    'ls-tree',
-    'cat-file',
-    'reflog',
-    'describe',
-    'shortlog',
-    'whatchanged',
-    'archive',
-    'bundle',
-    'fsck',
-    'fetch',
-    'ls-remote',
-    'help',
-    'version',
-    'grep',
-    'name-rev',
-    'merge-base',
-    'symbolic-ref',
-    'check-ignore',
-    'count-objects',
-    'verify-commit',
-    'verify-tag',
-  ]);
   if (READ_ONLY.has(subcommand)) {
     if (subcommand === 'reflog' && (subArgs[0] === 'expire' || has(subArgs, '--expire'))) {
       return deny(
@@ -561,7 +581,7 @@ const evalGit = (
 
   const handler = HANDLERS.get(subcommand);
   if (handler !== undefined) {
-    return handler({ subcommand, subArgs, flags, positional, config, heredocBodies });
+    return handler({ subcommand, subArgs, flags, positional, config });
   }
   return warn(
     'git-unknown-subcommand',
@@ -569,19 +589,43 @@ const evalGit = (
   );
 };
 
-const bashGit = (segments: readonly Segment[], cmd: string, config: GitConfig): Decision => {
-  if (hasBypass(cmd)) {
-    return allow('bash-git');
+const isReadOnlyInvocation = (invocation: GitInvocation): boolean => {
+  if (READ_ONLY.has(invocation.subcommand)) {
+    return true;
   }
-  const heredocBodies = collectHeredocBodies(cmd);
-  for (const seg of segments) {
+  if (invocation.subcommand !== 'remote') {
+    return false;
+  }
+  const operation = invocation.subArgs.find((argument) => !argument.startsWith('-'));
+  return operation === undefined || operation === 'get-url' || operation === 'show';
+};
+
+const bashGit = (program: ShellProgram, config: GitConfig): Decision => {
+  for (const seg of program.invocations) {
     const inv = parseGit(seg);
-    if (inv === null) {
-      continue;
-    }
-    const d = evalGit(inv, config, heredocBodies);
-    if (d !== null && d.kind !== 'allow') {
-      return d;
+    if (inv !== null) {
+      const subcommandWord = seg.words[inv.subcommandIndex];
+      if (subcommandWord?.kind === 'dynamic') {
+        return deny(
+          'git-dynamic-subcommand',
+          'Tripwire cannot classify a Git subcommand that is computed at runtime.',
+        );
+      }
+      if (
+        (!isReadOnlyInvocation(inv) ||
+          inv.subcommand === 'reflog' ||
+          inv.subcommand === 'symbolic-ref') &&
+        seg.words.slice(1).some((word) => word.kind === 'dynamic')
+      ) {
+        return deny(
+          'git-dynamic-mutation',
+          `Tripwire cannot prove that computed arguments to \`git ${inv.subcommand}\` preserve Git safety policy.`,
+        );
+      }
+      const decision = evalGit(inv, config);
+      if (decision !== null && decision.kind !== 'allow') {
+        return decision;
+      }
     }
   }
   return allow('bash-git');

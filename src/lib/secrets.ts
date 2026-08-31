@@ -108,7 +108,7 @@ const summarizeHits = (
 };
 
 const escapeRegExp = (value: string): string =>
-  value.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+  value.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
 
 // Replace every found secret in the original input with a tagged redaction.
 const redactWith = (input: string, findings: readonly BetterleaksFinding[]): string => {
@@ -117,10 +117,9 @@ const redactWith = (input: string, findings: readonly BetterleaksFinding[]): str
   // Longer ones do not fire first and break the longer match.
   const sorted = [...findings].toSorted((a, b) => b.Secret.length - a.Secret.length);
   for (const finding of sorted) {
-    if (finding.Secret === '') {
-      continue;
+    if (finding.Secret !== '') {
+      output = output.replaceAll(finding.Secret, `[REDACTED:${finding.RuleID}]`);
     }
-    output = output.replaceAll(finding.Secret, `[REDACTED:${finding.RuleID}]`);
   }
   return output;
 };

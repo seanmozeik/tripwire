@@ -26,6 +26,6 @@ if (isHook) {
 } else if (cliArguments.length === 1 && cliArguments[0] === '--version') {
   process.stdout.write(`${pkg.version}\n`);
 } else {
-  const { runCli } = await import('./cli');
+  const { runCli } = await import('./cli/index');
   await runCli();
 }

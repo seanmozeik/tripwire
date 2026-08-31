@@ -10,35 +10,35 @@ import type { EditInput, WriteInput } from '../lib/event';
 // So the agent treats real-product uses as no-action and treats actual
 // Stub work as a prompt to finish the job before returning to the user.
 const STUB_RE: readonly RegExp[] = [
-  /\bTODO\s*:/i,
-  /\bFIXME\s*:/i,
-  /\bXXX\s*:/i,
-  /\bHACK\s*:/i,
-  /\bfor now\b/i,
-  /\bnot implemented\b/i,
-  /\bNotImplementedError\b/,
-  /\btemp fix\b/i,
-  /\bfallback\b/i,
-  /\bplaceholder\b/i,
-  /\bbackwards?[ -]?compat(?<ibility>ibility)?\b/i,
-  /\bfor later\b/i,
-  /\blater on\b/i,
-  /\bget back to\b/i,
-  /\bI'?ll fix\b/i,
-  /\bto be implemented\b/i,
-  /\bnot yet (?<state>implemented|done)\b/i,
-  /\bstubbed\b/i,
+  /\bTODO\s*:/iu,
+  /\bFIXME\s*:/iu,
+  /\bXXX\s*:/iu,
+  /\bHACK\s*:/iu,
+  /\bfor now\b/iu,
+  /\bnot implemented\b/iu,
+  /\bNotImplementedError\b/u,
+  /\btemp fix\b/iu,
+  /\bfallback\b/iu,
+  /\bplaceholder\b/iu,
+  /\bbackwards?[ -]?compat(?<ibility>ibility)?\b/iu,
+  /\bfor later\b/iu,
+  /\blater on\b/iu,
+  /\bget back to\b/iu,
+  /\bI'?ll fix\b/iu,
+  /\bto be implemented\b/iu,
+  /\bnot yet (?<state>implemented|done)\b/iu,
+  /\bstubbed\b/iu,
 ];
 
 const CODE_EXT_RE =
-  /\.(?<ext>ts|tsx|js|jsx|mjs|cjs|py|rs|go|rb|java|kt|swift|c|cc|cpp|h|hpp|cs|php|sh|zsh|bash|lua|ex|exs|clj|scala|dart)$/i;
+  /\.(?<ext>ts|tsx|js|jsx|mjs|cjs|py|rs|go|rb|java|kt|swift|c|cc|cpp|h|hpp|cs|php|sh|zsh|bash|lua|ex|exs|clj|scala|dart)$/iu;
 
 const TEST_PATH_RE =
-  /(?<prefix>^|\/)(?<dir>__tests__|tests?|spec|fixtures?|mocks?|__mocks__|stories)(?<suffix>\/|$)|\.(?<ext>test|spec|fixture|mock|stories)\.[^/]+$/i;
+  /(?<prefix>^|\/)(?<dir>__tests__|tests?|spec|fixtures?|mocks?|__mocks__|stories)(?<suffix>\/|$)|\.(?<ext>test|spec|fixture|mock|stories)\.[^/]+$/iu;
 
 // Comment-syntax-agnostic. Works in `//`, `#`, `--`, `/* */`, `<!-- -->`,
 // `;`, `%`, etc.
-const BYPASS_RE = /tripwire-allow:[ \t]*\S/;
+const BYPASS_RE = /tripwire-allow:[ \t]*\S/u;
 
 const matches = (line: string): boolean => {
   if (BYPASS_RE.test(line)) {

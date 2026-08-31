@@ -24,16 +24,7 @@
     "noPropertyAccessFromIndexSignature": true,
     "exactOptionalPropertyTypes": true,
 
-    "plugins": [
-      {
-        "name": "@effect/language-service",
-        "diagnosticSeverity": {
-          "catchToIgnore": "off",
-          "preferSchemaOverJson": "off",
-          "syncToSucceed": "off"
-        }
-      }
-    ]
+    "plugins": [{ "name": "@effect/language-service" }]
   },
   "include": ["**/*.ts"],
   "exclude": ["node_modules", ".venv", "dist"]

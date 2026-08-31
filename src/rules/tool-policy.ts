@@ -1,4 +1,4 @@
-import { type Segment, hasBypass } from '../lib/bash';
+import type { ShellInvocation, ShellProgram } from '../lib/bash';
 import type { ToolPolicy } from '../lib/config';
 import { type Decision, allow, deny, warn } from '../lib/decision';
 
@@ -7,7 +7,7 @@ const hasShortFlag = (flags: readonly string[], expected: string): boolean =>
     (flag) => flag.startsWith('-') && !flag.startsWith('--') && flag.slice(1).includes(expected),
   );
 
-const matches = (segment: Segment, policy: ToolPolicy): boolean => {
+const matches = (segment: ShellInvocation, policy: ToolPolicy): boolean => {
   if (!policy.executables.includes(segment.head)) {
     return false;
   }
@@ -31,15 +31,8 @@ const matches = (segment: Segment, policy: ToolPolicy): boolean => {
   );
 };
 
-const toolPolicy = (
-  segments: readonly Segment[],
-  command: string,
-  policies: readonly ToolPolicy[],
-): Decision => {
-  if (hasBypass(command)) {
-    return allow('tool-policy');
-  }
-  for (const segment of segments) {
+const toolPolicy = (program: ShellProgram, policies: readonly ToolPolicy[]): Decision => {
+  for (const segment of program.invocations) {
     for (const policy of policies) {
       if (matches(segment, policy)) {
         return policy.action === 'deny'

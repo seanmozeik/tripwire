@@ -470,7 +470,7 @@ const enableCodexHooks = (raw: string): string => {
   }
 
   const newline = raw.includes('\r\n') ? '\r\n' : '\n';
-  const featuresHeader = /^[\t ]*\[features\][\t ]*(?:#.*)?(?:\r?\n|$)/m.exec(raw);
+  const featuresHeader = /^[\t ]*\[features\][\t ]*(?:#.*)?(?:\r?\n|$)/mu.exec(raw);
   let next: string;
   if (featuresHeader === null) {
     const separator = raw.length === 0 || raw.endsWith('\n') ? '' : newline;
@@ -478,13 +478,13 @@ const enableCodexHooks = (raw: string): string => {
     next = `${raw}${separator}[features]${newline}hooks = true${finalNewline}`;
   } else {
     const sectionStart = featuresHeader.index + featuresHeader[0].length;
-    const nextHeaderPattern = /^[\t ]*\[/gm;
+    const nextHeaderPattern = /^[\t ]*\[/gmu;
     nextHeaderPattern.lastIndex = sectionStart;
     const nextHeader = nextHeaderPattern.exec(raw);
     const sectionEnd = nextHeader?.index ?? raw.length;
     const section = raw.slice(sectionStart, sectionEnd);
     const assignment =
-      /^(?<prefix>[\t ]*hooks[\t ]*=[\t ]*)(?<value>[^#\r\n]*?)(?<suffix>[\t ]*(?:#.*)?)$/m.exec(
+      /^(?<prefix>[\t ]*hooks[\t ]*=[\t ]*)(?<value>[^#\r\n]*?)(?<suffix>[\t ]*(?:#.*)?)$/mu.exec(
         section,
       );
 

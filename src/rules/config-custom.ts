@@ -1,7 +1,7 @@
 // Config-based custom blocking/allowing rules.
 // Uses shell parsing utilities to match command patterns from config.
 
-import { hasBypass, parseCommand, type Segment } from '../lib/bash';
+import { analyzeBash, type ShellInvocation, type ShellProgram } from '../lib/bash';
 import type { BlockRule } from '../lib/config';
 import { type Decision, allow, deny, ask } from '../lib/decision';
 
@@ -32,28 +32,24 @@ const flagPresent = (tokens: readonly string[], flag: string): boolean =>
 const flagValue = (tokens: readonly string[], flag: string): string | null => {
   for (let i = 0; i < tokens.length; i += 1) {
     const t = tokens[i];
-    if (t === undefined) {
-      continue;
-    }
-    if (t === flag) {
-      return tokens[i + 1] ?? '';
-    }
-    if (t.startsWith(`${flag}=`)) {
-      return t.slice(flag.length + 1);
+    if (t !== undefined) {
+      if (t === flag) {
+        return tokens[i + 1] ?? '';
+      }
+      if (t.startsWith(`${flag}=`)) {
+        return t.slice(flag.length + 1);
+      }
     }
   }
   return null;
 };
 
-const subcommandTokens = (seg: Segment): string[] => {
+const subcommandTokens = (seg: ShellInvocation): string[] => {
   const out: string[] = [];
   const tokens = seg.tokens.slice(1);
   for (let i = 0; i < tokens.length; i += 1) {
     const t = tokens[i];
-    if (t === undefined) {
-      continue;
-    }
-    if (t.startsWith('-')) {
+    if (t?.startsWith('-') === true) {
       // Without per-CLI flag metadata, we conservatively treat
       // `--flag value` / `-f value` as one option pair and `--flag=value`
       // As one token. This keeps global selectors like `--account X`
@@ -63,9 +59,9 @@ const subcommandTokens = (seg: Segment): string[] => {
       if (!t.includes('=') && nextToken !== undefined && !nextToken.startsWith('-')) {
         i += 1;
       }
-      continue;
+    } else if (t !== undefined) {
+      out.push(t);
     }
-    out.push(t);
   }
   return out;
 };
@@ -73,14 +69,14 @@ const subcommandTokens = (seg: Segment): string[] => {
 // Match a pattern against parsed segments using shell parsing.
 // This is more powerful than simple regex because it uses the same
 // Parsing logic as the rest of tripwire.
-const matchPattern = (segments: readonly Segment[], rule: BlockRule): boolean => {
+const matchPattern = (program: ShellProgram, rule: BlockRule): boolean => {
   const { pattern } = rule;
-  const patternSegs = parseCommand(pattern);
-  if (patternSegs.length === 0) {
+  const patternProgram = analyzeBash(pattern);
+  if (patternProgram.diagnostics.length > 0 || patternProgram.invocations.length === 0) {
     return false;
   }
 
-  const [patternSegment] = patternSegs;
+  const [patternSegment] = patternProgram.invocations;
   if (patternSegment === undefined) {
     return false;
   }
@@ -89,68 +85,42 @@ const matchPattern = (segments: readonly Segment[], rule: BlockRule): boolean =>
     return false;
   }
 
-  for (const seg of segments) {
-    if (basename(seg.head) !== basename(patternHead)) {
-      continue;
+  return program.invocations.some((segment) => {
+    if (basename(segment.head) !== basename(patternHead)) {
+      return false;
     }
-
-    if (patternSubcommands.length > 0) {
-      const actualSubcommands = subcommandTokens(seg);
-      const pathMatches = patternSubcommands.every(
-        (p, i) =>
-          actualSubcommands[i] !== undefined && canonical(actualSubcommands[i]) === canonical(p),
-      );
-      if (!pathMatches) {
-        continue;
-      }
-    }
-
-    if ((rule.requiresFlags ?? []).some((flag) => !flagPresent(seg.tokens, flag))) {
-      continue;
-    }
-
-    const valueChecks = rule.forbidsFlagValues ?? [];
-    const valuesMatch = valueChecks.every((check) => {
-      const value = flagValue(seg.tokens, check.flag);
+    const actualSubcommands = subcommandTokens(segment);
+    const subcommandsMatch = patternSubcommands.every(
+      (part, index) =>
+        actualSubcommands[index] !== undefined &&
+        canonical(actualSubcommands[index]) === canonical(part),
+    );
+    const requiredFlagsMatch = (rule.requiresFlags ?? []).every((flag) =>
+      flagPresent(segment.tokens, flag),
+    );
+    const forbiddenValuesMatch = (rule.forbidsFlagValues ?? []).every((check) => {
+      const value = flagValue(segment.tokens, check.flag);
       return value !== null && check.values.includes(value);
     });
-    if (!valuesMatch) {
-      continue;
-    }
-
-    if (
-      patternSubcommands.length === 0 &&
-      rule.requiresFlags === undefined &&
-      rule.forbidsFlagValues === undefined
-    ) {
-      return true;
-    }
-
-    return true;
-  }
-  return false;
+    return subcommandsMatch && requiredFlagsMatch && forbiddenValuesMatch;
+  });
 };
 
 export const configCustom = (
-  segments: readonly Segment[],
-  cmd: string,
+  program: ShellProgram,
   blockedCommands: readonly BlockRule[],
   allowedCommands: readonly BlockRule[],
 ): Decision => {
-  if (hasBypass(cmd)) {
-    return allow('config-custom');
-  }
-
   // Check allowed first (overrides blocks)
   for (const allowRule of allowedCommands) {
-    if (matchPattern(segments, allowRule)) {
+    if (matchPattern(program, allowRule)) {
       return allow('config-custom');
     }
   }
 
   // Then check blocked
   for (const blockRule of blockedCommands) {
-    if (matchPattern(segments, blockRule)) {
+    if (matchPattern(program, blockRule)) {
       const message = blockRule.message.includes('tripwire-allow')
         ? blockRule.message
         : `${blockRule.message} ${BYPASS_HELP}`;

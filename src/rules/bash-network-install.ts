@@ -1,4 +1,4 @@
-import { type Segment, hasBypass } from '../lib/bash';
+import type { ShellProgram } from '../lib/bash';
 import { type Decision, allow, ask, deny } from '../lib/decision';
 
 // Block `curl|wget ... | bash|sh|zsh` (the canonical supply-chain footgun).
@@ -7,17 +7,19 @@ import { type Decision, allow, ask, deny } from '../lib/decision';
 const FETCH_HEADS: ReadonlySet<string> = new Set(['curl', 'wget', 'wget2', 'aria2c', 'xh']);
 const SHELL_HEADS: ReadonlySet<string> = new Set(['bash', 'sh', 'zsh', 'fish']);
 
-const isFetchPipedToShell = (segments: readonly Segment[]): boolean => {
-  // Shell-quote splits a pipeline `curl X | bash` into two segments. We
-  // Detect the pattern by looking for adjacent fetch-then-shell heads.
-  for (let i = 0; i < segments.length - 1; i += 1) {
-    const a = segments[i];
-    const b = segments[i + 1];
-    if (a === undefined || b === undefined) {
-      continue;
-    }
-    if (FETCH_HEADS.has(a.head) && SHELL_HEADS.has(b.head)) {
-      return true;
+const isFetchPipedToShell = (program: ShellProgram): boolean => {
+  for (const fetch of program.invocations) {
+    const { pipeline } = fetch;
+    if (FETCH_HEADS.has(fetch.head) && pipeline !== undefined) {
+      const shell = program.invocations.find(
+        (candidate) =>
+          candidate.pipeline?.id === pipeline.id &&
+          candidate.pipeline.index === pipeline.index + 1 &&
+          SHELL_HEADS.has(candidate.head),
+      );
+      if (shell !== undefined) {
+        return true;
+      }
     }
   }
   return false;
@@ -52,17 +54,14 @@ const INSTALL_SPECS: readonly InstallSpec[] = [
   },
 ];
 
-const bashNetworkInstall = (segments: readonly Segment[], cmd: string): Decision => {
-  if (hasBypass(cmd)) {
-    return allow('bash-network-install');
-  }
-  if (isFetchPipedToShell(segments)) {
+const bashNetworkInstall = (program: ShellProgram): Decision => {
+  if (isFetchPipedToShell(program)) {
     return deny(
       'curl-pipe-shell',
       "Piping `curl` / `wget` directly into a shell runs whatever the remote URL serves. Refuse — download to a file, inspect, then run if appropriate. If you genuinely need this, append ` # tripwire-allow: <reason>` (and explain to the user what you're running).",
     );
   }
-  for (const seg of segments) {
+  for (const seg of program.invocations) {
     for (const s of INSTALL_SPECS) {
       if (seg.head === s.head && seg.tokens[1] === s.subcommand) {
         return ask(s.rule, s.message);

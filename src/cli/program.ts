@@ -16,7 +16,7 @@ import { BunServices } from '@effect/platform-bun';
 import { Effect, Option } from 'effect';
 import { Argument, Command, Flag } from 'effect/unstable/cli';
 
-import pkg from '../package.json' with { type: 'json' };
+import pkg from '../../package.json' with { type: 'json' };
 import {
   installAll,
   installClaude,
@@ -24,16 +24,17 @@ import {
   installCursor,
   installOhMyPi,
   installPi,
-} from './lib/install';
+} from '../lib/install';
+import { runCheckedScript } from './run-script';
 
 const hookCommand = (): string[] => {
   const isBunCli = /(?:^|[/\\])bun(?:\.exe)?$/iu.test(process.execPath);
   if (isBunCli) {
     const modulePath = import.meta.filename;
     if (pathModule.basename(modulePath) === 'tripwire.js') {
-      return ['tripwire-hook'];
+      return [process.execPath, modulePath, '--tripwire-hook'];
     }
-    const entryPath = pathModule.join(import.meta.dirname, 'main.ts');
+    const entryPath = pathModule.join(import.meta.dirname, '..', 'main.ts');
     return [process.execPath, entryPath, '--tripwire-hook'];
   }
   return [process.execPath, '--tripwire-hook'];
@@ -133,11 +134,11 @@ const runTest = (config: {
     });
     if (result.exitCode !== 0) {
       const errorOutput = new TextDecoder().decode(result.stderr);
-      console.error(`error: ${errorOutput}`);
+      process.stderr.write(`error: ${errorOutput}\n`);
       process.exit(1);
     }
     const output = new TextDecoder().decode(result.stdout);
-    console.log(prettyJson(output));
+    process.stdout.write(`${prettyJson(output)}\n`);
   });
 
 const testCommand = Command.make(
@@ -187,8 +188,8 @@ const testCommand = Command.make(
 const runInstall = (target: string): Effect.Effect<void> =>
   Effect.gen(function* runInstallEffect() {
     if (!['claude', 'codex', 'cursor', 'pi', 'oh-my-pi', 'omp', 'all'].includes(target)) {
-      console.error(`error: unknown target "${target}"`);
-      console.error('Valid targets: claude, codex, cursor, pi, oh-my-pi, all');
+      process.stderr.write(`error: unknown target "${target}"\n`);
+      process.stderr.write('Valid targets: claude, codex, cursor, pi, oh-my-pi, all\n');
       process.exit(1);
     }
 
@@ -240,9 +241,9 @@ const runInstall = (target: string): Effect.Effect<void> =>
     for (const { target: t, result: r } of results) {
       if (r.success) {
         const symbol = r.message.startsWith('Already configured') ? '⊙' : '✓';
-        console.log(`${symbol} [${t}] ${r.message}`);
+        process.stdout.write(`${symbol} [${t}] ${r.message}\n`);
       } else {
-        console.error(`✗ [${t}] ${r.message}`);
+        process.stderr.write(`✗ [${t}] ${r.message}\n`);
         hasFailure = true;
       }
     }
@@ -262,9 +263,26 @@ const installCommand = Command.make(
   ({ target }) => runInstall(target),
 ).pipe(Command.withDescription('Install tripwire hooks for AI agents'));
 
+const checkedScriptPath = Argument.string('script').pipe(
+  Argument.withDescription('Bash script file to inspect and execute from the checked bytes'),
+);
+
+const checkedScriptArguments = Argument.string('argument').pipe(
+  Argument.variadic(),
+  Argument.withDescription('Arguments passed to the script after --'),
+);
+
+const runScriptCommand = Command.make(
+  'run-script',
+  { script: checkedScriptPath, trailingArguments: checkedScriptArguments },
+  ({ script, trailingArguments }) => runCheckedScript(script, trailingArguments),
+).pipe(
+  Command.withDescription('Inspect one script snapshot, then execute those exact bytes with Bash'),
+);
+
 const app = Command.make('tripwire').pipe(
   Command.withDescription('Opinionated hooks dispatcher for AI coding agents'),
-  Command.withSubcommands([testCommand, installCommand]),
+  Command.withSubcommands([testCommand, installCommand, runScriptCommand]),
 );
 
 const program = Command.run(app, { version: pkg.version });
@@ -274,14 +292,13 @@ const runCli = async (): Promise<void> => {
     await Effect.runPromise(program.pipe(Effect.provide(BunServices.layer)));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(message);
+    process.stderr.write(`${message}\n`);
     process.exitCode = 1;
   }
 };
 
 if (import.meta.main) {
-  // oxlint-disable-next-line no-void -- runCli reports failures through process.exitCode.
-  void runCli();
+  await runCli();
 }
 
-export { runCli };
+export { runCli as runCliProgram };

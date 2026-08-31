@@ -1,5 +1,7 @@
-import { type Segment, UNSUPPORTED_SHELL_HEAD, hasBypass } from '../lib/bash';
+import type { ShellInvocation, ShellProgram } from '../lib/bash';
 import { type Decision, allow, ask, deny, merge } from '../lib/decision';
+import { applyRuleAction, type RuleActions } from '../lib/rule-actions';
+import { applyShellBypass } from './bash-bypass';
 
 interface Spec {
   readonly rule: string;
@@ -7,24 +9,121 @@ interface Spec {
   readonly message: string;
   // Match function evaluated against the parsed segment. Returns true when
   // The rule fires.
-  readonly match: (seg: Segment, raw: string) => boolean;
+  readonly match: (seg: ShellInvocation, raw: string) => boolean;
 }
 
-const argsJoined = (seg: Segment): string => seg.tokens.slice(1).join(' ');
+const argsJoined = (seg: ShellInvocation): string => seg.tokens.slice(1).join(' ');
 
-const flagPresent = (seg: Segment, ...flags: readonly string[]): boolean => {
+const flagPresent = (seg: ShellInvocation, ...flags: readonly string[]): boolean => {
   const segmentFlags = new Set(seg.flags);
   return flags.some((flag) => segmentFlags.has(flag));
 };
 
+const STATIC_SUBCOMMAND_DEPTH: ReadonlyMap<string, number> = new Map([
+  ['launchctl', 1],
+  ['defaults', 1],
+  ['diskutil', 1],
+  ['tmutil', 1],
+  ['security', 1],
+  ['brew', 1],
+  ['mas', 1],
+  ['kmutil', 1],
+  ['gh', 2],
+]);
+
+const STATIC_POLICY_ARGUMENTS: ReadonlySet<string> = new Set([
+  'dd',
+  'kill',
+  'chmod',
+  'softwareupdate',
+  'pmset',
+  'dscl',
+  'xattr',
+  'spctl',
+  'systemsetup',
+  'scutil',
+  'flyctl',
+  'gcloud',
+]);
+
+const hasComputedPolicyDiscriminator = (seg: ShellInvocation): boolean => {
+  if (seg.head === 'dd') {
+    return seg.words
+      .slice(1)
+      .some((word) => word.kind === 'dynamic' && !word.source.startsWith('if='));
+  }
+  if (seg.head === 'rsync') {
+    const separator = seg.words.findIndex((word) => word.value === '--');
+    const optionEnd = separator === -1 ? seg.words.length : separator;
+    return seg.words.slice(1, optionEnd).some((word) => word.kind === 'dynamic');
+  }
+  if (seg.head === 'gh' && seg.tokens[1] === 'api') {
+    for (let index = 2; index < seg.words.length; index += 1) {
+      const previous = seg.words[index - 1]?.value;
+      const word = seg.words[index];
+      if (
+        word?.kind === 'dynamic' &&
+        (previous === '--method' ||
+          previous === '-X' ||
+          word.source.startsWith('-X') ||
+          word.source.startsWith('--method='))
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+  const depth = STATIC_SUBCOMMAND_DEPTH.get(seg.head);
+  if (depth !== undefined) {
+    return seg.words.slice(1, depth + 1).some((word) => word.kind === 'dynamic');
+  }
+  return (
+    STATIC_POLICY_ARGUMENTS.has(seg.head) &&
+    seg.words.slice(1).some((word) => word.kind === 'dynamic')
+  );
+};
+
+const ghApiMethod = (seg: ShellInvocation): string | null => {
+  if (seg.head !== 'gh' || seg.tokens[1] !== 'api') {
+    return null;
+  }
+  for (let index = 2; index < seg.tokens.length; index += 1) {
+    const token = seg.tokens[index];
+    if (token === '--method' || token === '-X') {
+      return seg.tokens[index + 1]?.toUpperCase() ?? '';
+    }
+    if (token?.startsWith('--method=') === true) {
+      return token.slice('--method='.length).toUpperCase();
+    }
+    if (token?.startsWith('-X') === true && token.length > 2) {
+      return token.slice(2).toUpperCase();
+    }
+  }
+  return null;
+};
+
+const ghApiMutates = (seg: ShellInvocation): boolean => {
+  if (seg.head !== 'gh' || seg.tokens[1] !== 'api') {
+    return false;
+  }
+  const method = ghApiMethod(seg);
+  if (method !== null && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+    return true;
+  }
+  return seg.flags.some(
+    (flag) =>
+      flag === '--input' ||
+      flag.startsWith('--input=') ||
+      flag === '-f' ||
+      flag === '-F' ||
+      flag === '--field' ||
+      flag.startsWith('--field=') ||
+      flag === '--raw-field' ||
+      flag.startsWith('--raw-field='),
+  );
+};
+
 const SPECS: readonly Spec[] = [
-  {
-    rule: 'unsupported-shell-structure',
-    action: 'deny',
-    message:
-      'Tripwire cannot inspect every executable branch in this shell structure. Rewrite it as simple commands joined with `;`, `&&`, or `||` so each command can be checked.',
-    match: (seg) => seg.head === UNSUPPORTED_SHELL_HEAD,
-  },
   // ── catastrophic deletions ────────────────────────────────────────────
   {
     rule: 'rm-rf-root',
@@ -41,13 +140,13 @@ const SPECS: readonly Spec[] = [
     match: (seg) =>
       seg.head === 'rm' &&
       flagPresent(seg, '-rf', '-fr', '-Rf', '-fR') &&
-      seg.tokens.some((t) => /^(?<home>~|\$HOME|\$\{HOME\})$/.test(t)),
+      seg.tokens.some((t) => /^(?<home>~|\$HOME|\$\{HOME\})$/u.test(t)),
   },
   {
     rule: 'fork-bomb',
     action: 'deny',
     message: 'Fork bomb pattern detected. Refuse.',
-    match: (_seg, raw) => /:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;/.test(raw),
+    match: (_seg, raw) => /:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;/u.test(raw),
   },
   {
     rule: 'source-script',
@@ -61,13 +160,13 @@ const SPECS: readonly Spec[] = [
     action: 'deny',
     message: 'dd writing to a raw block device wipes the disk. Refuse.',
     match: (seg) =>
-      seg.head === 'dd' && /\bof=\/dev\/(?<type>disk|sd|nvme|rdisk)/i.test(argsJoined(seg)),
+      seg.head === 'dd' && /\bof=\/dev\/(?<type>disk|sd|nvme|rdisk)/iu.test(argsJoined(seg)),
   },
   {
     rule: 'mkfs',
     action: 'deny',
     message: 'mkfs formats a filesystem. Refuse.',
-    match: (seg) => /^mkfs(?<ext>\.[a-z0-9]+)?$/i.test(seg.head),
+    match: (seg) => /^mkfs(?<ext>\.[a-z0-9]+)?$/iu.test(seg.head),
   },
   {
     rule: 'kill-all',
@@ -98,7 +197,7 @@ const SPECS: readonly Spec[] = [
     rule: 'no-gpg-sign',
     action: 'deny',
     message: 'Bypassing GPG signing is off-limits unless explicitly requested.',
-    match: (_seg, raw) => /--no-gpg-sign\b|-c\s+commit\.gpgsign=false/.test(raw),
+    match: (_seg, raw) => /--no-gpg-sign\b|-c\s+commit\.gpgsign=false/u.test(raw),
   },
 
   // ── sudo: ask ─────────────────────────────────────────────────────────
@@ -332,6 +431,13 @@ const SPECS: readonly Spec[] = [
       ['delete', 'destroy', 'remove'].includes(seg.tokens[2]),
   },
   {
+    rule: 'gh-api-mutation',
+    action: 'deny',
+    message:
+      '`gh api` with a mutating HTTP method can change shared GitHub state and bypass Git workflow protections. Refuse the inline mutation.',
+    match: ghApiMutates,
+  },
+  {
     rule: 'flyctl-destroy',
     action: 'deny',
     message: 'flyctl apps destroy / volumes destroy nukes deployed infra. Refuse.',
@@ -346,59 +452,37 @@ const SPECS: readonly Spec[] = [
   },
 ];
 
-// Rules in this set ignore `# tripwire-allow` on the command line. They
-// Are catastrophic / irreversible operations and hard policy rules that
-// Have no legitimate prompt-line override. If the user genuinely needs
-// One of these to run, they should do it in a terminal themselves.
-const UNBYPASSABLE_RULES: ReadonlySet<string> = new Set([
-  'unsupported-shell-structure',
-  // Catastrophic / irreversible
-  'rm-rf-root',
-  'rm-rf-home',
-  'fork-bomb',
-  'dd-raw-device',
-  'mkfs',
-  'kill-all',
-  'diskutil-destructive',
-  'tmutil-destructive',
-  // System control
-  'shutdown',
-  'csrutil',
-  'nvram',
-  'kextload',
-  'spctl-disable',
-  'xattr-quarantine-bypass',
-  'topgrade',
-  'softwareupdate-install',
-  'systemsetup',
-  'scutil-set',
-  'security-keychain-destructive',
-  // Hard policy rules
-  'no-verify',
-  'no-gpg-sign',
-]);
-
-const bashDeny = (segments: readonly Segment[], cmd: string): Decision => {
-  const bypass = hasBypass(cmd);
+const bashDeny = (program: ShellProgram, ruleActions: RuleActions = {}): Decision => {
   // Collect the first matching spec per segment, then return the most
   // Restrictive across all of them. Returning the first match outright lets
   // A weaker `ask` on an early segment (e.g. the outer `sudo`) shadow a
   // `deny` on a later unwrapped segment (e.g. the interior `shutdown`).
   const hits: Decision[] = [];
-  for (const seg of segments) {
-    for (const s of SPECS) {
-      if (!s.match(seg, cmd)) {
-        continue;
+  if (program.diagnostics.length > 0) {
+    const reasons = [...new Set(program.diagnostics.map((diagnostic) => diagnostic.message))];
+    const decision = deny(
+      'unsupported-shell-structure',
+      `Tripwire cannot inspect this shell program safely: ${reasons.join(' ')}`,
+    );
+    hits.push(applyShellBypass(program, decision));
+  }
+  for (const seg of program.invocations) {
+    if (hasComputedPolicyDiscriminator(seg)) {
+      const decision = deny(
+        'unsupported-shell-structure',
+        `Tripwire cannot classify computed policy arguments to \`${seg.head}\` safely.`,
+      );
+      hits.push(applyShellBypass(program, decision));
+    } else {
+      const spec = SPECS.find((candidate) => candidate.match(seg, program.source));
+      if (spec !== undefined) {
+        const decision =
+          spec.action === 'deny' ? deny(spec.rule, spec.message) : ask(spec.rule, spec.message);
+        hits.push(applyShellBypass(program, applyRuleAction(decision, ruleActions)));
       }
-      if (bypass && !UNBYPASSABLE_RULES.has(s.rule)) {
-        // Caller asserted in-turn approval; honor it for this rule.
-        continue;
-      }
-      hits.push(s.action === 'deny' ? deny(s.rule, s.message) : ask(s.rule, s.message));
-      break;
     }
   }
   return hits.length === 0 ? allow('bash-deny') : merge(hits);
 };
 
-export { bashDeny, UNBYPASSABLE_RULES };
+export { bashDeny };

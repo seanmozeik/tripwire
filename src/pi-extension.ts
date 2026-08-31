@@ -4,19 +4,28 @@ import { realpathSync } from 'node:fs';
 import type { Readable } from 'node:stream';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { Result, Schema } from 'effect';
+
 import { resolveTripwireCommand, type RuntimeCommand } from './lib/runtime-command';
 
-interface PiToolCallEvent {
-  readonly input: Record<string, unknown>;
-  readonly toolCallId: string;
-  readonly toolName: string;
-}
+const PiToolCallEventSchema = Schema.Struct({
+  input: Schema.Record(Schema.String, Schema.Unknown),
+  toolCallId: Schema.String,
+  toolName: Schema.String,
+});
+type PiToolCallEvent = typeof PiToolCallEventSchema.Type;
 
-type PiToolResultEvent = PiToolCallEvent & {
-  readonly content: unknown;
-  readonly details: unknown;
-  readonly isError: boolean;
-};
+const PiToolResultEventSchema = Schema.Struct({
+  input: Schema.Record(Schema.String, Schema.Unknown),
+  toolCallId: Schema.String,
+  toolName: Schema.String,
+  content: Schema.Unknown,
+  details: Schema.Unknown,
+  isError: Schema.Boolean,
+});
+type PiToolResultEvent = typeof PiToolResultEventSchema.Type;
+
+const PiEventSchema = Schema.Union([PiToolResultEventSchema, PiToolCallEventSchema]);
 
 interface PiExtensionContext {
   readonly abort: () => void;
@@ -94,16 +103,15 @@ const editStrings = (
     const oldStrings: string[] = [];
     const newStrings: string[] = [];
     for (const edit of edits) {
-      if (!isRecord(edit)) {
-        continue;
-      }
-      const oldText = stringField(edit, 'oldText') ?? stringField(edit, 'old_string');
-      const newText = stringField(edit, 'newText') ?? stringField(edit, 'new_string');
-      if (oldText !== undefined) {
-        oldStrings.push(oldText);
-      }
-      if (newText !== undefined) {
-        newStrings.push(newText);
+      if (isRecord(edit)) {
+        const oldText = stringField(edit, 'oldText') ?? stringField(edit, 'old_string');
+        const newText = stringField(edit, 'newText') ?? stringField(edit, 'new_string');
+        if (oldText !== undefined) {
+          oldStrings.push(oldText);
+        }
+        if (newText !== undefined) {
+          newStrings.push(newText);
+        }
       }
     }
     return { old_string: oldStrings.join('\n'), new_string: newStrings.join('\n') };
@@ -119,14 +127,32 @@ const editStrings = (
   };
 };
 
+const recordPatchLine = (
+  line: string,
+  paths: readonly string[],
+  byPath: Map<string, { newLines: string[]; oldLines: string[] }>,
+): void => {
+  let linesKey: 'newLines' | 'oldLines' | undefined;
+  if (line.startsWith('+')) {
+    linesKey = 'newLines';
+  } else if (line.startsWith('-')) {
+    linesKey = 'oldLines';
+  }
+  if (linesKey !== undefined) {
+    for (const path of paths) {
+      byPath.get(path)?.[linesKey].push(line.slice(1));
+    }
+  }
+};
+
 const applyPatchInputs = (patch: string): readonly Record<string, unknown>[] => {
-  const fileHeader = /^\*{3}\s+(?:Add|Update|Delete)\s+File\s*:\s*(?<path>\S.*?)\s*$/;
-  const moveHeader = /^\*{3}\s+Move\s+to\s*:\s*(?<path>\S.*?)\s*$/;
+  const fileHeader = /^\*{3}\s+(?:Add|Update|Delete)\s+File\s*:\s*(?<path>\S.*?)\s*$/u;
+  const moveHeader = /^\*{3}\s+Move\s+to\s*:\s*(?<path>\S.*?)\s*$/u;
   const byPath = new Map<string, { newLines: string[]; oldLines: string[] }>();
   let currentPaths: string[] = [];
   const beginMarker = '*** Begin Patch';
   const endMarker = '*** End Patch';
-  const lines = patch.split(/\r?\n/);
+  const lines = patch.split(/\r?\n/u);
   const beginIndex = lines.findIndex((line) => line.trim() === beginMarker);
   if (beginIndex === -1) {
     return [];
@@ -148,26 +174,13 @@ const applyPatchInputs = (patch: string): readonly Record<string, unknown>[] => 
     if (filePath !== undefined && filePath.length > 0) {
       currentPaths = [];
       addCurrentPath(filePath);
-      continue;
-    }
-    if (currentPaths.length === 0) {
-      continue;
-    }
-    const moveMatch = moveHeader.exec(line);
-    const movePath = moveMatch?.groups?.['path']?.trim();
-    if (movePath !== undefined && movePath.length > 0) {
-      addCurrentPath(movePath);
-      continue;
-    }
-    let linesKey: 'newLines' | 'oldLines' | undefined;
-    if (line.startsWith('+')) {
-      linesKey = 'newLines';
-    } else if (line.startsWith('-')) {
-      linesKey = 'oldLines';
-    }
-    if (linesKey !== undefined) {
-      for (const path of currentPaths) {
-        byPath.get(path)?.[linesKey].push(line.slice(1));
+    } else if (currentPaths.length > 0) {
+      const moveMatch = moveHeader.exec(line);
+      const movePath = moveMatch?.groups?.['path']?.trim();
+      if (movePath !== undefined && movePath.length > 0) {
+        addCurrentPath(movePath);
+      } else {
+        recordPatchLine(line, currentPaths, byPath);
       }
     }
   }
@@ -247,21 +260,32 @@ const normalizedToolResponse = (event: PiToolResultEvent): Record<string, unknow
 };
 
 const hookInputs = (
-  event: PiToolCallEvent | PiToolResultEvent,
+  event: unknown,
   hookEventName: 'PostToolUse' | 'PreToolUse',
   cwd: string,
 ): readonly Record<string, unknown>[] => {
+  const decoded = Schema.decodeUnknownResult(PiEventSchema)(event);
+  if (Result.isFailure(decoded)) {
+    throw new Error('Pi sent an invalid tool event');
+  }
+  const normalizedEvent = decoded.success;
   const base = {
     cwd,
     hook_event_name: hookEventName,
-    tool_name: event.toolName,
-    tool_use_id: event.toolCallId,
+    tool_name: normalizedEvent.toolName,
+    tool_use_id: normalizedEvent.toolCallId,
   };
-  if ('content' in event) {
-    return [{ ...base, tool_input: event.input, tool_response: normalizedToolResponse(event) }];
+  if ('content' in normalizedEvent) {
+    return [
+      {
+        ...base,
+        tool_input: normalizedEvent.input,
+        tool_response: normalizedToolResponse(normalizedEvent),
+      },
+    ];
   }
   const inputs: Record<string, unknown>[] = [];
-  for (const toolInput of normalizedToolInputs(event)) {
+  for (const toolInput of normalizedToolInputs(normalizedEvent)) {
     inputs.push({ ...base, tool_input: toolInput });
   }
   return inputs;

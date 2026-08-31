@@ -73,6 +73,6 @@ Scanner execution has its own process timeout. Missing executables, timeouts, no
 
 ## Shell parsing
 
-Tripwire uses `shell-quote` 1.10.0 for initial tokenization. It expands glob entries with `Bun.Glob`, masks literal heredoc data, inspects command substitutions, unwraps supported command wrappers, and applies a conservative compound-command layer.
+Tripwire uses `unbash` 4.0.10 as its only Bash parser. It walks the typed AST, including lazy word parts and nested parse errors, then produces one security model for all rules. The model covers control flow, loops, cases, groups, subshells, substitutions, redirects, pipelines, static scalar assignments, local functions and aliases, wrapper commands, globs, and narrow same-program `mktemp` path provenance. Unresolved executable names, unresolved nested-shell source, `eval`, unresolved definitions, and computed policy discriminators fail closed.
 
 The archive rule checks extraction mode and explicit destination flags. It does not inspect archive member paths.

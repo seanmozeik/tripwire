@@ -4,6 +4,29 @@ This file records notable project changes. The format follows [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-31
+
+### Added
+
+- Added an AST-backed Bash security model with typed values, nested invocation discovery, static scalar, local function, and alias binding, and narrow same-program temporary-path provenance.
+- Added a reduced rollout corpus with safe and adversarial cases for control flow, loops, groups, subshells, command and process substitutions, quoting, Git policy, redirects, wrappers, and temporary paths.
+- Added configurable SSH-equivalent execution carriers, bounded literal base64 shell-input inspection, fixed-list loop values, static scalar path composition, and same-program background PID capabilities.
+- Added `tripwire run-script` to inspect one script snapshot and execute those exact bytes with Bash.
+- Added typed personal action overrides for workflow-policy rules such as `no-verify`. Safety invariants are not configurable.
+
+### Changed
+
+- Replaced `shell-quote` and the separate shell scanners with `unbash` 4.0.10 as the only Bash parser.
+- Updated de-clank to 0.1.8 and moved Bash analysis into one module directory.
+
+### Fixed
+
+- Allowed inspectable compound shell programs while keeping malformed syntax, dynamic execution, dynamic shell source, and `eval` fail-closed.
+- Kept computed policy discriminators fail-closed and denied mutating `gh api` requests that could bypass Git workflow policy.
+- Allowed `git clean -dn` previews while keeping destructive clean operations denied.
+- Classified `git diff-tree`, `git write-tree`, read-only `git remote` inspection, and `git checkout-index` explicitly. Read-only `dd if=...` input remains allowed when no computed output target can be hidden.
+- Made source-dispatch tests use the current Bun executable when they run with an isolated home directory.
+
 ## [0.7.1] - 2026-08-27
 
 ### Added

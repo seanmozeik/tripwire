@@ -4,7 +4,7 @@
 // `~/.config` path, no PII) via the `path` seam, plus one end-to-end check that
 // The dispatcher emits a `deny` on a broken config.
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import * as bunTest from 'bun:test';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -14,33 +14,38 @@ import { Effect } from 'effect';
 import { decide } from '../src';
 import { loadConfig, loadConfigResult } from '../src/lib/config';
 import type { HookEvent } from '../src/lib/event';
+import { parseJsonRecord, recordField } from './support/json';
 
 let dir = '';
 let configPath = '';
 
-beforeEach(async () => {
+bunTest.beforeEach(async () => {
   dir = await mkdtemp(path.join(tmpdir(), 'tripwire-config-'));
   configPath = path.join(dir, 'config.json');
 });
 
-afterEach(async () => {
+bunTest.afterEach(async () => {
   await rm(dir, { force: true, recursive: true });
 });
 
-describe('loadConfigResult', () => {
-  test('missing file → ok with defaults (the one quiet case)', async () => {
+bunTest.describe('loadConfigResult', () => {
+  bunTest.test('missing file → ok with defaults (the one quiet case)', async () => {
     const result = await Effect.runPromise(loadConfigResult(path.join(dir, 'absent.json')));
-    expect(result.ok).toBe(true);
+    bunTest.expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.config.git.protectedBranches).toEqual([]);
-      expect(result.config.git.enforceConventionalCommits).toBe(false);
-      expect(result.config.toolPolicies).toEqual([]);
-      expect(result.config.blockedCommands).toEqual([]);
-      expect(result.config.secretScanner).toEqual({ executable: 'betterleaks', timeoutMs: 5000 });
+      bunTest.expect(result.config.git.protectedBranches).toEqual([]);
+      bunTest.expect(result.config.git.enforceConventionalCommits).toBe(false);
+      bunTest.expect(result.config.toolPolicies).toEqual([]);
+      bunTest.expect(result.config.blockedCommands).toEqual([]);
+      bunTest.expect(result.config.ruleActions).toEqual({});
+      bunTest.expect(result.config.shell.executionCarrierAliases).toEqual([]);
+      bunTest
+        .expect(result.config.secretScanner)
+        .toEqual({ executable: 'betterleaks', timeoutMs: 5000 });
     }
   });
 
-  test('valid custom config → ok, merged, custom rule preserved', async () => {
+  bunTest.test('valid custom config → ok, merged, custom rule preserved', async () => {
     await writeFile(
       configPath,
       JSON.stringify({
@@ -48,16 +53,16 @@ describe('loadConfigResult', () => {
       }),
     );
     const result = await Effect.runPromise(loadConfigResult(configPath));
-    expect(result.ok).toBe(true);
+    bunTest.expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.config.blockedCommands).toHaveLength(1);
-      expect(result.config.blockedCommands[0]?.pattern).toBe('example-danger');
+      bunTest.expect(result.config.blockedCommands).toHaveLength(1);
+      bunTest.expect(result.config.blockedCommands[0]?.pattern).toBe('example-danger');
       // Defaults still merged in for the untouched sections.
-      expect(result.config.git.enforceConventionalCommits).toBe(false);
+      bunTest.expect(result.config.git.enforceConventionalCommits).toBe(false);
     }
   });
 
-  test('loads typed tool policies and deep-merges partial Git policy', async () => {
+  bunTest.test('loads typed tool policies and deep-merges partial Git policy', async () => {
     await writeFile(
       configPath,
       JSON.stringify({
@@ -75,46 +80,99 @@ describe('loadConfigResult', () => {
     );
 
     const result = await Effect.runPromise(loadConfigResult(configPath));
-    expect(result.ok).toBe(true);
+    bunTest.expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.config.git).toEqual({
-        protectedBranches: [],
-        enforceConventionalCommits: true,
-      });
-      expect(result.config.toolPolicies[0]?.rule).toBe('prefer-example');
+      bunTest
+        .expect(result.config.git)
+        .toEqual({ protectedBranches: [], enforceConventionalCommits: true });
+      bunTest.expect(result.config.toolPolicies[0]?.rule).toBe('prefer-example');
     }
   });
 
-  test('loads typed secret scanner configuration', async () => {
+  bunTest.test('loads typed secret scanner configuration', async () => {
     await writeFile(
       configPath,
       JSON.stringify({ secretScanner: { executable: '/custom/bin/betterleaks', timeoutMs: 1250 } }),
     );
 
     const result = await Effect.runPromise(loadConfigResult(configPath));
-    expect(result.ok).toBe(true);
+    bunTest.expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.config.secretScanner).toEqual({
-        executable: '/custom/bin/betterleaks',
-        timeoutMs: 1250,
-      });
+      bunTest
+        .expect(result.config.secretScanner)
+        .toEqual({ executable: '/custom/bin/betterleaks', timeoutMs: 1250 });
     }
   });
 
-  test('rejects non-positive scanner timeout', async () => {
+  bunTest.test('loads typed shell execution-carrier aliases', async () => {
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        shell: {
+          executionCarrierAliases: [{ command: ['just', 'tailnet', 'ssh'], equivalentTo: 'ssh' }],
+        },
+      }),
+    );
+
+    const result = await Effect.runPromise(loadConfigResult(configPath));
+    bunTest.expect(result.ok).toBe(true);
+    if (result.ok) {
+      bunTest
+        .expect(result.config.shell.executionCarrierAliases)
+        .toEqual([{ command: ['just', 'tailnet', 'ssh'], equivalentTo: 'ssh' }]);
+    }
+  });
+
+  bunTest.test('loads typed workflow-policy rule actions', async () => {
+    await writeFile(
+      configPath,
+      JSON.stringify({ ruleActions: { 'no-verify': 'ask', sudo: 'warn' } }),
+    );
+
+    const result = await Effect.runPromise(loadConfigResult(configPath));
+    bunTest.expect(result.ok).toBe(true);
+    if (result.ok) {
+      bunTest.expect(result.config.ruleActions).toEqual({ 'no-verify': 'ask', sudo: 'warn' });
+    }
+  });
+
+  bunTest.test('rejects unknown and safety-invariant rule action keys', async () => {
+    for (const rule of ['no-verfiy', 'rm-rf-root']) {
+      await writeFile(configPath, JSON.stringify({ ruleActions: { [rule]: 'allow' } }));
+      const result = await Effect.runPromise(loadConfigResult(configPath));
+      bunTest.expect(result.ok).toBe(false);
+      if (!result.ok) {
+        bunTest.expect(result.error).toContain(rule);
+      }
+    }
+  });
+
+  bunTest.test('rejects empty shell execution-carrier commands', async () => {
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        shell: { executionCarrierAliases: [{ command: [], equivalentTo: 'ssh' }] },
+      }),
+    );
+
+    const result = await Effect.runPromise(loadConfigResult(configPath));
+    bunTest.expect(result.ok).toBe(false);
+  });
+
+  bunTest.test('rejects non-positive scanner timeout', async () => {
     await writeFile(
       configPath,
       JSON.stringify({ secretScanner: { executable: 'betterleaks', timeoutMs: 0 } }),
     );
 
     const result = await Effect.runPromise(loadConfigResult(configPath));
-    expect(result.ok).toBe(false);
+    bunTest.expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error).toContain('timeoutMs');
+      bunTest.expect(result.error).toContain('timeoutMs');
     }
   });
 
-  test('rejects unknown scanner fields', async () => {
+  bunTest.test('rejects unknown scanner fields', async () => {
     await writeFile(
       configPath,
       JSON.stringify({
@@ -123,13 +181,13 @@ describe('loadConfigResult', () => {
     );
 
     const result = await Effect.runPromise(loadConfigResult(configPath));
-    expect(result.ok).toBe(false);
+    bunTest.expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error).toContain('extra');
+      bunTest.expect(result.error).toContain('extra');
     }
   });
 
-  test('applies a tool policy through the file loader and dispatcher', async () => {
+  bunTest.test('applies a tool policy through the file loader and dispatcher', async () => {
     await writeFile(
       configPath,
       JSON.stringify({
@@ -153,60 +211,60 @@ describe('loadConfigResult', () => {
       },
       config,
     );
-    expect(decision).toMatchObject({ kind: 'warn', rule: 'prefer-example' });
+    bunTest.expect(decision).toMatchObject({ kind: 'warn', rule: 'prefer-example' });
   });
 
-  test('unknown top-level key → ok:false naming the key (the rtk trigger)', async () => {
+  bunTest.test('unknown top-level key → ok:false naming the key (the rtk trigger)', async () => {
     await writeFile(configPath, JSON.stringify({ rtk: { foo: 'bar' } }));
     const result = await Effect.runPromise(loadConfigResult(configPath));
-    expect(result.ok).toBe(false);
+    bunTest.expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error).toContain('rtk');
+      bunTest.expect(result.error).toContain('rtk');
     }
   });
 
-  test('malformed JSON → ok:false', async () => {
+  bunTest.test('malformed JSON → ok:false', async () => {
     await writeFile(configPath, '{ not valid json');
     const result = await Effect.runPromise(loadConfigResult(configPath));
-    expect(result.ok).toBe(false);
+    bunTest.expect(result.ok).toBe(false);
   });
 
-  test('non-ENOENT read failure → ok:false', async () => {
+  bunTest.test('non-ENOENT read failure → ok:false', async () => {
     const parentFile = path.join(dir, 'not-a-directory');
     await writeFile(parentFile, 'file');
 
     const result = await Effect.runPromise(loadConfigResult(path.join(parentFile, 'config.json')));
 
-    expect(result.ok).toBe(false);
+    bunTest.expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error).toContain('ConfigReadError');
-      expect(result.error).toContain('ENOTDIR');
+      bunTest.expect(result.error).toContain('ConfigReadError');
+      bunTest.expect(result.error).toContain('ENOTDIR');
     }
   });
 });
 
-describe('loadConfig (loud loader)', () => {
-  test('broken config dies rather than silently defaulting', async () => {
+bunTest.describe('loadConfig (loud loader)', () => {
+  bunTest.test('broken config dies rather than silently defaulting', async () => {
     await writeFile(configPath, JSON.stringify({ rtk: {} }));
     let threw = false;
     try {
       await Effect.runPromise(loadConfig(configPath));
     } catch (error) {
       threw = true;
-      expect(String(error)).toContain('config load failed');
+      bunTest.expect(String(error)).toContain('config load failed');
     }
-    expect(threw).toBe(true);
+    bunTest.expect(threw).toBe(true);
   });
 
-  test('valid config resolves to the merged Config', async () => {
+  bunTest.test('valid config resolves to the merged Config', async () => {
     await writeFile(configPath, JSON.stringify({ allowedCommands: [] }));
     const config = await Effect.runPromise(loadConfig(configPath));
-    expect(config.git.protectedBranches).toEqual([]);
+    bunTest.expect(config.git.protectedBranches).toEqual([]);
   });
 });
 
-describe('dispatcher on broken config', () => {
-  test('PreToolUse Bash → deny config-error (fail closed)', async () => {
+bunTest.describe('dispatcher on broken config', () => {
+  bunTest.test('PreToolUse Bash → deny config-error (fail closed)', async () => {
     const home = await mkdtemp(path.join(tmpdir(), 'tripwire-home-'));
     await mkdir(path.join(home, '.config', 'tripwire'), { recursive: true });
     await writeFile(
@@ -219,61 +277,61 @@ describe('dispatcher on broken config', () => {
       tool_name: 'Bash',
       tool_input: { command: 'echo hi' },
     };
-    const proc = Bun.spawnSync(['bun', 'src/dispatch.ts'], {
+    const proc = Bun.spawnSync([process.execPath, 'src/dispatch.ts'], {
       env: { ...process.env, HOME: home },
       stdin: new TextEncoder().encode(JSON.stringify(event)),
       stdout: 'pipe',
       stderr: 'pipe',
     });
-    const out = JSON.parse(proc.stdout.toString()) as {
-      hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string };
-    };
-    expect(out.hookSpecificOutput?.permissionDecision).toBe('deny');
-    expect(out.hookSpecificOutput?.permissionDecisionReason).toContain('config-error');
+    const out = parseJsonRecord(proc.stdout.toString());
+    const hookOutput = recordField(out, 'hookSpecificOutput');
+    bunTest.expect(hookOutput?.['permissionDecision']).toBe('deny');
+    bunTest.expect(hookOutput?.['permissionDecisionReason']).toContain('config-error');
 
     await rm(home, { force: true, recursive: true });
   });
 
-  test('PostToolUse still fails closed, then the next PreToolUse denies the config', async () => {
-    const home = await mkdtemp(path.join(tmpdir(), 'tripwire-home-'));
-    await mkdir(path.join(home, '.config', 'tripwire'), { recursive: true });
-    await writeFile(
-      path.join(home, '.config', 'tripwire', 'config.json'),
-      JSON.stringify({ rtk: {} }),
-    );
+  bunTest.test(
+    'PostToolUse still fails closed, then the next PreToolUse denies the config',
+    async () => {
+      const home = await mkdtemp(path.join(tmpdir(), 'tripwire-home-'));
+      await mkdir(path.join(home, '.config', 'tripwire'), { recursive: true });
+      await writeFile(
+        path.join(home, '.config', 'tripwire', 'config.json'),
+        JSON.stringify({ rtk: {} }),
+      );
 
-    const run = (event: HookEvent) => {
-      const proc = Bun.spawnSync([process.execPath, 'src/dispatch.ts'], {
-        env: { ...process.env, HOME: home, PATH: path.join(home, 'empty-path') },
-        stdin: new TextEncoder().encode(JSON.stringify(event)),
-        stdout: 'pipe',
-        stderr: 'pipe',
-      });
-      expect(proc.exitCode).toBe(0);
-      return JSON.parse(proc.stdout.toString()) as {
-        decision?: string;
-        reason?: string;
-        hookSpecificOutput?: { permissionDecision?: string };
+      const run = (event: HookEvent) => {
+        const proc = Bun.spawnSync([process.execPath, 'src/dispatch.ts'], {
+          env: { ...process.env, HOME: home, PATH: path.join(home, 'empty-path') },
+          stdin: new TextEncoder().encode(JSON.stringify(event)),
+          stdout: 'pipe',
+          stderr: 'pipe',
+        });
+        bunTest.expect(proc.exitCode).toBe(0);
+        return parseJsonRecord(proc.stdout.toString());
       };
-    };
 
-    const fixture = 'SYNTHETIC_SCANNER_INPUT';
-    const post = run({
-      hook_event_name: 'PostToolUse',
-      tool_name: 'Bash',
-      tool_response: { stdout: fixture },
-    });
-    expect(post.decision).toBe('block');
-    expect(post.reason).toContain('secret-scanner-failed');
-    expect(post.reason).not.toContain(fixture);
+      const fixture = 'SYNTHETIC_SCANNER_INPUT';
+      const post = run({
+        hook_event_name: 'PostToolUse',
+        tool_name: 'Bash',
+        tool_response: { stdout: fixture },
+      });
+      bunTest.expect(post['decision']).toBe('block');
+      bunTest.expect(post['reason']).toContain('secret-scanner-failed');
+      bunTest.expect(post['reason']).not.toContain(fixture);
 
-    const nextPre = run({
-      hook_event_name: 'PreToolUse',
-      tool_name: 'Bash',
-      tool_input: { command: 'echo hi' },
-    });
-    expect(nextPre.hookSpecificOutput?.permissionDecision).toBe('deny');
+      const nextPre = run({
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Bash',
+        tool_input: { command: 'echo hi' },
+      });
+      bunTest
+        .expect(recordField(nextPre, 'hookSpecificOutput')?.['permissionDecision'])
+        .toBe('deny');
 
-    await rm(home, { force: true, recursive: true });
-  });
+      await rm(home, { force: true, recursive: true });
+    },
+  );
 });

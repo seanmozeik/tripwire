@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import * as bunTest from 'bun:test';
 import { realpathSync } from 'node:fs';
 import {
   lstat,
@@ -20,126 +20,139 @@ import {
   hookInputs,
   resolveShippedHookCommand,
   tripwirePiDenialReason,
-  type PiExtensionContext,
-  type PiToolCallEvent,
-  type PiToolResultEvent,
-  type TripwirePiExtensionApi,
   type TripwireProcessRunner,
 } from '../src/pi-extension';
+import { parseJsonRecord, recordArrayField, recordField } from './support/json';
+import { PiHandlerCollector } from './support/pi';
 
 let root = '';
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-beforeEach(async () => {
+bunTest.beforeEach(async () => {
   root = await mkdtemp(pathModule.join(tmpdir(), 'tripwire-pi-'));
 });
 
-afterEach(async () => {
+bunTest.afterEach(async () => {
   delete process.env['TRIPWIRE_BUN'];
   delete process.env['TRIPWIRE_FORCE_PORTABLE'];
   await rm(root, { force: true, recursive: true });
 });
 
-describe('Tripwire Pi extension', () => {
-  test('resolves the portable Bun dispatcher through the Pi extension symlink', async () => {
-    const dist = pathModule.join(root, 'dist');
-    const extensions = pathModule.join(root, '.pi', 'agent', 'extensions');
-    await mkdir(dist, { recursive: true });
-    await mkdir(extensions, { recursive: true });
-    const extensionSource = pathModule.join(dist, 'tripwire-pi.js');
-    const hook = pathModule.join(dist, 'tripwire.js');
-    const installed = pathModule.join(extensions, 'tripwire.js');
-    await Promise.all([
-      writeFile(extensionSource, 'export default () => {};\n'),
-      writeFile(hook, '#!/usr/bin/env bun\n'),
-      symlink(extensionSource, installed),
-    ]);
+bunTest.describe('Tripwire Pi extension', () => {
+  bunTest.test(
+    'resolves the portable Bun dispatcher through the Pi extension symlink',
+    async () => {
+      const dist = pathModule.join(root, 'dist');
+      const extensions = pathModule.join(root, '.pi', 'agent', 'extensions');
+      await mkdir(dist, { recursive: true });
+      await mkdir(extensions, { recursive: true });
+      const extensionSource = pathModule.join(dist, 'tripwire-pi.js');
+      const hook = pathModule.join(dist, 'tripwire.js');
+      const installed = pathModule.join(extensions, 'tripwire.js');
+      await Promise.all([
+        writeFile(extensionSource, 'export default () => {};\n'),
+        writeFile(hook, '#!/usr/bin/env bun\n'),
+        symlink(extensionSource, installed),
+      ]);
 
-    process.env['TRIPWIRE_BUN'] = process.execPath;
-    process.env['TRIPWIRE_FORCE_PORTABLE'] = '1';
-    expect(resolveShippedHookCommand(pathToFileURL(installed).href)).toEqual({
-      arguments: [realpathSync(hook)],
-      executable: process.execPath,
-      kind: 'portable',
-    });
+      process.env['TRIPWIRE_BUN'] = process.execPath;
+      process.env['TRIPWIRE_FORCE_PORTABLE'] = '1';
+      bunTest
+        .expect(resolveShippedHookCommand(pathToFileURL(installed).href))
+        .toEqual({
+          arguments: [realpathSync(hook)],
+          executable: process.execPath,
+          kind: 'portable',
+        });
+    },
+  );
+
+  bunTest.test('understands Tripwire denials and fails closed on invalid output', () => {
+    bunTest
+      .expect(
+        tripwirePiDenialReason({
+          exitCode: 0,
+          stderr: '',
+          stdout: JSON.stringify({
+            hookSpecificOutput: {
+              permissionDecision: 'deny',
+              permissionDecisionReason: 'Use trash instead.',
+            },
+          }),
+        }),
+      )
+      .toBe('Use trash instead.');
+    bunTest
+      .expect(tripwirePiDenialReason({ exitCode: 0, stderr: '', stdout: 'not json' }))
+      .toBe('Tripwire returned invalid JSON');
+    bunTest
+      .expect(tripwirePiDenialReason({ exitCode: 2, stderr: 'hook failed', stdout: '' }))
+      .toBe('hook failed');
+    bunTest
+      .expect(
+        tripwirePiDenialReason({
+          exitCode: 0,
+          stderr: '',
+          stdout: JSON.stringify({
+            hookSpecificOutput: {
+              permissionDecision: 'ask',
+              permissionDecisionReason: 'Approval required.',
+            },
+          }),
+        }),
+      )
+      .toBe('Approval required.');
+    bunTest
+      .expect(
+        tripwirePiDenialReason({
+          exitCode: 0,
+          stderr: '',
+          stdout: JSON.stringify({ continue: true, decision: 'block', reason: 'Secret found.' }),
+        }),
+      )
+      .toBe('Secret found.');
+    bunTest
+      .expect(tripwirePiDenialReason({ exitCode: 0, stderr: '', stdout: '{}' }))
+      .toBe('Tripwire returned an unrecognized response');
   });
 
-  test('understands Tripwire denials and fails closed on invalid output', () => {
-    expect(
-      tripwirePiDenialReason({
-        exitCode: 0,
-        stderr: '',
-        stdout: JSON.stringify({
-          hookSpecificOutput: {
-            permissionDecision: 'deny',
-            permissionDecisionReason: 'Use trash instead.',
-          },
-        }),
-      }),
-    ).toBe('Use trash instead.');
-    expect(tripwirePiDenialReason({ exitCode: 0, stderr: '', stdout: 'not json' })).toBe(
-      'Tripwire returned invalid JSON',
-    );
-    expect(tripwirePiDenialReason({ exitCode: 2, stderr: 'hook failed', stdout: '' })).toBe(
-      'hook failed',
-    );
-    expect(
-      tripwirePiDenialReason({
-        exitCode: 0,
-        stderr: '',
-        stdout: JSON.stringify({
-          hookSpecificOutput: {
-            permissionDecision: 'ask',
-            permissionDecisionReason: 'Approval required.',
-          },
-        }),
-      }),
-    ).toBe('Approval required.');
-    expect(
-      tripwirePiDenialReason({
-        exitCode: 0,
-        stderr: '',
-        stdout: JSON.stringify({ continue: true, decision: 'block', reason: 'Secret found.' }),
-      }),
-    ).toBe('Secret found.');
-    expect(tripwirePiDenialReason({ exitCode: 0, stderr: '', stdout: '{}' })).toBe(
-      'Tripwire returned an unrecognized response',
-    );
-  });
+  bunTest.test('normalizes Pi and oh-my-pi file inputs for Tripwire rules', () => {
+    bunTest
+      .expect(
+        hookInputs(
+          { input: { path: '.env' }, toolCallId: 'read-1', toolName: 'read' },
+          'PreToolUse',
+          root,
+        ),
+      )
+      .toMatchObject([{ tool_input: { file_path: '.env' }, tool_name: 'read' }]);
 
-  test('normalizes Pi and oh-my-pi file inputs for Tripwire rules', () => {
-    expect(
-      hookInputs(
-        { input: { path: '.env' }, toolCallId: 'read-1', toolName: 'read' },
-        'PreToolUse',
-        root,
-      ),
-    ).toMatchObject([{ tool_input: { file_path: '.env' }, tool_name: 'read' }]);
-
-    expect(
-      hookInputs(
+    bunTest
+      .expect(
+        hookInputs(
+          {
+            input: {
+              edits: [{ newText: 'const value = 2;', oldText: 'const value = 1;' }],
+              path: 'src/value.ts',
+            },
+            toolCallId: 'edit-1',
+            toolName: 'edit',
+          },
+          'PreToolUse',
+          root,
+        ),
+      )
+      .toMatchObject([
         {
-          input: {
-            edits: [{ newText: 'const value = 2;', oldText: 'const value = 1;' }],
-            path: 'src/value.ts',
+          tool_input: {
+            file_path: 'src/value.ts',
+            new_string: 'const value = 2;',
+            old_string: 'const value = 1;',
           },
-          toolCallId: 'edit-1',
-          toolName: 'edit',
         },
-        'PreToolUse',
-        root,
-      ),
-    ).toMatchObject([
-      {
-        tool_input: {
-          file_path: 'src/value.ts',
-          new_string: 'const value = 2;',
-          old_string: 'const value = 1;',
-        },
-      },
-    ]);
+      ]);
 
     const hashlineInputs = hookInputs(
       {
@@ -150,10 +163,10 @@ describe('Tripwire Pi extension', () => {
       'PreToolUse',
       root,
     );
-    expect(hashlineInputs).toHaveLength(2);
-    expect(hashlineInputs[1]).toMatchObject({
-      tool_input: { file_path: '.env', new_string: '¶one.ts#abcd\n+change' },
-    });
+    bunTest.expect(hashlineInputs).toHaveLength(2);
+    bunTest
+      .expect(hashlineInputs[1])
+      .toMatchObject({ tool_input: { file_path: '.env', new_string: '¶one.ts#abcd\n+change' } });
 
     const applyPatchInputs = hookInputs(
       {
@@ -182,8 +195,8 @@ describe('Tripwire Pi extension', () => {
       'PreToolUse',
       root,
     );
-    expect(applyPatchInputs).toHaveLength(5);
-    expect(applyPatchInputs.map((input) => input['tool_input'])).toEqual([
+    bunTest.expect(applyPatchInputs).toHaveLength(5);
+    bunTest.expect(applyPatchInputs.map((input) => input['tool_input'])).toEqual([
       {
         file_path: 'package.json',
         new_string: '  "version": "0.7.1"',
@@ -208,35 +221,32 @@ describe('Tripwire Pi extension', () => {
     ]);
   });
 
-  test('converts Pi text blocks into post-tool secret-scan input', () => {
-    expect(
-      hookInputs(
-        {
-          content: [
-            { text: 'first', type: 'text' },
-            { text: 'second', type: 'text' },
-          ],
-          details: {},
-          input: { command: 'printf output' },
-          isError: false,
-          toolCallId: 'bash-1',
-          toolName: 'bash',
-        },
-        'PostToolUse',
-        root,
-      ),
-    ).toMatchObject([
-      { hook_event_name: 'PostToolUse', tool_response: { stderr: '', stdout: 'first\nsecond' } },
-    ]);
+  bunTest.test('converts Pi text blocks into post-tool secret-scan input', () => {
+    bunTest
+      .expect(
+        hookInputs(
+          {
+            content: [
+              { text: 'first', type: 'text' },
+              { text: 'second', type: 'text' },
+            ],
+            details: {},
+            input: { command: 'printf output' },
+            isError: false,
+            toolCallId: 'bash-1',
+            toolName: 'bash',
+          },
+          'PostToolUse',
+          root,
+        ),
+      )
+      .toMatchObject([
+        { hook_event_name: 'PostToolUse', tool_response: { stderr: '', stdout: 'first\nsecond' } },
+      ]);
   });
 
-  test('starts one dispatcher process and checks all five edit paths', async () => {
-    let toolCall:
-      | ((
-          event: PiToolCallEvent,
-          context: PiExtensionContext,
-        ) => Promise<{ readonly block?: boolean; readonly reason?: string } | undefined>)
-      | undefined;
+  bunTest.test('starts one dispatcher process and checks all five edit paths', async () => {
+    const collector = new PiHandlerCollector();
     let processCalls = 0;
     let receivedInput: unknown;
     const receivedPaths: string[] = [];
@@ -271,18 +281,12 @@ describe('Tripwire Pi extension', () => {
         ),
       });
     };
-    const api: TripwirePiExtensionApi = {
-      on: (event, handler) => {
-        if (event === 'tool_call') {
-          toolCall = handler as typeof toolCall;
-        }
-      },
-    };
-    createTripwirePiExtension('/unused/tripwire', processRunner)(api);
+    createTripwirePiExtension('/unused/tripwire', processRunner)(collector);
+    const toolCall = collector.requireToolCall();
 
     let aborted = false;
     const notifications: string[] = [];
-    const result = await toolCall?.(
+    const result = await toolCall(
       {
         input: {
           new_string: 'safe replacement',
@@ -305,15 +309,15 @@ describe('Tripwire Pi extension', () => {
       },
     );
 
-    expect(processCalls).toBe(1);
-    expect(receivedInput).toBeArrayOfSize(5);
-    expect(receivedPaths).toEqual(['one.ts', 'two.ts', 'three.ts', 'four.ts', '.env']);
-    expect(result).toEqual({ block: true, reason: 'Protected path .env' });
-    expect(aborted).toBe(false);
-    expect(notifications).toEqual([]);
+    bunTest.expect(processCalls).toBe(1);
+    bunTest.expect(receivedInput).toBeArrayOfSize(5);
+    bunTest.expect(receivedPaths).toEqual(['one.ts', 'two.ts', 'three.ts', 'four.ts', '.env']);
+    bunTest.expect(result).toEqual({ block: true, reason: 'Protected path .env' });
+    bunTest.expect(aborted).toBe(false);
+    bunTest.expect(notifications).toEqual([]);
   });
 
-  test('evaluates canonical private batches with one merged response', () => {
+  bunTest.test('evaluates canonical private batches with one merged response', () => {
     const run = (input: unknown) => {
       const child = Bun.spawnSync([process.execPath, 'src/dispatch.ts', '--tripwire-hook'], {
         env: { ...process.env, HOME: root },
@@ -321,11 +325,8 @@ describe('Tripwire Pi extension', () => {
         stderr: 'pipe',
         stdout: 'pipe',
       });
-      expect(child.exitCode).toBe(0);
-      return JSON.parse(child.stdout.toString()) as {
-        continue?: boolean;
-        hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string };
-      };
+      bunTest.expect(child.exitCode).toBe(0);
+      return parseJsonRecord(child.stdout.toString());
     };
     const event = (filePath: string) => ({
       cwd: root,
@@ -335,13 +336,14 @@ describe('Tripwire Pi extension', () => {
       tool_use_id: `edit-${filePath}`,
     });
 
-    expect(run([event('one.ts'), event('two.ts')])).toEqual({ continue: true });
+    bunTest.expect(run([event('one.ts'), event('two.ts')])).toEqual({ continue: true });
     const denied = run([event('safe.ts'), event('.env')]);
-    expect(denied.hookSpecificOutput?.permissionDecision).toBe('deny');
-    expect(denied.hookSpecificOutput?.permissionDecisionReason).toContain('.env');
+    const hookOutput = recordField(denied, 'hookSpecificOutput');
+    bunTest.expect(hookOutput?.['permissionDecision']).toBe('deny');
+    bunTest.expect(hookOutput?.['permissionDecisionReason']).toContain('.env');
   });
 
-  test('rejects empty, mixed-phase, and mixed-host private batches', () => {
+  bunTest.test('rejects empty, mixed-phase, and mixed-host private batches', () => {
     const run = (input: unknown) => {
       const child = Bun.spawnSync([process.execPath, 'src/dispatch.ts', '--tripwire-hook'], {
         env: { ...process.env, HOME: root },
@@ -349,7 +351,7 @@ describe('Tripwire Pi extension', () => {
         stderr: 'pipe',
         stdout: 'pipe',
       });
-      expect(child.exitCode).toBe(0);
+      bunTest.expect(child.exitCode).toBe(0);
       return child.stdout.toString();
     };
     const event = {
@@ -359,15 +361,17 @@ describe('Tripwire Pi extension', () => {
       tool_name: 'Bash',
     };
 
-    expect(run([])).toContain('tripwire-batch-error');
-    expect(run([{}])).toContain('tripwire-batch-error');
-    expect(run([event, { ...event, hook_event_name: 'PostToolUse' }])).toContain(
-      'tripwire-batch-error',
-    );
-    expect(run([event, { ...event, turn_id: 'codex-turn' }])).toContain('tripwire-batch-error');
+    bunTest.expect(run([])).toContain('tripwire-batch-error');
+    bunTest.expect(run([{}])).toContain('tripwire-batch-error');
+    bunTest
+      .expect(run([event, { ...event, hook_event_name: 'PostToolUse' }]))
+      .toContain('tripwire-batch-error');
+    bunTest
+      .expect(run([event, { ...event, turn_id: 'codex-turn' }]))
+      .toContain('tripwire-batch-error');
   });
 
-  test('keeps the native failure response for invalid single-event JSON', () => {
+  bunTest.test('keeps the native failure response for invalid single-event JSON', () => {
     const child = Bun.spawnSync([process.execPath, 'src/dispatch.ts', '--tripwire-hook'], {
       env: { ...process.env, HOME: root },
       stdin: new TextEncoder().encode('{invalid'),
@@ -375,35 +379,18 @@ describe('Tripwire Pi extension', () => {
       stdout: 'pipe',
     });
 
-    expect(child.exitCode).toBe(0);
-    expect(child.stdout.toString()).toBe('{"continue": true}\n');
+    bunTest.expect(child.exitCode).toBe(0);
+    bunTest.expect(child.stdout.toString()).toBe('{"continue": true}\n');
   });
 
-  test('blocks tool calls when the dispatcher cannot run', async () => {
-    let toolCall:
-      | ((
-          event: PiToolCallEvent,
-          context: PiExtensionContext,
-        ) => Promise<{ readonly block?: boolean; readonly reason?: string } | undefined>)
-      | undefined;
-    let toolResult:
-      | ((event: PiToolResultEvent, context: PiExtensionContext) => Promise<void>)
-      | undefined;
-    const api: TripwirePiExtensionApi = {
-      on: (event: 'tool_call' | 'tool_result', handler: typeof toolCall | typeof toolResult) => {
-        if (event === 'tool_call') {
-          toolCall = handler as typeof toolCall;
-        } else {
-          toolResult = handler as typeof toolResult;
-        }
-      },
-    };
-    createTripwirePiExtension(pathModule.join(root, 'missing-dispatcher'))(api);
-    expect(toolResult).toBeDefined();
-    expect(toolCall).toBeDefined();
+  bunTest.test('blocks tool calls when the dispatcher cannot run', async () => {
+    const collector = new PiHandlerCollector();
+    createTripwirePiExtension(pathModule.join(root, 'missing-dispatcher'))(collector);
+    const toolCall = collector.requireToolCall();
+    collector.requireToolResult();
     let aborted = false;
     let notification = '';
-    const result = await toolCall?.(
+    const result = await toolCall(
       { input: { command: 'git status' }, toolCallId: 'call-1', toolName: 'bash' },
       {
         abort: () => {
@@ -417,15 +404,15 @@ describe('Tripwire Pi extension', () => {
         },
       },
     );
-    expect(result?.block).toBe(true);
-    expect(result?.reason).toContain('Tripwire failed closed');
-    expect(aborted).toBe(false);
-    expect(notification).toBe('');
+    bunTest.expect(result?.block).toBe(true);
+    bunTest.expect(result?.reason).toContain('Tripwire failed closed');
+    bunTest.expect(aborted).toBe(false);
+    bunTest.expect(notification).toBe('');
   });
 });
 
-describe('Pi installation', () => {
-  test('installs the native extension and removes stale adapter hooks', async () => {
+bunTest.describe('Pi installation', () => {
+  bunTest.test('installs the native extension and removes stale adapter hooks', async () => {
     const agentDirectory = pathModule.join(root, '.pi', 'agent');
     const extensionSource = pathModule.join(root, 'tripwire-pi.js');
     await mkdir(agentDirectory, { recursive: true });
@@ -445,48 +432,46 @@ describe('Pi installation', () => {
       ),
     ]);
     const result = await installPi({ extensionSource, homeDirectory: root });
-    expect(result.success).toBe(true);
+    bunTest.expect(result.success).toBe(true);
     const installed = pathModule.join(agentDirectory, 'extensions', 'tripwire.js');
     const installedStatus = await lstat(installed);
-    expect(installedStatus.isSymbolicLink()).toBe(true);
-    expect(await readlink(installed)).toBe(extensionSource);
-    const settings = JSON.parse(
+    bunTest.expect(installedStatus.isSymbolicLink()).toBe(true);
+    bunTest.expect(await readlink(installed)).toBe(extensionSource);
+    const settings = parseJsonRecord(
       await readFile(pathModule.join(agentDirectory, 'settings.json'), 'utf8'),
-    ) as {
-      hooks?: { customEvent?: { hooks: { command: string }[] }[] };
-      packages?: string[];
-      sentinel?: string;
-    };
-    expect(settings.hooks?.customEvent?.[0]?.hooks[0]?.command).toBe('custom-hook');
-    expect(settings.packages).toEqual(['pi-example']);
-    expect(settings.sentinel).toBe('keep-top-level');
+    );
+    const hooks = recordField(settings, 'hooks') ?? {};
+    const customGroup = recordArrayField(hooks, 'customEvent')[0] ?? {};
+    bunTest.expect(recordArrayField(customGroup, 'hooks')[0]?.['command']).toBe('custom-hook');
+    bunTest.expect(settings['packages']).toEqual(['pi-example']);
+    bunTest.expect(settings['sentinel']).toBe('keep-top-level');
 
     const settingsPath = pathModule.join(agentDirectory, 'settings.json');
     const firstRaw = await readFile(settingsPath, 'utf8');
     const second = await installPi({ extensionSource, homeDirectory: root });
-    expect(second.message).toStartWith('Already configured:');
-    expect(await readFile(settingsPath, 'utf8')).toBe(firstRaw);
-    expect(await readlink(installed)).toBe(extensionSource);
+    bunTest.expect(second.message).toStartWith('Already configured:');
+    bunTest.expect(await readFile(settingsPath, 'utf8')).toBe(firstRaw);
+    bunTest.expect(await readlink(installed)).toBe(extensionSource);
   });
 
-  test('installs the same native extension for oh-my-pi', async () => {
+  bunTest.test('installs the same native extension for oh-my-pi', async () => {
     const extensionSource = pathModule.join(root, 'tripwire-pi.js');
     await writeFile(extensionSource, 'export default () => {};\n');
 
     const result = await installOhMyPi({ extensionSource, homeDirectory: root });
 
-    expect(result.success).toBe(true);
+    bunTest.expect(result.success).toBe(true);
     const installed = pathModule.join(root, '.omp', 'agent', 'extensions', 'tripwire.js');
     const installedStatus = await lstat(installed);
-    expect(installedStatus.isSymbolicLink()).toBe(true);
-    expect(await readlink(installed)).toBe(extensionSource);
+    bunTest.expect(installedStatus.isSymbolicLink()).toBe(true);
+    bunTest.expect(await readlink(installed)).toBe(extensionSource);
 
     const second = await installOhMyPi({ extensionSource, homeDirectory: root });
-    expect(second.message).toStartWith('Already configured:');
-    expect(await readlink(installed)).toBe(extensionSource);
+    bunTest.expect(second.message).toStartWith('Already configured:');
+    bunTest.expect(await readlink(installed)).toBe(extensionSource);
   });
 
-  test('updates an existing Tripwire extension symlink to the current build', async () => {
+  bunTest.test('updates an existing Tripwire extension symlink to the current build', async () => {
     const oldDist = pathModule.join(root, 'old', 'dist');
     const newDist = pathModule.join(root, 'new', 'dist');
     const extensionDirectory = pathModule.join(root, '.omp', 'agent', 'extensions');
@@ -506,8 +491,8 @@ describe('Pi installation', () => {
 
     const result = await installOhMyPi({ extensionSource: newSource, homeDirectory: root });
 
-    expect(result.success).toBe(true);
-    expect(result.message).toStartWith('Updated ');
-    expect(await readlink(installed)).toBe(newSource);
+    bunTest.expect(result.success).toBe(true);
+    bunTest.expect(result.message).toStartWith('Updated ');
+    bunTest.expect(await readlink(installed)).toBe(newSource);
   });
 });

@@ -6,7 +6,7 @@
 import { BunRuntime } from '@effect/platform-bun';
 import { Cause, Data, Effect, Exit, Schema } from 'effect';
 
-import { parseCommand } from './lib/bash';
+import { analyzeBash, type BashAnalysisOptions } from './lib/bash';
 import {
   CONFIG_PATH,
   getDefaultConfig,
@@ -31,6 +31,7 @@ import {
   isWriteInput,
 } from './lib/event.ts';
 import { logError } from './lib/log';
+import { applyShellBypass } from './rules/bash-bypass';
 import { bashDeny } from './rules/bash-deny';
 import { bashGit } from './rules/bash-git';
 import { bashNetworkInstall } from './rules/bash-network-install';
@@ -207,7 +208,41 @@ interface Rule {
   readonly fn: RuleFn;
 }
 
-const collectPreToolUseRules = (tool: string, input: unknown, config: ResolvedConfig): Rule[] => {
+const collectBashRules = (
+  command: string,
+  config: ResolvedConfig,
+  options: BashAnalysisOptions = {},
+): Rule[] => {
+  const rules: Rule[] = [];
+  const program = analyzeBash(command, {
+    ...options,
+    executionCarrierAliases: config.shell.executionCarrierAliases,
+  });
+  const shellRule = (name: string, evaluate: () => Decision): Rule => ({
+    name,
+    fn: () => applyShellBypass(program, evaluate()),
+  });
+  rules.push(
+    shellRule('bash-deny', () => bashDeny(program, config.ruleActions)),
+    shellRule('bash-git', () => bashGit(program, config.git)),
+    shellRule('bash-scoped-rm', () => bashScopedRm(program, config.safePaths)),
+    shellRule('bash-redirect', () => bashRedirect(program)),
+    shellRule('bash-network-install', () => bashNetworkInstall(program)),
+    shellRule('bash-tar-explosion', () => bashTarExplosion(program)),
+    shellRule('tool-policy', () => toolPolicy(program, config.toolPolicies)),
+    shellRule('config-custom', () =>
+      configCustom(program, config.blockedCommands, config.allowedCommands),
+    ),
+  );
+  return rules;
+};
+
+const collectPreToolUseRules = (
+  tool: string,
+  input: unknown,
+  config: ResolvedConfig,
+  cwd?: string,
+): Rule[] => {
   const rules: Rule[] = [];
   if (tool === 'PowerShell') {
     rules.push({
@@ -222,21 +257,7 @@ const collectPreToolUseRules = (tool: string, input: unknown, config: ResolvedCo
   }
   if (tool === 'Bash' && isBashInput(input)) {
     const i: BashInput = input;
-    const segments = parseCommand(i.command);
-    rules.push(
-      { name: 'bash-deny', fn: () => bashDeny(segments, i.command) },
-      { name: 'bash-git', fn: () => bashGit(segments, i.command, config.git) },
-      { name: 'bash-scoped-rm', fn: () => bashScopedRm(segments, i.command, config.safePaths) },
-      { name: 'bash-redirect', fn: () => bashRedirect(segments, i.command) },
-      { name: 'bash-network-install', fn: () => bashNetworkInstall(segments, i.command) },
-      { name: 'bash-tar-explosion', fn: () => bashTarExplosion(segments, i.command) },
-      { name: 'tool-policy', fn: () => toolPolicy(segments, i.command, config.toolPolicies) },
-      {
-        name: 'config-custom',
-        fn: () => configCustom(segments, i.command, config.blockedCommands, config.allowedCommands),
-      },
-    );
-    return rules;
+    return collectBashRules(i.command, config, cwd === undefined ? {} : { cwd });
   }
   if (tool === 'Read' && isReadInput(input)) {
     const i: ReadInput = input;
@@ -310,7 +331,7 @@ const decide = (event: HookEvent, config: Config = {}): Decision => {
   const mergedConfig = mergeWithDefaults(config);
   const tool = normalizeToolName(event.tool_name ?? '');
   if (event.hook_event_name === 'PreToolUse') {
-    return runRulesSync(collectPreToolUseRules(tool, event.tool_input, mergedConfig));
+    return runRulesSync(collectPreToolUseRules(tool, event.tool_input, mergedConfig, event.cwd));
   }
   if (event.hook_event_name === 'PostToolUse') {
     return runRulesSync(
@@ -319,6 +340,12 @@ const decide = (event: HookEvent, config: Config = {}): Decision => {
   }
   return allow('no-rules');
 };
+
+const decideBash = (
+  command: string,
+  config: Config = {},
+  options: BashAnalysisOptions = {},
+): Decision => runRulesSync(collectBashRules(command, mergeWithDefaults(config), options));
 
 const handleAllow = (event: HookEvent, decision: Decision, host: HookHost): void => {
   const eventName = event.hook_event_name;
@@ -494,7 +521,7 @@ const program = Effect.gen(function* tripwireProgram() {
       const tool = normalizeToolName(event.tool_name ?? '');
       decisions.push(
         yield* runRules(
-          collectPreToolUseRules(tool, event.tool_input, configLoad.config),
+          collectPreToolUseRules(tool, event.tool_input, configLoad.config, event.cwd),
           RULE_TIMEOUT_MS,
         ),
       );
@@ -535,12 +562,12 @@ const program = Effect.gen(function* tripwireProgram() {
 });
 
 const handled = program.pipe(
-  // oxlint-disable-next-line de-clank-effect/no-silent-effect-error-swallow -- fatal causes are logged before the host receives its fail-policy response.
-  Effect.catchCause((cause) => {
-    logError('dispatch-fatal', Cause.pretty(cause));
-    writeHookFailure('dispatcher failure');
-    return Effect.void;
-  }),
+  Effect.catchCause((cause) =>
+    Effect.sync(() => {
+      logError('dispatch-fatal', Cause.pretty(cause));
+      writeHookFailure('dispatcher failure');
+    }),
+  ),
 );
 
 const runHook = (): void => {
@@ -555,6 +582,7 @@ export {
   collectPostToolUseRules,
   collectPreToolUseRules,
   decide,
+  decideBash,
   normalizeToolName,
   runHook,
   runRules,

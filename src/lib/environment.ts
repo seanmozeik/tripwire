@@ -20,4 +20,11 @@ const environmentWithPackageDist = (packageDist: string): Record<string, string 
   TRIPWIRE_PACKAGE_DIST: packageDist,
 });
 
-export { environmentWithPackageDist, readRuntimeEnvironment, type RuntimeEnvironment };
+const currentEnvironment = (): Record<string, string | undefined> => ({ ...process.env });
+
+export {
+  currentEnvironment,
+  environmentWithPackageDist,
+  readRuntimeEnvironment,
+  type RuntimeEnvironment,
+};

@@ -126,7 +126,7 @@ Tripwire includes checks for these operations:
 
 The archive check is narrow. It denies `tar` extraction with `x` or `--extract` when `-C` or `--directory` targets `/` or the home directory. It applies the same destination rule to `unzip -d`. Archive listing, including `tar -tf archive.tar -C /`, is allowed. Tripwire does not inspect archive member paths.
 
-Compound Bash forms are inspected conservatively. Tripwire follows executable commands after `if`, `elif`, `then`, `else`, `while`, `until`, and `do`. It denies unsupported structures when it cannot identify every executable branch.
+Tripwire parses Bash into one unbash AST. It follows executable commands through control flow, loops, groups, subshells, functions, aliases, substitutions, redirects, wrappers, and configured remote execution carriers. It denies a program when an executable branch or policy discriminator remains unknown.
 
 Protected-path checks compare the submitted path and its resolved target. New writes resolve the deepest existing parent, which prevents a symlink alias from hiding a protected destination.
 
@@ -156,9 +156,19 @@ Personal workflow preferences belong in `~/.config/tripwire/config.json`. A miss
   "allowedCommands": [
     { "pattern": "project-safe-tool", "message": "This command is allowed by personal config." }
   ],
-  "secretScanner": { "executable": "betterleaks", "timeoutMs": 5000 }
+  "ruleActions": { "no-verify": "deny" },
+  "secretScanner": { "executable": "betterleaks", "timeoutMs": 5000 },
+  "shell": {
+    "executionCarrierAliases": [{ "command": ["just", "tailnet", "ssh"], "equivalentTo": "ssh" }]
+  }
 }
 ```
+
+An execution-carrier alias states that a fixed command path has the same nested-shell behavior as `ssh`. Tripwire inspects the remote command with the same parser and rules. A dynamic remote command remains denied.
+
+`ruleActions` can set a listed workflow-policy rule to `allow`, `warn`, `ask`, or `deny`. Unknown rule names and safety-invariant rule names fail config validation instead of silently weakening policy.
+
+Configurable workflow rules are `brew-mutation`, `chmod-777-recursive`, `defaults-write`, `dscl-mutate`, `launchctl-mutation`, `mas-mutation`, `no-gpg-sign`, `no-verify`, `osascript`, `pmset-write`, `rsync-delete`, `scutil-set`, `security-keychain-add-write`, `softwareupdate-install`, `sudo`, `systemsetup`, and `topgrade`.
 
 `toolPolicies` accepts these optional match fields:
 
@@ -196,6 +206,14 @@ tripwire test --post --tool=Bash --stdout='example output'
 ```
 
 The post-tool example requires Betterleaks.
+
+For a longer workflow, inspect one file snapshot and execute the same bytes:
+
+```bash
+tripwire run-script ./scripts/inspect-and-build.sh -- first-argument
+```
+
+The runner reads the file once, checks the exact UTF-8 bytes, and sends those bytes to `/bin/bash -s`. Script arguments are included in value analysis. A denied or approval-required script does not start.
 
 ## Library API
 
