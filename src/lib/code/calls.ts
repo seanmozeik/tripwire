@@ -70,6 +70,50 @@ interface CallContext {
   readonly operations: CodeOperation[];
 }
 
+const validateReadOptions = (name: string, args: readonly Value[]): void => {
+  if (!name.startsWith('fs.')) {
+    return;
+  }
+  if (args.length > 2) {
+    return failInspection('Read callbacks are not inspected.');
+  }
+  const [, options] = args;
+  if (options === undefined || options.kind === 'string') {
+    return;
+  }
+  if (options.kind !== 'object') {
+    return failInspection('Read options are unresolved.');
+  }
+  for (const [key, value] of options.entries) {
+    if (key === 'flag' && valueString(value) !== 'r') {
+      return failInspection('A file read flag can truncate or write the file.');
+    }
+    if (key !== 'flag' && key !== 'encoding') {
+      return failInspection('Unsupported read option.');
+    }
+    valueString(value);
+  }
+};
+
+const validateWriteOptions = (name: string, args: readonly Value[]): void => {
+  if (!name.startsWith('fs.')) {
+    return;
+  }
+  const options = args.at(2);
+  if (options === undefined && args.length <= 2) {
+    return;
+  }
+  // Encodings such as hex/base64 can turn a nonempty string into an empty write.
+  if (
+    args.length === 3 &&
+    options?.kind === 'string' &&
+    options.value.replace('-', '') === 'utf8'
+  ) {
+    return;
+  }
+  return failInspection('Write encodings, flags, and callbacks require explicit review.');
+};
+
 const processArguments = (name: string, args: readonly Value[]): readonly string[] => {
   const [first, second] = args;
   if (name.startsWith('subprocess.')) {
@@ -166,6 +210,12 @@ const resolveCall = (fn: Value, args: readonly Value[], context: CallContext): V
   }
   const kind = FILE_OPERATIONS.get(name);
   if (kind !== undefined) {
+    if (kind === 'read') {
+      validateReadOptions(name, args);
+    }
+    if (kind === 'write') {
+      validateWriteOptions(name, args);
+    }
     const effect = kind === 'write' && valueString(args[1]) === '' ? 'truncate' : kind;
     context.operations.push({ kind: effect, path: valueString(args[0]), range: context.range });
   } else if (PROCESS.has(name)) {

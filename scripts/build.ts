@@ -14,6 +14,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import packageManifest from '../package.json' with { type: 'json' };
+import { codeFixtures } from '../test/fixtures/embedded-code';
 
 const packageVersion = packageManifest.version;
 
@@ -90,6 +91,22 @@ const safeHookInput = {
 };
 
 const deniedHookInput = { ...safeHookInput, tool_input: { command: 'rm -rf /' } };
+
+const smokeEmbeddedCode = (runtime: readonly string[]): void => {
+  for (const fixture of codeFixtures) {
+    // The only executable is Tripwire. Destructive strings travel exclusively as JSON stdin.
+    const result = runWithInput([...runtime, '--tripwire-hook'], {
+      ...safeHookInput,
+      cwd: '/tripwire-policy-fixture',
+      tool_input: { command: fixture.command },
+    });
+    if (fixture.allowed) {
+      assertAllowed(result, `Embedded code: ${fixture.name}`);
+    } else {
+      assertDenied(result, `Embedded code: ${fixture.name}`);
+    }
+  }
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
@@ -443,10 +460,16 @@ try {
     'Tripwire native checked-script smoke test',
   );
   assertCheckedScriptDenied(
-    Bun.spawnSync([stagedNative, 'run-script', checkedDangerousScript, '--', '/tmp/blocked'], {
-      stderr: 'pipe',
-      stdout: 'pipe',
-    }),
+    Bun.spawnSync(
+      [
+        stagedNative,
+        'run-script',
+        checkedDangerousScript,
+        '--',
+        path.join(compileWorkspace, 'blocked'),
+      ],
+      { stderr: 'pipe', stdout: 'pipe' },
+    ),
     'Tripwire native checked-script deny smoke test',
   );
   const portableVersion = Bun.spawnSync(
@@ -511,12 +534,15 @@ try {
         'run-script',
         checkedDangerousScript,
         '--',
-        '/tmp/blocked',
+        path.join(compileWorkspace, 'blocked'),
       ],
       { stderr: 'pipe', stdout: 'pipe' },
     ),
     'Tripwire portable checked-script deny smoke test',
   );
+
+  smokeEmbeddedCode([stagedNative]);
+  smokeEmbeddedCode([process.execPath, stagedPortable]);
 
   const library: unknown = await import(
     `${pathToFileURL(stagedLibrary).href}?build=${Date.now().toString()}`

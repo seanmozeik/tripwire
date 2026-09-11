@@ -186,6 +186,7 @@ class BashAnalyzer {
   readonly #invocations: ShellInvocation[] = [];
   readonly #redirects: ShellRedirect[] = [];
   readonly #diagnostics: ShellDiagnostic[] = [];
+  readonly #environmentAssignments = new Set<string>();
   readonly #heredocRanges: SourceRange[] = [];
   readonly #seenScripts = new WeakSet<object>();
   readonly #activeAliases = new Set<string>();
@@ -243,6 +244,7 @@ class BashAnalyzer {
       invocations: this.#invocations,
       redirects: this.#redirects,
       diagnostics: this.#diagnostics,
+      environmentAssignments: [...this.#environmentAssignments],
       hasBypass: this.#findBypass(),
     };
   }
@@ -509,6 +511,7 @@ class BashAnalyzer {
     if (assignment.name === undefined) {
       return null;
     }
+    this.#environmentAssignments.add(assignment.name);
     const trustedTemp =
       assignment.append !== true &&
       assignment.index === undefined &&
@@ -1057,6 +1060,7 @@ class BashAnalyzer {
     for (const word of invocation.words.slice(1)) {
       const name = /^(?<name>[A-Za-z_][A-Za-z0-9_]*)/u.exec(word.source)?.groups?.['name'];
       if (name !== undefined) {
+        this.#environmentAssignments.add(name);
         if (invocation.head === 'local') {
           functionScope?.localNames.add(name);
         }

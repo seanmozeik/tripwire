@@ -66,6 +66,7 @@ interface ShellDiagnostic {
 }
 
 interface ShellProgram {
+  readonly environmentAssignments?: readonly string[];
   readonly source: string;
   readonly invocations: readonly ShellInvocation[];
   readonly redirects: readonly ShellRedirect[];

@@ -5,7 +5,12 @@ import type { CodeLanguage, Value } from './types';
 
 const unknown: Value = { kind: 'unknown' };
 const symbol = (name: string): Value => ({ kind: 'symbol', name });
-const textValue = (value: string): Value => ({ kind: 'string', value });
+const textValue = (value: string): Value => {
+  if (value.length > 65_536) {
+    return failInspection('A resolved string exceeds its size limit.');
+  }
+  return { kind: 'string', value };
+};
 const valueString = (value: Value | undefined): string => {
   if (value?.kind === 'string') {
     return value.value;

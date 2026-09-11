@@ -13,6 +13,7 @@ class CodeAnalyzer {
   readonly #bindings: Map<string, Value>;
   readonly #source: string;
   readonly #language: CodeLanguage;
+  #evaluatedBytes = 0;
 
   constructor(source: string, language: CodeLanguage) {
     this.#source = source;
@@ -73,8 +74,8 @@ class CodeAnalyzer {
 
   #assign(parts: readonly SyntaxNode[]): void {
     const equals = parts.findIndex((part) => part.name === 'AssignOp' || part.name === 'Equals');
-    const target = parts.find(
-      (part) => part.name === 'VariableName' || part.name === 'VariableDefinition',
+    const target = parts.find((part) =>
+      ['VariableName', 'VariableDefinition', 'ObjectPattern'].includes(part.name),
     );
     const operator = parts[equals];
     const expression = parts[equals + 1];
@@ -89,17 +90,58 @@ class CodeAnalyzer {
     if (this.#text(operator) !== '=') {
       return failInspection('Compound assignment is not inspected.');
     }
-    if (
-      parts.some((part) =>
-        ['MemberExpression', 'ObjectPattern', 'ArrayPattern'].includes(part.name),
-      )
-    ) {
+    if (parts.some((part) => ['MemberExpression', 'ArrayPattern'].includes(part.name))) {
       return failInspection('Destructuring or object mutation is not inspected.');
     }
-    this.#bindings.set(this.#text(target), this.#eval(expression));
+    const value = this.#eval(expression);
+    if (target.name === 'ObjectPattern') {
+      this.#destructure(target, value);
+    } else {
+      this.#bindings.set(this.#text(target), value);
+    }
+  }
+
+  #destructure(pattern: SyntaxNode, value: Value): void {
+    if (value.kind !== 'symbol') {
+      return failInspection('Only named module members can be destructured.');
+    }
+    for (const property of children(pattern).filter(
+      (part) => !['{', '}', ','].includes(part.name),
+    )) {
+      const fields = children(property);
+      const [name, separator, alias] = fields;
+      if (property.name !== 'PatternProperty' || name?.name !== 'PropertyName') {
+        return failInspection('Computed or rest destructuring is not inspected.');
+      }
+      if (fields.length === 1) {
+        this.#bindings.set(this.#text(name), symbol(`${value.name}.${this.#text(name)}`));
+      } else if (
+        fields.length === 3 &&
+        separator?.name === ':' &&
+        alias?.name === 'VariableDefinition'
+      ) {
+        this.#bindings.set(this.#text(alias), symbol(`${value.name}.${this.#text(name)}`));
+      } else {
+        return failInspection('Destructuring defaults are not inspected.');
+      }
+    }
   }
 
   #eval(node: SyntaxNode): Value {
+    const value = this.#expression(node);
+    if (value.kind === 'string') {
+      this.#evaluatedBytes += value.value.length;
+    }
+    if (value.kind === 'path' || value.kind === 'file') {
+      this.#evaluatedBytes += value.path.length;
+    }
+    if (this.#evaluatedBytes > 1_048_576) {
+      return failInspection('Code exceeds the resolved value budget.');
+    }
+    return value;
+  }
+
+  #expression(node: SyntaxNode): Value {
     switch (node.name) {
       case 'String': {
         return textValue(stringLiteral(this.#text(node)));
@@ -232,6 +274,9 @@ class CodeAnalyzer {
     const args = children(argsNode)
       .filter((part) => !['(', ')', ','].includes(part.name))
       .map((part) => this.#eval(part));
+    if (args.length > 128) {
+      return failInspection('Call exceeds the argument count limit.');
+    }
     return resolveCall(fn, args, {
       language: this.#language,
       range: { start: node.from, end: node.to },

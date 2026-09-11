@@ -263,6 +263,10 @@ const collectBashRules = (
 
 const codePolicy = (config: ResolvedConfig, cwd: string | undefined, depth = 0): CodePolicy => ({
   safePaths: config.safePaths,
+  remoteHeads: new Set([
+    'ssh',
+    ...config.shell.executionCarrierAliases.map((alias) => alias.command[0] ?? ''),
+  ]),
   cwd: cwd ?? process.cwd(),
   inspectCommand: (command) =>
     runRulesSync(collectBashRules(command, config, cwd === undefined ? {} : { cwd }, depth + 1)),

@@ -14,7 +14,34 @@ interface CodePolicy {
   readonly safePaths: SafePathsConfig;
   readonly cwd: string;
   readonly inspectCommand: (command: string) => Decision;
+  readonly remoteHeads: ReadonlySet<string>;
 }
+
+const STARTUP_VARIABLES = new Set([
+  'NODE_OPTIONS',
+  'NODE_PATH',
+  'PYTHONPATH',
+  'PYTHONHOME',
+  'PYTHONSTARTUP',
+  'LD_PRELOAD',
+  'DYLD_INSERT_LIBRARIES',
+  'BUN_OPTIONS',
+]);
+
+const uncertainContext = (program: ShellProgram, policy: CodePolicy): boolean => {
+  if (program.environmentAssignments?.some((name) => STARTUP_VARIABLES.has(name)) === true) {
+    return true;
+  }
+  return program.invocations.some((command) => {
+    if (['cd', 'pushd', 'popd'].includes(command.head) || policy.remoteHeads.has(command.head)) {
+      return true;
+    }
+    return (
+      command.head === 'env' &&
+      command.tokens.some((word) => STARTUP_VARIABLES.has(word.split('=')[0] ?? ''))
+    );
+  });
+};
 
 const codeDeny = (message: string): Decision =>
   deny(
@@ -22,37 +49,56 @@ const codeDeny = (message: string): Decision =>
     `${message} Use a dedicated file tool, a recoverable deletion tool, or a command Tripwire can fully inspect.`,
   );
 
+const canonicalPath = (target: string): string | null => {
+  let current = target;
+  const suffix: string[] = [];
+  for (let depth = 0; depth < 256; depth += 1) {
+    try {
+      return path.join(realpathSync(current), ...suffix.toReversed());
+    } catch (cause) {
+      if (!(cause instanceof Error) || !('code' in cause) || cause.code !== 'ENOENT') {
+        return null;
+      }
+    }
+    try {
+      if (lstatSync(current).isSymbolicLink()) {
+        return null;
+      }
+    } catch (cause) {
+      if (!(cause instanceof Error) || !('code' in cause) || cause.code !== 'ENOENT') {
+        return null;
+      }
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return null;
+    }
+    suffix.push(path.basename(current));
+    current = parent;
+  }
+  return null;
+};
+
 const safeDeletion = (target: string, policy: CodePolicy): boolean => {
   if (target === '' || target.includes('\0')) {
-    return false;
-  }
-  const resolved = path.resolve(policy.cwd, target);
-  if (resolved === path.parse(resolved).root || resolved === policy.cwd) {
     return false;
   }
   if (!isSafePathTarget(target, policy.safePaths.relative, policy.safePaths.absolute)) {
     return false;
   }
-  // An existing symlink inside a safe scope must not redirect deletion to protected data.
-  let current = resolved;
-  for (let depth = 0; depth < 256; depth += 1) {
-    try {
-      if (lstatSync(current).isSymbolicLink()) {
-        return false;
-      }
-      realpathSync(current);
-    } catch (cause) {
-      if (!(cause instanceof Error) || !('code' in cause) || cause.code !== 'ENOENT') {
-        return false;
-      }
-    }
-    const parent = path.dirname(current);
-    if (parent === current) {
-      return true;
-    }
-    current = parent;
+  const resolved = canonicalPath(path.resolve(policy.cwd, target));
+  const base = canonicalPath(policy.cwd);
+  if (
+    resolved === null ||
+    base === null ||
+    resolved === path.parse(resolved).root ||
+    resolved === base
+  ) {
+    return false;
   }
-  return false;
+  // Classify the real target in the same absolute/relative scope as the submitted path.
+  const actual = path.isAbsolute(target) ? resolved : path.relative(base, resolved);
+  return isSafePathTarget(actual, policy.safePaths.relative, policy.safePaths.absolute);
 };
 
 const quoteArgument = (argument: string): string =>
@@ -92,8 +138,10 @@ const embeddedCode = (program: ShellProgram, policy: CodePolicy): Decision => {
       return codeDeny(input.reason);
     }
     if (input.kind === 'source') {
-      if (program.invocations.some((command) => ['cd', 'pushd', 'popd'].includes(command.head))) {
-        return codeDeny('A directory change makes the interpreter working directory uncertain.');
+      if (uncertainContext(program, policy)) {
+        return codeDeny(
+          'Interpreter startup, working directory, or remote filesystem state is not verified.',
+        );
       }
       decisions.push(inspectCode(input.language, input.source, policy));
     }

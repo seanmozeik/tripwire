@@ -4,7 +4,11 @@ import { parser as python } from '@lezer/python';
 
 import type { CodeLanguage } from './types';
 
-const typescript = javascript.configure({ dialect: 'ts' });
+const parsers = {
+  python: python.configure({ strict: true }),
+  javascript: javascript.configure({ strict: true }),
+  typescript: javascript.configure({ dialect: 'ts', strict: true }),
+};
 const MAX_SOURCE = 65_536;
 const MAX_NODES = 12_000;
 const MAX_DEPTH = 80;
@@ -29,7 +33,7 @@ const parseCode = (language: CodeLanguage, source: string): SyntaxNode => {
   if (source.length > MAX_SOURCE) {
     throw new CodeInspectionError('Code exceeds the source size limit.');
   }
-  const parser = { python, javascript, typescript }[language];
+  const parser = parsers[language];
   const pending = parser.startParse(source);
   const deadline = performance.now() + 40;
   let tree = pending.advance();
