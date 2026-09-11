@@ -245,7 +245,7 @@ const cursorTopLevelToolInput = (tool: string, raw: JsonRecord): JsonRecord => {
 };
 
 const cursorToolInput = (eventName: string, tool: string, raw: JsonRecord, post: boolean) => {
-  const decoded = Schema.decodeUnknownResult(JsonRecordSchema)(raw);
+  const decoded = Schema.decodeResult(JsonRecordSchema)(raw);
   if (Result.isFailure(decoded)) {
     throw new Error('Cursor sent an invalid tool event');
   }
