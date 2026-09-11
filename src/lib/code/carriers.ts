@@ -37,15 +37,24 @@ const PACKAGE_LAUNCHERS = new Set([
 ]);
 const CODE_FLAGS = new Set(['--script', '--module', '-m', '-c', '-e', '--eval', '--call']);
 const opaqueCodeLauncher = (invocation: ShellInvocation): boolean => {
-  if (!PACKAGE_LAUNCHERS.has(path.posix.basename(invocation.head))) {
+  const name = path.posix.basename(invocation.head);
+  if (!PACKAGE_LAUNCHERS.has(name)) {
     return false;
+  }
+  // A uv stdin marker or computed argument can select Python without naming the interpreter.
+  if (
+    name === 'uv' &&
+    invocation.tokens.includes('run') &&
+    (invocation.tokens.includes('-') || invocation.words.some((word) => word.kind !== 'literal'))
+  ) {
+    return true;
   }
   return invocation.words
     .slice(1)
     .some(
       (word) =>
         interpreterLanguage(word.value) !== null ||
-        CODE_FLAGS.has(word.value) ||
+        CODE_FLAGS.has(word.value.split('=')[0] ?? '') ||
         /\.(?:py|pyw|mjs|cjs|js|jsx|ts|tsx)$/u.test(word.value),
     );
 };
