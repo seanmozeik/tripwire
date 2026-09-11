@@ -1,0 +1,183 @@
+import path from 'node:path';
+
+import { failInspection } from './syntax';
+import type { CodeLanguage, CodeOperation, CodeRange, Value } from './types';
+import { moduleName, pythonJoin, symbol, textValue, unknown, valueString } from './values';
+
+const FILE_OPERATIONS = new Map<string, 'delete' | 'read' | 'write' | 'truncate'>([
+  ...[
+    'os.remove',
+    'os.unlink',
+    'os.rmdir',
+    'shutil.rmtree',
+    'fs.rm',
+    'fs.rmSync',
+    'fs.unlink',
+    'fs.unlinkSync',
+    'fs.rmdir',
+    'fs.rmdirSync',
+    'Deno.remove',
+    'Deno.removeSync',
+  ].map((name): [string, 'delete'] => [name, 'delete']),
+  ...['fs.readFile', 'fs.readFileSync', 'Deno.readTextFile', 'Deno.readTextFileSync'].map(
+    (name): [string, 'read'] => [name, 'read'],
+  ),
+  ...[
+    'fs.writeFile',
+    'fs.writeFileSync',
+    'fs.appendFile',
+    'fs.appendFileSync',
+    'Deno.writeTextFile',
+    'Deno.writeTextFileSync',
+  ].map((name): [string, 'write'] => [name, 'write']),
+  ...['os.truncate', 'fs.truncate', 'fs.truncateSync'].map((name): [string, 'truncate'] => [
+    name,
+    'truncate',
+  ]),
+]);
+const PROCESS = new Set([
+  'subprocess.run',
+  'subprocess.call',
+  'subprocess.check_call',
+  'subprocess.check_output',
+  'subprocess.Popen',
+  'child_process.execFile',
+  'child_process.execFileSync',
+  'child_process.spawn',
+  'child_process.spawnSync',
+]);
+const PURE = new Set([
+  'print',
+  'console.log',
+  'console.info',
+  'console.warn',
+  'console.error',
+  'len',
+  'str',
+  'int',
+  'float',
+  'abs',
+  'round',
+  'json.loads',
+  'json.dumps',
+  'JSON.parse',
+  'JSON.stringify',
+]);
+
+interface CallContext {
+  readonly language: CodeLanguage;
+  readonly range: CodeRange;
+  readonly operations: CodeOperation[];
+}
+
+const processArguments = (name: string, args: readonly Value[]): readonly string[] => {
+  const [first, second] = args;
+  if (name.startsWith('subprocess.')) {
+    if (args.length !== 1 || first?.kind !== 'list') {
+      return failInspection('Subprocess options or shell execution require review.');
+    }
+    if (first.items.length === 0) {
+      return failInspection('Empty subprocess argument list.');
+    }
+    return first.items.map((value) => valueString(value));
+  }
+  if (args.length > 2 || (second !== undefined && second.kind !== 'list')) {
+    return failInspection('Subprocess options require review.');
+  }
+  return [
+    valueString(first),
+    ...(second?.kind === 'list' ? second.items.map((value) => valueString(value)) : []),
+  ];
+};
+
+const pathCall = (
+  receiver: Extract<Value, { kind: 'path' | 'file' }>,
+  member: string,
+  args: readonly Value[],
+  context: CallContext,
+): Value => {
+  const kinds: Readonly<Record<string, 'delete' | 'read' | 'write'>> =
+    receiver.kind === 'path'
+      ? {
+          unlink: 'delete',
+          rmdir: 'delete',
+          read_text: 'read',
+          read_bytes: 'read',
+          write_text: 'write',
+          write_bytes: 'write',
+        }
+      : { read: 'read', write: 'write' };
+  const kind = kinds[member];
+  if (kind === undefined) {
+    return failInspection(`Unsupported ${receiver.kind} method: ${member}.`);
+  }
+  const effect = kind === 'write' && valueString(args[0]) === '' ? 'truncate' : kind;
+  context.operations.push({ kind: effect, path: receiver.path, range: context.range });
+  return unknown;
+};
+
+const openFile = (args: readonly Value[], context: CallContext): Value => {
+  if (args.length > 2) {
+    return failInspection('File opener options are not inspected.');
+  }
+  const mode = args[1] === undefined ? 'r' : valueString(args[1]);
+  const access: Readonly<Record<string, 'read' | 'truncate' | 'write'>> = {
+    r: 'read',
+    rb: 'read',
+    rt: 'read',
+    w: 'truncate',
+    wb: 'truncate',
+    wt: 'truncate',
+    a: 'write',
+    ab: 'write',
+    at: 'write',
+  };
+  const kind = access[mode];
+  if (kind === undefined) {
+    return failInspection('Unsupported file open mode.');
+  }
+  const target = valueString(args[0]);
+  context.operations.push({ kind, path: target, range: context.range });
+  return { kind: 'file', path: target };
+};
+
+const resolveCall = (fn: Value, args: readonly Value[], context: CallContext): Value => {
+  if (fn.kind === 'method') {
+    return pathCall(fn.receiver, fn.name, args, context);
+  }
+  if (fn.kind !== 'symbol') {
+    return failInspection('Dynamic call target.');
+  }
+  const { name } = fn;
+  if (name === 'require') {
+    return symbol(moduleName(valueString(args[0]), context.language));
+  }
+  if (name === 'pathlib.Path' || name === 'pathlib.PosixPath') {
+    return { kind: 'path', path: pythonJoin(args.map((value) => valueString(value))) };
+  }
+  if (name === 'os.path.join') {
+    return textValue(pythonJoin(args.map((value) => valueString(value))));
+  }
+  if (name === 'path.join') {
+    return textValue(path.posix.join(...args.map((value) => valueString(value))));
+  }
+  if (name === 'open') {
+    return openFile(args, context);
+  }
+  const kind = FILE_OPERATIONS.get(name);
+  if (kind !== undefined) {
+    const effect = kind === 'write' && valueString(args[1]) === '' ? 'truncate' : kind;
+    context.operations.push({ kind: effect, path: valueString(args[0]), range: context.range });
+  } else if (PROCESS.has(name)) {
+    context.operations.push({
+      kind: 'process',
+      argv: processArguments(name, args),
+      range: context.range,
+    });
+  } else if (!PURE.has(name)) {
+    return failInspection(`Call ${JSON.stringify(name)} has uninspected effects.`);
+  }
+  return unknown;
+};
+
+export { resolveCall };

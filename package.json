@@ -60,6 +60,9 @@
     "verify": "bun run format:check && bun run lint && bun run typecheck && bun test && bun run build"
   },
   "dependencies": {
+    "@lezer/common": "1.5.2",
+    "@lezer/javascript": "1.5.4",
+    "@lezer/python": "1.1.19",
     "unbash": "4.0.10"
   },
   "devDependencies": {

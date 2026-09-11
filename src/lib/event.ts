@@ -51,6 +51,11 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const isBashInput = (x: unknown): x is BashInput => isRecord(x) && typeof x['command'] === 'string';
 
+const CodeInputSchema = Schema.Union([Schema.String, Schema.Struct({ code: Schema.String })]);
+const ExecInputSchema = Schema.Struct({ cmd: Schema.String });
+const decodeCodeInput = Schema.decodeUnknownOption(CodeInputSchema);
+const decodeExecInput = Schema.decodeUnknownOption(ExecInputSchema);
+
 const isEditInput = (x: unknown): x is EditInput =>
   isRecord(x) &&
   typeof x['file_path'] === 'string' &&
@@ -102,4 +107,6 @@ export {
   isEditInput,
   isReadInput,
   isWriteInput,
+  decodeCodeInput,
+  decodeExecInput,
 };

@@ -772,7 +772,14 @@ class BashAnalyzer {
       } else {
         op = redirect.operator;
       }
-      const shellRedirect: ShellRedirect = { op, target, range: rangeOf(redirect) };
+      const shellRedirect: ShellRedirect = {
+        op,
+        target,
+        range: rangeOf(redirect),
+        ...(redirect.content !== undefined && {
+          heredoc: { content: redirect.content, quoted: redirect.heredocQuoted === true },
+        }),
+      };
       normalized.push(shellRedirect);
       this.#redirects.push(shellRedirect);
     }

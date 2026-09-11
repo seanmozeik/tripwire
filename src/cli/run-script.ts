@@ -77,12 +77,15 @@ const runCheckedScript = (
       positionalArguments: arguments_,
     });
     if (decision.kind === 'deny' || decision.kind === 'ask') {
-      yield* new CheckedScriptError({ message: `[tripwire:${decision.rule}] ${decision.message}` });
+      return yield* new CheckedScriptError({
+        message: `[tripwire:${decision.rule}] ${decision.message}`,
+      });
     }
     if (decision.kind === 'warn') {
       process.stderr.write(`[tripwire:${decision.rule}] ${decision.message}\n`);
     }
     process.exitCode = yield* executeBytes(bytes, arguments_);
+    return yield* Effect.void;
   });
 
 export { CheckedScriptError, runCheckedScript };

@@ -25,6 +25,8 @@ interface ShellWord {
 }
 
 interface ShellRedirect {
+  /** Source bytes for a heredoc; never execute these bytes during inspection. */
+  readonly heredoc?: { readonly content: string; readonly quoted: boolean };
   readonly op: '>' | '>>' | '<' | '<<' | '<<<' | '<>' | '>&' | '<&' | '&>' | '&>>';
   readonly target: ShellWord;
   readonly range: SourceRange;

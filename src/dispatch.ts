@@ -4,7 +4,7 @@
 // Denials tell the agent which safe alternative to use.
 
 import { BunRuntime } from '@effect/platform-bun';
-import { Cause, Data, Effect, Exit, Schema } from 'effect';
+import { Cause, Data, Effect, Exit, Option, Schema } from 'effect';
 
 import { analyzeBash, type BashAnalysisOptions } from './lib/bash';
 import {
@@ -29,6 +29,8 @@ import {
   isEditInput,
   isReadInput,
   isWriteInput,
+  decodeCodeInput,
+  decodeExecInput,
 } from './lib/event.ts';
 import { logError } from './lib/log';
 import { applyShellBypass } from './rules/bash-bypass';
@@ -39,6 +41,7 @@ import { bashRedirect } from './rules/bash-redirect';
 import { bashScopedRm } from './rules/bash-scoped-rm';
 import { bashTarExplosion } from './rules/bash-tar-explosion';
 import { configCustom } from './rules/config-custom';
+import { codeDeny, embeddedCode, inspectCode, type CodePolicy } from './rules/embedded-code';
 import { lazyCode } from './rules/lazy-code';
 import { pathProtect } from './rules/path-protect';
 import { postSecretScrub } from './rules/post-secret-scrub';
@@ -156,28 +159,34 @@ const writePostToolBlock = (decision: Decision, host: HookHost): void => {
 
 // Tool names vary across hosts. Normalize Claude Code, Codex, Cursor, Pi, and
 // Oh My Pi names to one canonical vocabulary before rules run.
-const normalizeToolName = (name: string): string => {
-  const n = name.toLowerCase();
-  if (n === 'bash' || n === 'exec' || n === 'shell' || n === 'run_command') {
-    return 'Bash';
-  }
-  if (n === 'read' || n === 'read_file') {
-    return 'Read';
-  }
-  if (n === 'write' || n === 'write_file') {
-    return 'Write';
-  }
-  if (n === 'edit' || n === 'edit_file' || n === 'multiedit' || n === 'apply_patch') {
-    return 'Edit';
-  }
-  if (n === 'webfetch' || n === 'web_fetch' || n === 'fetch') {
-    return 'WebFetch';
-  }
-  if (n === 'powershell') {
-    return 'PowerShell';
-  }
-  return name;
+const TOOL_NAMES: Readonly<Record<string, string>> = {
+  bash: 'Bash',
+  exec: 'Bash',
+  shell: 'Bash',
+  run_command: 'Bash',
+  read: 'Read',
+  read_file: 'Read',
+  write: 'Write',
+  write_file: 'Write',
+  edit: 'Edit',
+  edit_file: 'Edit',
+  multiedit: 'Edit',
+  apply_patch: 'Edit',
+  webfetch: 'WebFetch',
+  web_fetch: 'WebFetch',
+  fetch: 'WebFetch',
+  powershell: 'PowerShell',
+  exec_command: 'ExecCommand',
+  'functions.exec_command': 'ExecCommand',
+  'functions.exec': 'Bash',
+  python: 'Python',
+  javascript: 'CodeRepl',
+  typescript: 'CodeRepl',
+  js_repl: 'StatefulCode',
+  python_repl: 'StatefulCode',
+  'functions.js_repl': 'StatefulCode',
 };
+const normalizeToolName = (name: string): string => TOOL_NAMES[name.toLowerCase()] ?? name;
 
 type RuleFn = () => Decision;
 
@@ -200,7 +209,9 @@ const runRule = (name: string, fn: RuleFn, timeoutMs: number): Effect.Effect<Dec
       return exit.value;
     }
     logError(name, Cause.pretty(exit.cause));
-    return allow(name);
+    return name === 'embedded-code'
+      ? codeDeny('The code inspection rule failed or timed out.')
+      : allow(name);
   });
 
 interface Rule {
@@ -212,7 +223,16 @@ const collectBashRules = (
   command: string,
   config: ResolvedConfig,
   options: BashAnalysisOptions = {},
+  depth = 0,
 ): Rule[] => {
+  if (depth > 8) {
+    return [
+      {
+        name: 'embedded-code',
+        fn: () => codeDeny('Nested process inspection exceeds its depth limit.'),
+      },
+    ];
+  }
   const rules: Rule[] = [];
   const program = analyzeBash(command, {
     ...options,
@@ -223,6 +243,10 @@ const collectBashRules = (
     fn: () => applyShellBypass(program, evaluate()),
   });
   rules.push(
+    {
+      name: 'embedded-code',
+      fn: () => embeddedCode(program, codePolicy(config, options.cwd, depth)),
+    },
     shellRule('bash-deny', () => bashDeny(program, config.ruleActions)),
     shellRule('bash-git', () => bashGit(program, config.git)),
     shellRule('bash-scoped-rm', () => bashScopedRm(program, config.safePaths)),
@@ -237,12 +261,73 @@ const collectBashRules = (
   return rules;
 };
 
+const codePolicy = (config: ResolvedConfig, cwd: string | undefined, depth = 0): CodePolicy => ({
+  safePaths: config.safePaths,
+  cwd: cwd ?? process.cwd(),
+  inspectCommand: (command) =>
+    runRulesSync(collectBashRules(command, config, cwd === undefined ? {} : { cwd }, depth + 1)),
+});
+
+const collectExecutableToolRules = (
+  tool: string,
+  input: unknown,
+  config: ResolvedConfig,
+  cwd?: string,
+): Rule[] | undefined => {
+  if (tool === 'StatefulCode') {
+    return [
+      {
+        name: 'embedded-code',
+        fn: () =>
+          codeDeny(
+            'Persistent REPL bindings cannot be verified by a stateless hook. Use a fresh interpreter process.',
+          ),
+      },
+    ];
+  }
+  if (tool === 'ExecCommand') {
+    const decoded = decodeExecInput(input);
+    return Option.isSome(decoded)
+      ? collectBashRules(decoded.value.cmd, config, cwd === undefined ? {} : { cwd })
+      : [
+          {
+            name: 'embedded-code',
+            fn: () => codeDeny('Executable tool input is missing its command.'),
+          },
+        ];
+  }
+  if (tool === 'Python' || tool === 'CodeRepl' || (tool === 'Bash' && !isBashInput(input))) {
+    const decoded = decodeCodeInput(input);
+    if (Option.isNone(decoded)) {
+      return [
+        {
+          name: 'embedded-code',
+          fn: () => codeDeny('Executable tool input is missing its source text.'),
+        },
+      ];
+    }
+    const source = typeof decoded.value === 'string' ? decoded.value : decoded.value.code;
+    return [
+      {
+        name: 'embedded-code',
+        fn: () =>
+          inspectCode(tool === 'Python' ? 'python' : 'typescript', source, codePolicy(config, cwd)),
+      },
+    ];
+  }
+  return undefined;
+};
+
 const collectPreToolUseRules = (
   tool: string,
   input: unknown,
   config: ResolvedConfig,
   cwd?: string,
 ): Rule[] => {
+  const executableRules = collectExecutableToolRules(tool, input, config, cwd);
+  if (executableRules !== undefined) {
+    return executableRules;
+  }
   const rules: Rule[] = [];
   if (tool === 'PowerShell') {
     rules.push({
@@ -321,7 +406,11 @@ const runRulesSync = (rules: readonly Rule[]): Decision => {
       decisions.push(rule.fn());
     } catch (cause) {
       logError(rule.name, cause);
-      decisions.push(allow(rule.name));
+      decisions.push(
+        rule.name === 'embedded-code'
+          ? codeDeny('The code inspection rule failed.')
+          : allow(rule.name),
+      );
     }
   }
   return merge(decisions);
