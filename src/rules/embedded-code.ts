@@ -2,8 +2,10 @@ import { lstatSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
 import { isSafePathTarget, type ShellProgram } from '../lib/bash';
+import { skipHeadRenamingPrefix } from '../lib/bash/wrappers';
 import { analyzeCode } from '../lib/code/analyze';
 import { interpreterInput } from '../lib/code/carriers';
+import { hasPackageScript } from '../lib/code/project-commands';
 import type { CodeLanguage, CodeOperation } from '../lib/code/types';
 import type { SafePathsConfig } from '../lib/config';
 import { allow, deny, merge, type Decision } from '../lib/decision';
@@ -33,7 +35,18 @@ const uncertainContext = (program: ShellProgram, policy: CodePolicy): boolean =>
     return true;
   }
   return program.invocations.some((command) => {
-    if (['cd', 'pushd', 'popd'].includes(command.head) || policy.remoteHeads.has(command.head)) {
+    if (
+      ['cd', 'pushd', 'popd', 'chroot'].includes(command.head) ||
+      policy.remoteHeads.has(command.head)
+    ) {
+      return true;
+    }
+    if (
+      ['env', 'sudo'].includes(command.head) &&
+      command.tokens
+        .slice(1, skipHeadRenamingPrefix(command))
+        .some((token) => /^(?:-C|-D|-R|--chdir(?:=|$)|--chroot(?:=|$))/u.test(token))
+    ) {
       return true;
     }
     return (
@@ -136,6 +149,19 @@ const embeddedCode = (program: ShellProgram, policy: CodePolicy): Decision => {
     const input = interpreterInput(invocation);
     if (input.kind === 'blocked') {
       return codeDeny(input.reason);
+    }
+    if (input.kind === 'project') {
+      if (uncertainContext(program, policy)) {
+        return codeDeny('The project command has an unverified execution context.');
+      }
+      if (
+        input.script !== null &&
+        !hasPackageScript(path.resolve(policy.cwd, input.directory ?? '.'), input.script)
+      ) {
+        return codeDeny(
+          'The named script is absent from the selected package.json. Check the script name and working directory.',
+        );
+      }
     }
     if (input.kind === 'command') {
       if (uncertainContext(program, policy)) {

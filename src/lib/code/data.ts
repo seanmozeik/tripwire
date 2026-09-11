@@ -62,9 +62,16 @@ const writeKind = (target: string, value: Value | undefined): 'write' | 'truncat
 };
 
 const replaceText = (receiver: Value, args: readonly Value[], language: CodeLanguage): Value => {
-  const [before, after] = args;
-  if (args.length !== 2 || before?.kind !== 'string' || after?.kind !== 'string') {
-    return failInspection('Text replacement needs two literal strings.');
+  const [before, after, count] = args;
+  const validCount =
+    language === 'python' &&
+    args.length === 3 &&
+    count?.kind === 'number' &&
+    Number.isSafeInteger(count.value);
+  if ((!validCount && args.length !== 2) || before?.kind !== 'string' || after?.kind !== 'string') {
+    return failInspection(
+      'Text replacement needs two literal strings and an optional Python integer count.',
+    );
   }
   // JS replacement tokens such as $` can produce an empty string even when
   // the submitted replacement is nonempty. Literal Python str.replace cannot.

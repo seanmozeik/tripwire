@@ -1,8 +1,10 @@
 import { compatibilityPairs } from './code-compatibility';
 import { compatibilityAttacks } from './code-compatibility-attacks';
 import { codeFixtures } from './embedded-code';
+import { projectCommandFixtures } from './project-commands';
 
 const allCodeFixtures = [
+  ...projectCommandFixtures,
   ...codeFixtures,
   ...compatibilityPairs.flatMap((pair) => [
     { name: `${pair.name}: allow`, command: pair.allow, allowed: true },

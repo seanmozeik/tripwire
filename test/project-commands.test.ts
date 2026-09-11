@@ -1,0 +1,81 @@
+import * as bunTest from 'bun:test';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
+import { decideBash } from '../src/dispatch';
+import { analyzeBash } from '../src/lib/bash';
+import { projectCommandFixtures } from './fixtures/project-commands';
+
+bunTest.describe('project command classification (commands are never executed)', () => {
+  for (const fixture of projectCommandFixtures) {
+    bunTest.test(fixture.name, () => {
+      const result = decideBash(fixture.command, {}, { cwd: '/tripwire-policy-fixture' });
+      bunTest.expect(result.kind, result.message).toBe(fixture.allowed ? 'allow' : 'deny');
+    });
+  }
+  bunTest.test('command lookup emits no executable operand', () => {
+    const result = analyzeBash('command -v node python3 pnpm');
+    bunTest.expect(result.invocations.map((invocation) => invocation.head)).toEqual(['command']);
+  });
+  bunTest.test('Bun script selection reads the selected package manifest', () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), 'tripwire-project-command-'));
+    try {
+      mkdirSync(path.join(cwd, 'server'));
+      writeFileSync(
+        path.join(cwd, 'server/package.json'),
+        JSON.stringify({
+          scripts: { 'generate:database-types': 'inert fixture', 'qa:release': 'inert fixture' },
+        }),
+      );
+      for (const command of [
+        'bun --cwd server run generate:database-types',
+        'bun run --cwd server generate:database-types',
+        'bun --cwd=server run qa:release',
+        'bun run --cwd=server qa:release -- --filter data',
+      ]) {
+        const result = decideBash(command, {}, { cwd });
+        bunTest.expect(result.kind, `${command}: ${result.message}`).toBe('allow');
+      }
+      for (const command of [
+        'bun run generate:database-types',
+        'bun --cwd server run verify-source-file-line-budget',
+        'bun --cwd missing run generate:database-types',
+        'bun --cwd server --cwd missing run qa:release',
+        'bun run --cwd server --preload ./payload.js qa:release',
+        'bun --cwd server run qa:release; rm -rf /protected',
+        'cd server && bun run qa:release',
+        'NODE_OPTIONS="--import ./payload.js" bun --cwd server run qa:release',
+        'env -C /unverified bun --cwd server run qa:release',
+        'env --chdir=/unverified bun --cwd server run qa:release',
+        'sudo --chdir /unverified bun --cwd server run qa:release',
+      ]) {
+        bunTest.expect(decideBash(command, {}, { cwd }).kind, command).toBe('deny');
+      }
+      bunTest
+        .expect(
+          decideBash('bun run generate:database-types', {}, { cwd: path.join(cwd, 'server') }).kind,
+        )
+        .toBe('allow');
+      writeFileSync(path.join(cwd, 'server/package.json'), '{invalid');
+      bunTest.expect(decideBash('bun --cwd server run qa:release', {}, { cwd }).kind).toBe('deny');
+      for (const manifest of [
+        { scripts: ['inert fixture'] },
+        { scripts: { 'qa:release': null } },
+        { scripts: { 'qa:release': '' } },
+        { scripts: { 'qa:release': '   ' } },
+      ]) {
+        writeFileSync(path.join(cwd, 'server/package.json'), JSON.stringify(manifest));
+        bunTest
+          .expect(decideBash('bun --cwd server run qa:release', {}, { cwd }).kind)
+          .toBe('deny');
+      }
+      writeFileSync(path.join(cwd, 'server/package.json'), ' '.repeat(1_048_577));
+      bunTest.expect(decideBash('bun --cwd server run qa:release', {}, { cwd }).kind).toBe('deny');
+      writeFileSync(path.join(cwd, 'server/package.json'), new Uint8Array([255]));
+      bunTest.expect(decideBash('bun --cwd server run qa:release', {}, { cwd }).kind).toBe('deny');
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});

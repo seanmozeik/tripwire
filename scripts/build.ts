@@ -8,6 +8,7 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -105,6 +106,47 @@ const smokeEmbeddedCode = (runtime: readonly string[]): void => {
     } else {
       assertDenied(result, `Embedded code: ${fixture.name}`);
     }
+  }
+};
+
+const smokePackageScripts = (runtime: readonly string[]): void => {
+  const cwd = mkdtempSync(path.join(tmpdir(), 'tripwire-package-script-smoke-'));
+  try {
+    const directory = path.join(cwd, 'project');
+    mkdirSync(directory);
+    // The script is metadata only. The hook receives JSON and must not execute it.
+    writeFileSync(
+      path.join(directory, 'package.json'),
+      JSON.stringify({ scripts: { 'qa:fixture': 'exit 97' } }),
+    );
+    for (const command of [
+      'bun --cwd project run qa:fixture',
+      'bun run --cwd=project qa:fixture',
+    ]) {
+      assertAllowed(
+        runWithInput([...runtime, '--tripwire-hook'], {
+          ...safeHookInput,
+          cwd,
+          tool_input: { command },
+        }),
+        'Manifest-backed package script',
+      );
+    }
+    for (const command of [
+      'bun --cwd project run qa:missing',
+      'bun --cwd project --preload ./payload.ts run qa:fixture',
+    ]) {
+      assertDenied(
+        runWithInput([...runtime, '--tripwire-hook'], {
+          ...safeHookInput,
+          cwd,
+          tool_input: { command },
+        }),
+        'Unverified package script',
+      );
+    }
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
   }
 };
 
@@ -543,6 +585,8 @@ try {
 
   smokeEmbeddedCode([stagedNative]);
   smokeEmbeddedCode([process.execPath, stagedPortable]);
+  smokePackageScripts([stagedNative]);
+  smokePackageScripts([process.execPath, stagedPortable]);
 
   const library: unknown = await import(
     `${pathToFileURL(stagedLibrary).href}?build=${Date.now().toString()}`

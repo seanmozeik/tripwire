@@ -1,10 +1,12 @@
 import path from 'node:path';
 
 import type { ShellInvocation } from '../bash';
+import { projectCommand, type ProjectCommand } from './project-commands';
 import type { CodeLanguage } from './types';
 import { uvInvocation } from './uv';
 
 type CodeInput =
+  | ProjectCommand
   | { readonly kind: 'source'; readonly language: CodeLanguage; readonly source: string }
   | { readonly kind: 'command'; readonly argv: readonly string[] }
   | { readonly kind: 'blocked'; readonly reason: string }
@@ -168,24 +170,14 @@ const interpreterInput = (invocation: ShellInvocation): CodeInput => {
   if (args.some((word) => word.kind !== 'literal')) {
     return blocked('Interpreter arguments contain runtime substitutions.');
   }
-  // Named project gates use the same trust boundary as bun test/build. Runtime
-  // options, file paths, and arbitrary executables do not enter this branch.
-  if (
-    name === 'bun' &&
-    args[0]?.value === 'run' &&
-    /^(?:check|test|typecheck|lint|format|build|verify)(?::[\w-]+)*$/u.test(args[1]?.value ?? '')
-  ) {
-    return irrelevant;
-  }
   if (args.length === 1 && ['--version', '-V', '--help', '-h'].includes(args[0]?.value ?? '')) {
     return irrelevant;
   }
+  const values = args.map((word) => word.value);
   return (
-    inlineInput(
-      args.map((word) => word.value),
-      language,
-      name,
-    ) ?? standardInput(invocation, language)
+    projectCommand(name, values) ??
+    inlineInput(values, language, name) ??
+    standardInput(invocation, language)
   );
 };
 

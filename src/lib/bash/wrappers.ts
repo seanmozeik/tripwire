@@ -113,6 +113,16 @@ const skipHeadRenamingPrefix = (invocation: ShellInvocation): number => {
     ? (HEAD_RENAMING_VALUE_FLAGS[invocation.head] ?? new Set<string>())
     : new Set<string>();
   let index = skipOptions(invocation.words, 1, valueFlags);
+  // Command -v/-V reports names. Only options before the operand count;
+  // `command -- node -v` still executes node.
+  if (
+    invocation.head === 'command' &&
+    invocation.words
+      .slice(1, index)
+      .some((word) => word.kind === 'literal' && /^-[p]*[vV][pvV]*$/u.test(word.value))
+  ) {
+    return invocation.words.length;
+  }
   if (invocation.head === 'env') {
     while (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(invocation.words[index]?.value ?? '')) {
       index += 1;
