@@ -2,6 +2,7 @@ import path from 'node:path';
 
 import type { ShellInvocation } from '../bash';
 import type { CodeLanguage } from './types';
+import { uvInvocation } from './uv';
 
 type CodeInput =
   | { readonly kind: 'source'; readonly language: CodeLanguage; readonly source: string }
@@ -26,7 +27,6 @@ const interpreterLanguage = (head: string): CodeLanguage | null => {
 };
 
 const PACKAGE_LAUNCHERS = new Set([
-  'uv',
   'poetry',
   'pipenv',
   'pipx',
@@ -42,14 +42,6 @@ const opaqueCodeLauncher = (invocation: ShellInvocation): boolean => {
   if (!PACKAGE_LAUNCHERS.has(name)) {
     return false;
   }
-  // A uv stdin marker or computed argument can select Python without naming the interpreter.
-  if (
-    name === 'uv' &&
-    invocation.tokens.includes('run') &&
-    (invocation.tokens.includes('-') || invocation.words.some((word) => word.kind !== 'literal'))
-  ) {
-    return true;
-  }
   return invocation.words
     .slice(1)
     .some(
@@ -60,46 +52,33 @@ const opaqueCodeLauncher = (invocation: ShellInvocation): boolean => {
     );
 };
 
-// Preserve the existing opaque-code rejection, then check ordinary commands
-// forwarded by uv against the same shell policy as a direct invocation.
 const uvCommand = (invocation: ShellInvocation): CodeInput => {
-  const flags = new Set([
-    '--no-sync',
-    '--locked',
-    '--frozen',
-    '--offline',
-    '--no-project',
-    '--no-config',
-    '--quiet',
-    '-q',
-    '--verbose',
-    '-v',
-  ]);
-  const words = invocation.words.slice(1);
-  if (words.some((word) => word.kind !== 'literal')) {
-    return blocked('The uv command contains unresolved arguments.');
+  const child = uvInvocation(invocation);
+  if (child.kind !== 'command') {
+    return child;
   }
-  let index = 0;
-  while (flags.has(words[index]?.value ?? '')) {
-    index += 1;
+  const head = child.argv[0] ?? '';
+  const language = head === '-' ? 'python' : interpreterLanguage(head);
+  if (language !== null) {
+    if (!child.noSync) {
+      return blocked(
+        'Inline code through uv requires --no-sync and an existing trusted environment.',
+      );
+    }
+    if (head === '-') {
+      return child.argv.length === 1
+        ? standardInput(invocation, language)
+        : blocked('Trailing uv stdin arguments require review.');
+    }
+    return (
+      inlineInput(child.argv.slice(1), language, path.posix.basename(head)) ??
+      standardInput(invocation, language)
+    );
   }
-  if (words[index]?.value !== 'run') {
-    return invocation.tokens.includes('run')
-      ? blocked('The uv run options require review.')
-      : irrelevant;
+  if (/\.(?:py|pyw|mjs|cjs|js|jsx|ts|tsx)$/u.test(head)) {
+    return blocked('Script files require explicit review.');
   }
-  index += 1;
-  while (flags.has(words[index]?.value ?? '')) {
-    index += 1;
-  }
-  if (words[index]?.value === '--') {
-    index += 1;
-  }
-  const head = words[index]?.value;
-  if (head === undefined || head.startsWith('-')) {
-    return blocked('The uv run command or options require review.');
-  }
-  return { kind: 'command', argv: words.slice(index).map((word) => word.value) };
+  return { kind: 'command', argv: child.argv };
 };
 
 const standardInput = (invocation: ShellInvocation, language: CodeLanguage): CodeInput => {
@@ -188,6 +167,15 @@ const interpreterInput = (invocation: ShellInvocation): CodeInput => {
   }
   if (args.some((word) => word.kind !== 'literal')) {
     return blocked('Interpreter arguments contain runtime substitutions.');
+  }
+  // Named project gates use the same trust boundary as bun test/build. Runtime
+  // options, file paths, and arbitrary executables do not enter this branch.
+  if (
+    name === 'bun' &&
+    args[0]?.value === 'run' &&
+    /^(?:check|test|typecheck|lint|format|build|verify)(?::[\w-]+)*$/u.test(args[1]?.value ?? '')
+  ) {
+    return irrelevant;
   }
   if (args.length === 1 && ['--version', '-V', '--help', '-h'].includes(args[0]?.value ?? '')) {
     return irrelevant;

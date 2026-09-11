@@ -1,5 +1,6 @@
 import path from 'node:path';
 
+import { data, dataCall, dataMethod, fileText, writeKind } from './data';
 import { failInspection } from './syntax';
 import type { CodeLanguage, CodeOperation, CodeRange, Value } from './types';
 import { moduleName, pythonJoin, symbol, textValue, unknown, valueString } from './values';
@@ -45,23 +46,6 @@ const PROCESS = new Set([
   'child_process.execFileSync',
   'child_process.spawn',
   'child_process.spawnSync',
-]);
-const PURE = new Set([
-  'print',
-  'console.log',
-  'console.info',
-  'console.warn',
-  'console.error',
-  'len',
-  'str',
-  'int',
-  'float',
-  'abs',
-  'round',
-  'json.loads',
-  'json.dumps',
-  'JSON.parse',
-  'JSON.stringify',
 ]);
 
 interface CallContext {
@@ -155,9 +139,12 @@ const pathCall = (
   if (kind === undefined) {
     return failInspection(`Unsupported ${receiver.kind} method: ${member}.`);
   }
-  const effect = kind === 'write' && valueString(args[0]) === '' ? 'truncate' : kind;
+  if (kind === 'read' && args.length > 0) {
+    return failInspection('File read encoding and offset options require review.');
+  }
+  const effect = kind === 'write' ? writeKind(receiver.path, args[0]) : kind;
   context.operations.push({ kind: effect, path: receiver.path, range: context.range });
-  return unknown;
+  return kind === 'read' ? fileText(receiver.path) : unknown;
 };
 
 const openFile = (args: readonly Value[], context: CallContext): Value => {
@@ -187,12 +174,18 @@ const openFile = (args: readonly Value[], context: CallContext): Value => {
 
 const resolveCall = (fn: Value, args: readonly Value[], context: CallContext): Value => {
   if (fn.kind === 'method') {
-    return pathCall(fn.receiver, fn.name, args, context);
+    return fn.receiver.kind === 'path' || fn.receiver.kind === 'file'
+      ? pathCall(fn.receiver, fn.name, args, context)
+      : dataMethod(fn.receiver, fn.name, args, context.language);
   }
   if (fn.kind !== 'symbol') {
     return failInspection('Dynamic call target.');
   }
   const { name } = fn;
+  const pure = dataCall(name, args);
+  if (pure !== null) {
+    return pure;
+  }
   if (name === 'require') {
     return symbol(moduleName(valueString(args[0]), context.language));
   }
@@ -210,22 +203,37 @@ const resolveCall = (fn: Value, args: readonly Value[], context: CallContext): V
   }
   const kind = FILE_OPERATIONS.get(name);
   if (kind !== undefined) {
-    if (kind === 'read') {
-      validateReadOptions(name, args);
-    }
-    if (kind === 'write') {
-      validateWriteOptions(name, args);
-    }
-    const effect = kind === 'write' && valueString(args[1]) === '' ? 'truncate' : kind;
-    context.operations.push({ kind: effect, path: valueString(args[0]), range: context.range });
+    return fileOperation(name, kind, args, context);
   } else if (PROCESS.has(name)) {
     context.operations.push({
       kind: 'process',
       argv: processArguments(name, args),
       range: context.range,
     });
-  } else if (!PURE.has(name)) {
+  } else {
     return failInspection(`Call ${JSON.stringify(name)} has uninspected effects.`);
+  }
+  return unknown;
+};
+
+const fileOperation = (
+  name: string,
+  kind: 'read' | 'write' | 'delete' | 'truncate',
+  args: readonly Value[],
+  context: CallContext,
+): Value => {
+  if (kind === 'read') {
+    validateReadOptions(name, args);
+  }
+  if (kind === 'write') {
+    validateWriteOptions(name, args);
+  }
+  const target = valueString(args[0]);
+  const effect = kind === 'write' ? writeKind(target, args[1]) : kind;
+  context.operations.push({ kind: effect, path: target, range: context.range });
+  if (kind === 'read') {
+    // An explicit encoding proves a string. Buffer methods remain unsupported.
+    return name.startsWith('Deno.') || args[1]?.kind === 'string' ? fileText(target) : data;
   }
   return unknown;
 };

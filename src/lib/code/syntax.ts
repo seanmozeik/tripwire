@@ -65,20 +65,59 @@ const parseCode = (language: CodeLanguage, source: string): SyntaxNode => {
 };
 
 // Decode only unambiguous plain literals. No eval, interpreter, or dynamic imports.
-const stringLiteral = (text: string): string => {
+const stringLiteral = (text: string, language: CodeLanguage = 'javascript'): string => {
   const [quote] = text;
-  if (
-    (quote !== '"' && quote !== "'") ||
-    text.at(-1) !== quote ||
-    text.startsWith(quote.repeat(3))
-  ) {
+  if (quote !== '"' && quote !== "'") {
     throw new CodeInspectionError('Unsupported string literal.');
   }
-  const body = text.slice(1, -1);
-  if (body.includes('\\')) {
-    throw new CodeInspectionError('Escaped strings need explicit review.');
+  const delimiter =
+    language === 'python' && text.startsWith(quote.repeat(3)) ? quote.repeat(3) : quote;
+  if (!text.endsWith(delimiter)) {
+    return failInspection('Incomplete string literal.');
   }
-  return body;
+  const body = text.slice(delimiter.length, -delimiter.length);
+  return decodeEscapes(body);
+};
+
+const decodeEscapes = (body: string): string => {
+  const simple: Readonly<Record<string, string>> = {
+    n: '\n',
+    r: '\r',
+    t: '\t',
+    b: '\b',
+    f: '\f',
+    v: '\v',
+    '\\': '\\',
+    "'": "'",
+    '"': '"',
+  };
+  let result = '';
+  for (let index = 0; index < body.length; index += 1) {
+    const char = body[index];
+    if (char === '\\') {
+      index += 1;
+      const escaped = body[index];
+      if (escaped === undefined) {
+        return failInspection('Incomplete escape.');
+      }
+      if (simple[escaped] !== undefined) {
+        result += simple[escaped];
+      } else if (escaped === 'x' || escaped === 'u') {
+        const count = escaped === 'x' ? 2 : 4;
+        const digits = body.slice(index + 1, index + 1 + count);
+        if (digits.length !== count || !/^[0-9a-f]+$/iu.test(digits)) {
+          return failInspection('Unsupported Unicode escape.');
+        }
+        result += String.fromCodePoint(Number.parseInt(digits, 16));
+        index += count;
+      } else {
+        return failInspection('Unsupported string escape.');
+      }
+    } else {
+      result += char;
+    }
+  }
+  return result;
 };
 
 export { CodeInspectionError, children, failInspection, parseCode, stringLiteral };

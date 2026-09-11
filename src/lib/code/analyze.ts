@@ -1,10 +1,13 @@
 import type { SyntaxNode } from '@lezer/common';
 
 import { resolveCall } from './calls';
+import { inspectBranches, inspectComprehension, inspectLoop, type ControlContext } from './control';
+import { data, isData } from './data';
 import { javascriptImport, pythonImport } from './imports';
+import { indexedValue, namedMember } from './members';
 import { CodeInspectionError, children, failInspection, parseCode, stringLiteral } from './syntax';
 import type { CodeLanguage, CodeOperation, CodeReport, Value } from './types';
-import { initialBindings, pythonJoin, symbol, textValue, unknown, valueString } from './values';
+import { initialBindings, pythonJoin, symbol, textValue, valueString } from './values';
 
 const IGNORE = new Set(['Comment', 'LineComment', 'BlockComment', ';']);
 
@@ -14,6 +17,7 @@ class CodeAnalyzer {
   readonly #source: string;
   readonly #language: CodeLanguage;
   #evaluatedBytes = 0;
+  #steps = 0;
 
   constructor(source: string, language: CodeLanguage) {
     this.#source = source;
@@ -32,14 +36,19 @@ class CodeAnalyzer {
   }
 
   #statement(node: SyntaxNode): void {
+    this.#step();
     if (IGNORE.has(node.name)) {
       return;
     }
     const parts = children(node).filter((part) => !IGNORE.has(part.name));
     switch (node.name) {
+      case 'Body':
+      case 'Block':
       case 'StatementGroup': {
         for (const part of parts) {
-          this.#statement(part);
+          if (![':', '{', '}'].includes(part.name)) {
+            this.#statement(part);
+          }
         }
         return;
       }
@@ -66,6 +75,14 @@ class CodeAnalyzer {
         }
         return;
       }
+      case 'ForStatement': {
+        inspectLoop(node, this.#control());
+        return;
+      }
+      case 'IfStatement': {
+        inspectBranches(node, this.#control());
+        return;
+      }
       default: {
         failInspection(`Unsupported executable syntax: ${node.name}.`);
       }
@@ -90,7 +107,11 @@ class CodeAnalyzer {
     if (this.#text(operator) !== '=') {
       return failInspection('Compound assignment is not inspected.');
     }
-    if (parts.some((part) => ['MemberExpression', 'ArrayPattern'].includes(part.name))) {
+    if (
+      parts
+        .slice(0, equals)
+        .some((part) => ['MemberExpression', 'ArrayPattern'].includes(part.name))
+    ) {
       return failInspection('Destructuring or object mutation is not inspected.');
     }
     const value = this.#eval(expression);
@@ -128,6 +149,7 @@ class CodeAnalyzer {
   }
 
   #eval(node: SyntaxNode): Value {
+    this.#step();
     const value = this.#expression(node);
     if (value.kind === 'string') {
       this.#evaluatedBytes += value.value.length;
@@ -141,10 +163,28 @@ class CodeAnalyzer {
     return value;
   }
 
+  #step(): void {
+    this.#steps += 1;
+    if (this.#steps > 12_000) {
+      failInspection('Code exceeds the evaluation step budget.');
+    }
+  }
+
+  #control(): ControlContext {
+    return {
+      bindings: this.#bindings,
+      text: (node) => this.#text(node),
+      evaluate: (node) => this.#eval(node),
+      statement: (node) => {
+        this.#statement(node);
+      },
+    };
+  }
+
   #expression(node: SyntaxNode): Value {
     switch (node.name) {
       case 'String': {
-        return textValue(stringLiteral(this.#text(node)));
+        return textValue(stringLiteral(this.#text(node), this.#language));
       }
       case 'Number': {
         return { kind: 'number', value: Number(this.#text(node)) };
@@ -153,7 +193,7 @@ class CodeAnalyzer {
       case 'BooleanLiteral':
       case 'None':
       case 'Null': {
-        return unknown;
+        return data;
       }
       case 'VariableName': {
         return (
@@ -180,6 +220,12 @@ class CodeAnalyzer {
       }
       case 'ObjectExpression': {
         return this.#object(node);
+      }
+      case 'ArrayComprehensionExpression': {
+        return inspectComprehension(
+          children(node).filter((part) => !['[', ']'].includes(part.name)),
+          this.#control(),
+        );
       }
       case 'BinaryExpression': {
         return this.#binary(node);
@@ -236,33 +282,28 @@ class CodeAnalyzer {
       b.kind === 'number' &&
       ['+', '-', '*', '/', '%', '**', '==', '===', '<', '>'].includes(operator)
     ) {
-      return unknown;
+      return data;
+    }
+    if (isData(a) && isData(b)) {
+      return data;
     }
     return failInspection('Dynamic operators are not inspected.');
   }
 
   #member(node: SyntaxNode): Value {
-    const [receiver, separator, property] = children(node);
-    if (
-      receiver === undefined ||
-      property?.name !== 'PropertyName' ||
-      separator === undefined ||
-      this.#text(separator) !== '.'
-    ) {
+    const parts = children(node);
+    const [receiver, separator, property] = parts;
+    if (receiver === undefined || property === undefined || separator === undefined) {
       return failInspection('Computed property access is not inspected.');
     }
     const value = this.#eval(receiver);
-    const member = this.#text(property);
-    if (member.startsWith('_') || member === 'constructor' || member === 'prototype') {
-      return failInspection('Runtime reflection is not inspected.');
+    if (this.#text(separator) === '[' && parts.length === 4) {
+      return indexedValue(value, this.#eval(property));
     }
-    if (value.kind === 'symbol') {
-      return symbol(`${value.name}.${member}`);
+    if (this.#text(separator) !== '.' || property.name !== 'PropertyName' || parts.length !== 3) {
+      return failInspection('Unsupported property access.');
     }
-    if (value.kind === 'path' || value.kind === 'file') {
-      return { kind: 'method', receiver: value, name: member };
-    }
-    return failInspection('Unknown receiver may execute a property getter.');
+    return namedMember(value, this.#text(property), this.#language);
   }
 
   #call(node: SyntaxNode): Value {
@@ -271,9 +312,10 @@ class CodeAnalyzer {
       return failInspection('Unsupported call syntax.');
     }
     const fn = this.#eval(callee);
-    const args = children(argsNode)
-      .filter((part) => !['(', ')', ','].includes(part.name))
-      .map((part) => this.#eval(part));
+    const parts = children(argsNode).filter((part) => !['(', ')', ','].includes(part.name));
+    const args = parts.some((part) => part.name === 'for')
+      ? [inspectComprehension(parts, this.#control())]
+      : parts.map((part) => this.#eval(part));
     if (args.length > 128) {
       return failInspection('Call exceeds the argument count limit.');
     }

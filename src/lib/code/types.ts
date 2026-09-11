@@ -20,15 +20,13 @@ interface CodeReport {
 }
 
 type Value =
+  | { readonly kind: 'data' }
+  | { readonly kind: 'text'; readonly path: string | null; readonly preservesNonempty: boolean }
   | { readonly kind: 'string'; readonly value: string }
   | { readonly kind: 'number'; readonly value: number }
   | { readonly kind: 'symbol'; readonly name: string }
   | { readonly kind: 'path' | 'file'; readonly path: string }
-  | {
-      readonly kind: 'method';
-      readonly receiver: { readonly kind: 'path' | 'file'; readonly path: string };
-      readonly name: string;
-    }
+  | { readonly kind: 'method'; readonly receiver: Value; readonly name: string }
   | { readonly kind: 'list'; readonly items: readonly Value[] }
   | { readonly kind: 'object'; readonly entries: ReadonlyMap<string, Value> }
   | { readonly kind: 'unknown' };

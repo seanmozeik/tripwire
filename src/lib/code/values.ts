@@ -28,9 +28,27 @@ const PYTHON_MODULES = new Set([
   'subprocess',
   'json',
   'math',
+  'sys',
 ]);
 const JS_MODULES = new Set(['fs', 'fs/promises', 'path', 'child_process']);
-const PYTHON_GLOBALS = ['print', 'len', 'str', 'int', 'float', 'abs', 'round', 'open'];
+const PYTHON_GLOBALS = [
+  'print',
+  'len',
+  'str',
+  'int',
+  'float',
+  'abs',
+  'round',
+  'open',
+  'sum',
+  'sorted',
+  'list',
+  'bool',
+  'min',
+  'max',
+  'any',
+  'all',
+];
 const JS_GLOBALS = ['console', 'require', 'JSON', 'Deno'];
 
 const initialBindings = (language: CodeLanguage): Map<string, Value> =>

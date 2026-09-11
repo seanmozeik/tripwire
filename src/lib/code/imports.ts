@@ -4,6 +4,15 @@ import { children, failInspection, stringLiteral } from './syntax';
 import type { CodeLanguage, Value } from './types';
 import { moduleName, symbol } from './values';
 
+const pythonModuleBinding = (
+  name: string,
+  from: string | null,
+): { qualified: string; bound: string } => {
+  const qualified = from === null ? moduleName(name, 'python') : `${from}.${name}`;
+  // An unaliased "import os.path" binds os, while "from os import path" binds os.path.
+  return { qualified, bound: from === null ? (qualified.split('.')[0] ?? qualified) : qualified };
+};
+
 const pythonImport = (
   parts: readonly SyntaxNode[],
   text: (node: SyntaxNode) => string,
@@ -12,24 +21,34 @@ const pythonImport = (
   if (moduleNode === undefined) {
     return failInspection('Missing Python import.');
   }
-  const module = moduleName(text(moduleNode), 'python');
-  if (first?.name === 'from') {
-    const importIndex = parts.findIndex((part) => part.name === 'import');
-    const imported = parts[importIndex + 1];
-    if (imported?.name !== 'VariableName') {
-      return failInspection('Unsupported Python import.');
-    }
-    const alias = parts[importIndex + 2]?.name === 'as' ? parts[importIndex + 3] : imported;
-    if (alias === undefined || parts.length !== importIndex + (alias === imported ? 2 : 4)) {
+  const from = first?.name === 'from' ? moduleName(text(moduleNode), 'python') : null;
+  const bindings = new Map<string, Value>();
+  let index = from === null ? 1 : parts.findIndex((part) => part.name === 'import') + 1;
+  while (index < parts.length) {
+    const imported = parts[index];
+    if (imported?.name !== 'VariableName' && imported?.name !== 'MemberExpression') {
       return failInspection('Unsupported Python import list.');
     }
-    return new Map([[text(alias), symbol(`${module}.${text(imported)}`)]]);
+    const binding = pythonModuleBinding(text(imported), from);
+    index += 1;
+    let alias = text(imported).split('.')[0] ?? '';
+    let { bound } = binding;
+    if (parts[index]?.name === 'as') {
+      const name = parts[index + 1];
+      if (name?.name !== 'VariableName') {
+        return failInspection('Invalid import alias.');
+      }
+      alias = text(name);
+      bound = binding.qualified;
+      index += 2;
+    }
+    bindings.set(alias, symbol(bound));
+    if (index < parts.length && parts[index]?.name !== ',') {
+      return failInspection('Unsupported import separator.');
+    }
+    index += 1;
   }
-  const alias = parts[2]?.name === 'as' ? parts[3] : moduleNode;
-  if (alias === undefined || parts.length !== (alias === moduleNode ? 2 : 4)) {
-    return failInspection('Unsupported Python import list.');
-  }
-  return new Map([[text(alias), symbol(module)]]);
+  return bindings;
 };
 
 const javascriptImport = (
