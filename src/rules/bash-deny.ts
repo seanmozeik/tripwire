@@ -1,4 +1,5 @@
 import type { ShellInvocation, ShellProgram } from '../lib/bash';
+import { ghApiMutates } from '../lib/bash/gh-api';
 import { type Decision, allow, ask, deny, merge } from '../lib/decision';
 import { applyRuleAction, type RuleActions } from '../lib/rule-actions';
 import { applyShellBypass } from './bash-bypass';
@@ -80,46 +81,6 @@ const hasComputedPolicyDiscriminator = (seg: ShellInvocation): boolean => {
   return (
     STATIC_POLICY_ARGUMENTS.has(seg.head) &&
     seg.words.slice(1).some((word) => word.kind === 'dynamic')
-  );
-};
-
-const ghApiMethod = (seg: ShellInvocation): string | null => {
-  if (seg.head !== 'gh' || seg.tokens[1] !== 'api') {
-    return null;
-  }
-  for (let index = 2; index < seg.tokens.length; index += 1) {
-    const token = seg.tokens[index];
-    if (token === '--method' || token === '-X') {
-      return seg.tokens[index + 1]?.toUpperCase() ?? '';
-    }
-    if (token?.startsWith('--method=') === true) {
-      return token.slice('--method='.length).toUpperCase();
-    }
-    if (token?.startsWith('-X') === true && token.length > 2) {
-      return token.slice(2).toUpperCase();
-    }
-  }
-  return null;
-};
-
-const ghApiMutates = (seg: ShellInvocation): boolean => {
-  if (seg.head !== 'gh' || seg.tokens[1] !== 'api') {
-    return false;
-  }
-  const method = ghApiMethod(seg);
-  if (method !== null && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
-    return true;
-  }
-  return seg.flags.some(
-    (flag) =>
-      flag === '--input' ||
-      flag.startsWith('--input=') ||
-      flag === '-f' ||
-      flag === '-F' ||
-      flag === '--field' ||
-      flag.startsWith('--field=') ||
-      flag === '--raw-field' ||
-      flag.startsWith('--raw-field='),
   );
 };
 
