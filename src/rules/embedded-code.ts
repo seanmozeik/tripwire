@@ -137,6 +137,12 @@ const embeddedCode = (program: ShellProgram, policy: CodePolicy): Decision => {
     if (input.kind === 'blocked') {
       return codeDeny(input.reason);
     }
+    if (input.kind === 'command') {
+      if (uncertainContext(program, policy)) {
+        return codeDeny('The forwarded command has an unverified execution context.');
+      }
+      decisions.push(policy.inspectCommand(input.argv.map(quoteArgument).join(' ')));
+    }
     if (input.kind === 'source') {
       if (uncertainContext(program, policy)) {
         return codeDeny(

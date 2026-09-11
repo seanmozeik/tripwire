@@ -5,6 +5,7 @@ import type { CodeLanguage } from './types';
 
 type CodeInput =
   | { readonly kind: 'source'; readonly language: CodeLanguage; readonly source: string }
+  | { readonly kind: 'command'; readonly argv: readonly string[] }
   | { readonly kind: 'blocked'; readonly reason: string }
   | { readonly kind: 'irrelevant' };
 
@@ -57,6 +58,48 @@ const opaqueCodeLauncher = (invocation: ShellInvocation): boolean => {
         CODE_FLAGS.has(word.value.split('=')[0] ?? '') ||
         /\.(?:py|pyw|mjs|cjs|js|jsx|ts|tsx)$/u.test(word.value),
     );
+};
+
+// Preserve the existing opaque-code rejection, then check ordinary commands
+// forwarded by uv against the same shell policy as a direct invocation.
+const uvCommand = (invocation: ShellInvocation): CodeInput => {
+  const flags = new Set([
+    '--no-sync',
+    '--locked',
+    '--frozen',
+    '--offline',
+    '--no-project',
+    '--no-config',
+    '--quiet',
+    '-q',
+    '--verbose',
+    '-v',
+  ]);
+  const words = invocation.words.slice(1);
+  if (words.some((word) => word.kind !== 'literal')) {
+    return blocked('The uv command contains unresolved arguments.');
+  }
+  let index = 0;
+  while (flags.has(words[index]?.value ?? '')) {
+    index += 1;
+  }
+  if (words[index]?.value !== 'run') {
+    return invocation.tokens.includes('run')
+      ? blocked('The uv run options require review.')
+      : irrelevant;
+  }
+  index += 1;
+  while (flags.has(words[index]?.value ?? '')) {
+    index += 1;
+  }
+  if (words[index]?.value === '--') {
+    index += 1;
+  }
+  const head = words[index]?.value;
+  if (head === undefined || head.startsWith('-')) {
+    return blocked('The uv run command or options require review.');
+  }
+  return { kind: 'command', argv: words.slice(index).map((word) => word.value) };
 };
 
 const standardInput = (invocation: ShellInvocation, language: CodeLanguage): CodeInput => {
@@ -123,6 +166,9 @@ const interpreterInput = (invocation: ShellInvocation): CodeInput => {
     return blocked(
       'A package launcher can change the interpreter or load project startup code. Use a directly inspected interpreter.',
     );
+  }
+  if (path.posix.basename(invocation.head) === 'uv') {
+    return uvCommand(invocation);
   }
   const language = interpreterLanguage(invocation.head);
   if (language === null) {
