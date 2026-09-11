@@ -1,6 +1,7 @@
 import path from 'node:path';
 
-import { data, dataCall, dataMethod, fileText, writeKind } from './data';
+import { data, dataCall, dataMethod, requireData, text } from './data';
+import { validateReadOptions, validateWriteOptions } from './file-options';
 import { failInspection } from './syntax';
 import type { CodeLanguage, CodeOperation, CodeRange, Value } from './types';
 import { moduleName, pythonJoin, symbol, textValue, unknown, valueString } from './values';
@@ -54,50 +55,6 @@ interface CallContext {
   readonly operations: CodeOperation[];
 }
 
-const validateReadOptions = (name: string, args: readonly Value[]): void => {
-  if (!name.startsWith('fs.')) {
-    return;
-  }
-  if (args.length > 2) {
-    return failInspection('Read callbacks are not inspected.');
-  }
-  const [, options] = args;
-  if (options === undefined || options.kind === 'string') {
-    return;
-  }
-  if (options.kind !== 'object') {
-    return failInspection('Read options are unresolved.');
-  }
-  for (const [key, value] of options.entries) {
-    if (key === 'flag' && valueString(value) !== 'r') {
-      return failInspection('A file read flag can truncate or write the file.');
-    }
-    if (key !== 'flag' && key !== 'encoding') {
-      return failInspection('Unsupported read option.');
-    }
-    valueString(value);
-  }
-};
-
-const validateWriteOptions = (name: string, args: readonly Value[]): void => {
-  if (!name.startsWith('fs.')) {
-    return;
-  }
-  const options = args.at(2);
-  if (options === undefined && args.length <= 2) {
-    return;
-  }
-  // Encodings such as hex/base64 can turn a nonempty string into an empty write.
-  if (
-    args.length === 3 &&
-    options?.kind === 'string' &&
-    options.value.replace('-', '') === 'utf8'
-  ) {
-    return;
-  }
-  return failInspection('Write encodings, flags, and callbacks require explicit review.');
-};
-
 const processArguments = (name: string, args: readonly Value[]): readonly string[] => {
   const [first, second] = args;
   if (name.startsWith('subprocess.')) {
@@ -124,6 +81,9 @@ const pathCall = (
   args: readonly Value[],
   context: CallContext,
 ): Value => {
+  if (receiver.kind === 'file' && member === 'close' && args.length === 0) {
+    return unknown;
+  }
   const kinds: Readonly<Record<string, 'delete' | 'read' | 'write'>> =
     receiver.kind === 'path'
       ? {
@@ -145,9 +105,11 @@ const pathCall = (
   if (kind === 'write' && args.length !== 1) {
     return failInspection('File write encoding and callback options require review.');
   }
-  const effect = kind === 'write' ? writeKind(receiver.path, args[0]) : kind;
-  context.operations.push({ kind: effect, path: receiver.path, range: context.range });
-  return kind === 'read' ? fileText(receiver.path) : unknown;
+  if (kind === 'write') {
+    requireData(args);
+  }
+  context.operations.push({ kind, path: receiver.path, range: context.range });
+  return kind === 'read' ? text : unknown;
 };
 
 const openFile = (args: readonly Value[], context: CallContext): Value => {
@@ -155,13 +117,16 @@ const openFile = (args: readonly Value[], context: CallContext): Value => {
     return failInspection('File opener options are not inspected.');
   }
   const mode = args[1] === undefined ? 'r' : valueString(args[1]);
-  const access: Readonly<Record<string, 'read' | 'truncate' | 'write'>> = {
+  const access: Readonly<Record<string, 'read' | 'write'>> = {
     r: 'read',
     rb: 'read',
     rt: 'read',
-    w: 'truncate',
-    wb: 'truncate',
-    wt: 'truncate',
+    w: 'write',
+    wb: 'write',
+    wt: 'write',
+    x: 'write',
+    xb: 'write',
+    xt: 'write',
     a: 'write',
     ab: 'write',
     at: 'write',
@@ -185,6 +150,15 @@ const resolveCall = (fn: Value, args: readonly Value[], context: CallContext): V
     return failInspection('Dynamic call target.');
   }
   const { name } = fn;
+  if (name === 'json.dump') {
+    const [value, file] = args;
+    if (args.length !== 2 || value === undefined || file?.kind !== 'file') {
+      return failInspection('JSON output needs inert data and a known file handle.');
+    }
+    requireData([value]);
+    context.operations.push({ kind: 'write', path: file.path, range: context.range });
+    return unknown;
+  }
   const pure = dataCall(name, args);
   if (pure !== null) {
     return pure;
@@ -232,15 +206,14 @@ const fileOperation = (
     validateWriteOptions(name, args);
   }
   const target = valueString(args[0]);
-  const effect = kind === 'write' ? writeKind(target, args[1]) : kind;
-  context.operations.push({ kind: effect, path: target, range: context.range });
+  if (kind === 'write') {
+    requireData(args.slice(1, 2));
+  }
+  context.operations.push({ kind, path: target, range: context.range });
   if (kind === 'read') {
-    // Only UTF-8 preserves nonempty bytes as nonempty text. For example, a
-    // one-byte file decoded as UTF-16LE can produce an empty string.
     const [, encoding] = args;
-    return name.startsWith('Deno.') ||
-      (encoding?.kind === 'string' && encoding.value.toLowerCase().replace('-', '') === 'utf8')
-      ? fileText(target)
+    return name.startsWith('Deno.') || encoding?.kind === 'string' || encoding?.kind === 'object'
+      ? text
       : data;
   }
   return unknown;

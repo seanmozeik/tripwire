@@ -3,9 +3,9 @@ import type { CodeLanguage, Value } from './types';
 import { unknown } from './values';
 
 // Inert data has no user-defined coercions or callables. Unknown bytes cannot
-// authorize a path, a process argument, or an overwrite that might empty a file.
+// authorize a path, a process argument, or a callable.
 const data: Value = { kind: 'data' };
-const fileText = (path: string): Value => ({ kind: 'text', path, preservesNonempty: true });
+const text: Value = { kind: 'text' };
 const isData = (value: Value): boolean => {
   const pending = [value];
   const seen = new Set<Value>();
@@ -51,34 +51,25 @@ const requireData = (values: readonly Value[]): void => {
     failInspection('Only inert data can be passed to a data operation.');
   }
 };
-const writeKind = (target: string, value: Value | undefined): 'write' | 'truncate' => {
-  if (value?.kind === 'string' && value.value.length > 0) {
-    return 'write';
-  }
-  if (value?.kind === 'text' && value.path === target && value.preservesNonempty) {
-    return 'write';
-  }
-  return 'truncate';
-};
-
-const replaceText = (receiver: Value, args: readonly Value[], language: CodeLanguage): Value => {
+const replaceText = (args: readonly Value[], language: CodeLanguage): Value => {
   const [before, after, count] = args;
   const validCount =
     language === 'python' &&
     args.length === 3 &&
     count?.kind === 'number' &&
     Number.isSafeInteger(count.value);
-  if ((!validCount && args.length !== 2) || before?.kind !== 'string' || after?.kind !== 'string') {
+  if (
+    (!validCount && args.length !== 2) ||
+    before === undefined ||
+    after === undefined ||
+    !['string', 'text'].includes(before.kind) ||
+    !['string', 'text'].includes(after.kind)
+  ) {
     return failInspection(
-      'Text replacement needs two literal strings and an optional Python integer count.',
+      'Text replacement needs two strings and an optional Python integer count.',
     );
   }
-  // JS replacement tokens such as $` can produce an empty string even when
-  // the submitted replacement is nonempty. Literal Python str.replace cannot.
-  const preserves = after.value.length > 0 && (language === 'python' || !after.value.includes('$'));
-  return receiver.kind === 'text'
-    ? { ...receiver, preservesNonempty: receiver.preservesNonempty && preserves }
-    : { kind: 'text', path: null, preservesNonempty: false };
+  return text;
 };
 
 const dataMethod = (
@@ -90,7 +81,7 @@ const dataMethod = (
   requireData(args);
   if (receiver.kind === 'string' || receiver.kind === 'text') {
     if (name === 'replace' || name === 'replaceAll') {
-      return replaceText(receiver, args, language);
+      return replaceText(args, language);
     }
     if (
       [
@@ -104,7 +95,7 @@ const dataMethod = (
         'substring',
       ].includes(name)
     ) {
-      return { kind: 'text', path: null, preservesNonempty: false };
+      return text;
     }
     if (
       [
@@ -154,11 +145,7 @@ const regexSubstitution = (args: readonly Value[]): Value => {
     return failInspection('Regex substitution needs literal pattern/replacement and one input.');
   }
   requireData([input]);
-  // Backreferences may expand to empty text. They cannot prove preservation.
-  const preserves = replacement.value.length > 0 && !replacement.value.includes('\\');
-  return input.kind === 'text'
-    ? { ...input, preservesNonempty: input.preservesNonempty && preserves }
-    : { kind: 'text', path: null, preservesNonempty: false };
+  return text;
 };
 
 const dataCall = (name: string, args: readonly Value[]): Value | null => {
@@ -173,9 +160,7 @@ const dataCall = (name: string, args: readonly Value[]): Value | null => {
     if (args.length !== 1) {
       return failInspection('JSON callbacks and serialization options require review.');
     }
-    return ['json.loads', 'JSON.parse'].includes(name)
-      ? data
-      : { kind: 'text', path: null, preservesNonempty: false };
+    return ['json.loads', 'JSON.parse'].includes(name) ? data : text;
   }
   if (
     [
@@ -203,9 +188,9 @@ const dataCall = (name: string, args: readonly Value[]): Value | null => {
   }
   if (name === 'sys.stdin.read') {
     requireData(args);
-    return { kind: 'text', path: null, preservesNonempty: false };
+    return text;
   }
   return null;
 };
 
-export { data, dataCall, dataMethod, fileText, isData, requireData, writeKind };
+export { data, dataCall, dataMethod, isData, requireData, text };

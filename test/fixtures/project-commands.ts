@@ -52,7 +52,7 @@ const projectCommandBlocks = [
   'bun --cwd /tmp run ./payload.ts',
   'bun --preload ./payload.ts run check',
   'uv run --locked --no-sync python scripts/export_openapi.py',
-  `python3 -c 'from pathlib import Path; p=Path("source.ts"); p.write_text(p.read_text().replace("old", "", 1))'`,
+  `python3 -c 'from pathlib import Path; p=Path(".env"); p.write_text(p.read_text().replace("old", "", 1))'`,
   `python3 -c 'from pathlib import Path; p=Path("source.ts"); p.write_text(p.read_text().replace("old", "new", "unknown"))'`,
 ];
 

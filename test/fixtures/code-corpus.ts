@@ -2,8 +2,10 @@ import { compatibilityPairs } from './code-compatibility';
 import { compatibilityAttacks } from './code-compatibility-attacks';
 import { codeFixtures } from './embedded-code';
 import { projectCommandFixtures } from './project-commands';
+import { writeParityFixtures } from './write-parity';
 
 const allCodeFixtures = [
+  ...writeParityFixtures,
   ...projectCommandFixtures,
   ...codeFixtures,
   ...compatibilityPairs.flatMap((pair) => [

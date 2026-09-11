@@ -1,5 +1,6 @@
 import type { SyntaxNode } from '@lezer/common';
 
+import { callArguments } from './arguments';
 import { resolveCall } from './calls';
 import { containerValue } from './containers';
 import { inspectBranches, inspectComprehension, inspectLoop, type ControlContext } from './control';
@@ -340,7 +341,7 @@ class CodeAnalyzer {
     const parts = children(argsNode).filter((part) => !['(', ')', ','].includes(part.name));
     const args = parts.some((part) => part.name === 'for')
       ? [inspectComprehension(parts, this.#control())]
-      : parts.map((part) => this.#eval(part));
+      : callArguments(parts, fn, (part) => this.#eval(part), this.#source);
     if (args.length > 128) {
       return failInspection('Call exceeds the argument count limit.');
     }

@@ -21,7 +21,7 @@ interface CodeReport {
 
 type Value =
   | { readonly kind: 'data' }
-  | { readonly kind: 'text'; readonly path: string | null; readonly preservesNonempty: boolean }
+  | { readonly kind: 'text' }
   | { readonly kind: 'string'; readonly value: string }
   | { readonly kind: 'number'; readonly value: number }
   | { readonly kind: 'symbol'; readonly name: string }

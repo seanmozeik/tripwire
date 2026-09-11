@@ -39,7 +39,7 @@ const compatibilityPairs: readonly CompatibilityPair[] = [
     name: 'file context managers read JSON without executing callbacks',
     source: 'Python JSON inspection pattern with a standard file context manager',
     allow: python('import json\nwith open("results.json") as f:\n print(json.load(f))'),
-    block: python('with open("/protected", "w") as f:\n f.write("")'),
+    block: python('with open(".env", "w") as f:\n f.write("")'),
   },
   {
     name: 'JavaScript iteration over JSON records',
@@ -66,17 +66,17 @@ const compatibilityPairs: readonly CompatibilityPair[] = [
       'from pathlib import Path\nimport re\ns=Path("run.log").read_text()\ns=re.sub(r"(?:sk-|wk-|ws-)[A-Za-z0-9_-]+", "[redacted]", s)\nprint(s[:2500])',
     ),
     block: python(
-      'from pathlib import Path\nimport re\np=Path("README.md")\np.write_text(re.sub(r"[\\s\\S]*", "", p.read_text()))',
+      'from pathlib import Path\nimport re\np=Path(".env")\np.write_text(re.sub(r"[\\s\\S]*", "", p.read_text()))',
     ),
   },
   {
-    name: 'regex replacement preserves nonempty file contents',
+    name: 'regex replacement follows the destination policy',
     source: 'Astra regex-edit pattern, bounded to literal replacement text',
     allow: python(
       'from pathlib import Path\nimport re\np=Path("README.md")\np.write_text(re.sub(r"version: [0-9]+", "version: 2", p.read_text()))',
     ),
     block: python(
-      'from pathlib import Path\nimport re\np=Path("README.md")\np.write_text(re.sub(r"()[\\s\\S]*", r"\\1", p.read_text()))',
+      'from pathlib import Path\nimport re\np=Path(".env")\np.write_text(re.sub(r"()[\\s\\S]*", r"\\1", p.read_text()))',
     ),
   },
   {
@@ -86,13 +86,13 @@ const compatibilityPairs: readonly CompatibilityPair[] = [
     block: `bun -e 'const fs = require("fs"); const p: string = "/protected"; fs.rmSync(p);'`,
   },
   {
-    name: 'read-modify-write preserves a nonempty file',
+    name: 'read-modify-write follows the destination policy',
     source: 'astra 2026-09-11 01a08c81-2e34-7052-8dcd-339f145401b1:3493',
     allow: python(
       'from pathlib import Path\np=Path("README.md")\ns=p.read_text().replace("6,093 tests", "6,136 tests")\np.write_text(s)',
     ),
     block: python(
-      'from pathlib import Path\np=Path("README.md")\ns=p.read_text().replace(p.read_text(), "")\np.write_text(s)',
+      'from pathlib import Path\np=Path(".env")\ns=p.read_text().replace(p.read_text(), "")\np.write_text(s)',
     ),
   },
   {
@@ -158,7 +158,7 @@ const compatibilityPairs: readonly CompatibilityPair[] = [
       'const fs = require("node:fs"); const p="README.md"; const s=fs.readFileSync(p,"utf8").replace("old", "new"); fs.writeFileSync(p,s);',
     ),
     block: js(
-      'const fs = require("node:fs"); const p="README.md"; fs.writeFileSync(p,fs.readFileSync(p,"utf8").replace("old", ""));',
+      'const fs = require("node:fs"); const p=".env"; fs.writeFileSync(p,fs.readFileSync(p,"utf8").replace("old", ""));',
     ),
   },
   {

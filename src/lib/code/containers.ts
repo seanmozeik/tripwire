@@ -55,7 +55,7 @@ const formatValue = (node: SyntaxNode, evaluate: (node: SyntaxNode) => Value): V
     }
     requireData([evaluate(fields[0])]);
   }
-  return { kind: 'text', path: null, preservesNonempty: false };
+  return { kind: 'text' };
 };
 
 const containerValue = (
