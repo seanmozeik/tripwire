@@ -1,8 +1,9 @@
 import type { SyntaxNode } from '@lezer/common';
 
 import { resolveCall } from './calls';
+import { containerValue } from './containers';
 import { inspectBranches, inspectComprehension, inspectLoop, type ControlContext } from './control';
-import { data, isData } from './data';
+import { data, isData, requireData } from './data';
 import { javascriptImport, pythonImport } from './imports';
 import { indexedValue, namedMember } from './members';
 import { CodeInspectionError, children, failInspection, parseCode, stringLiteral } from './syntax';
@@ -83,6 +84,18 @@ class CodeAnalyzer {
         inspectBranches(node, this.#control());
         return;
       }
+      case 'AssertStatement': {
+        requireData(
+          parts
+            .filter((part) => !['assert', ','].includes(part.name))
+            .map((part) => this.#eval(part)),
+        );
+        return;
+      }
+      case 'WithStatement': {
+        this.#withFile(parts);
+        return;
+      }
       default: {
         failInspection(`Unsupported executable syntax: ${node.name}.`);
       }
@@ -120,6 +133,25 @@ class CodeAnalyzer {
     } else {
       this.#bindings.set(this.#text(target), value);
     }
+  }
+
+  #withFile(parts: readonly SyntaxNode[]): void {
+    const [, expression, alias, target, body] = parts;
+    if (
+      parts.length !== 5 ||
+      expression === undefined ||
+      alias?.name !== 'as' ||
+      target?.name !== 'VariableName' ||
+      body?.name !== 'Body'
+    ) {
+      return failInspection('Only a single known file context is inspected.');
+    }
+    const value = this.#eval(expression);
+    if (value.kind !== 'file') {
+      return failInspection('Context manager callbacks require review.');
+    }
+    this.#bindings.set(this.#text(target), value);
+    this.#statement(body);
   }
 
   #destructure(pattern: SyntaxNode, value: Value): void {
@@ -182,6 +214,14 @@ class CodeAnalyzer {
   }
 
   #expression(node: SyntaxNode): Value {
+    const container = containerValue(
+      node,
+      (part) => this.#eval(part),
+      (part) => this.#text(part),
+    );
+    if (container !== null) {
+      return container;
+    }
     switch (node.name) {
       case 'String': {
         return textValue(stringLiteral(this.#text(node), this.#language));
@@ -218,9 +258,6 @@ class CodeAnalyzer {
             .map((part) => this.#eval(part)),
         };
       }
-      case 'ObjectExpression': {
-        return this.#object(node);
-      }
       case 'ArrayComprehensionExpression': {
         return inspectComprehension(
           children(node).filter((part) => !['[', ']'].includes(part.name)),
@@ -240,27 +277,6 @@ class CodeAnalyzer {
         return failInspection(`Unsupported expression: ${node.name}.`);
       }
     }
-  }
-
-  #object(node: SyntaxNode): Value {
-    const entries = new Map<string, Value>();
-    for (const property of children(node).filter((part) => !['{', '}', ','].includes(part.name))) {
-      const fields = children(property);
-      const [key, separator, value] = fields;
-      if (
-        property.name !== 'Property' ||
-        key?.name !== 'PropertyDefinition' ||
-        separator?.name !== ':' ||
-        value === undefined ||
-        fields.length !== 3
-      ) {
-        return failInspection(
-          'Computed properties, accessors, and object spread are not inspected.',
-        );
-      }
-      entries.set(this.#text(key), this.#eval(value));
-    }
-    return { kind: 'object', entries };
   }
 
   #binary(node: SyntaxNode): Value {
@@ -297,6 +313,15 @@ class CodeAnalyzer {
       return failInspection('Computed property access is not inspected.');
     }
     const value = this.#eval(receiver);
+    if (
+      this.#language === 'python' &&
+      this.#text(separator) === '[' &&
+      parts.some((part) => part.name === ':')
+    ) {
+      const bounds = parts.slice(2, -1).filter((part) => part.name !== ':');
+      requireData([value, ...bounds.map((part) => this.#eval(part))]);
+      return data;
+    }
     if (this.#text(separator) === '[' && parts.length === 4) {
       return indexedValue(value, this.#eval(property));
     }

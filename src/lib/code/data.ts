@@ -7,30 +7,44 @@ import { unknown } from './values';
 const data: Value = { kind: 'data' };
 const fileText = (path: string): Value => ({ kind: 'text', path, preservesNonempty: true });
 const isData = (value: Value): boolean => {
-  switch (value.kind) {
-    case 'string':
-    case 'number':
-    case 'text':
-    case 'data': {
-      return true;
-    }
-    case 'list': {
-      return value.items.every((item) => isData(item));
-    }
-    case 'object': {
-      return [...value.entries.values()].every((item) => isData(item));
-    }
-    case 'file':
-    case 'path':
-    case 'method':
-    case 'symbol':
-    case 'unknown': {
-      return false;
-    }
-    default: {
-      return false;
+  const pending = [value];
+  const seen = new Set<Value>();
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current !== undefined && !seen.has(current)) {
+      seen.add(current);
+      if (seen.size > 12_000) {
+        return failInspection('Data exceeds the value inspection budget.');
+      }
+      switch (current.kind) {
+        case 'string':
+        case 'number':
+        case 'text':
+        case 'data': {
+          break;
+        }
+        case 'list': {
+          pending.push(...current.items);
+          break;
+        }
+        case 'object': {
+          pending.push(...current.entries.values());
+          break;
+        }
+        case 'file':
+        case 'path':
+        case 'method':
+        case 'symbol':
+        case 'unknown': {
+          return false;
+        }
+        default: {
+          return false;
+        }
+      }
     }
   }
+  return true;
 };
 const requireData = (values: readonly Value[]): void => {
   if (!values.every((value) => isData(value))) {
@@ -122,7 +136,28 @@ const jsonLoad = (args: readonly Value[]): Value => {
   return data;
 };
 
+const regexSubstitution = (args: readonly Value[]): Value => {
+  const [pattern, replacement, input] = args;
+  if (
+    args.length !== 3 ||
+    pattern?.kind !== 'string' ||
+    replacement?.kind !== 'string' ||
+    input === undefined
+  ) {
+    return failInspection('Regex substitution needs literal pattern/replacement and one input.');
+  }
+  requireData([input]);
+  // Backreferences may expand to empty text. They cannot prove preservation.
+  const preserves = replacement.value.length > 0 && !replacement.value.includes('\\');
+  return input.kind === 'text'
+    ? { ...input, preservesNonempty: input.preservesNonempty && preserves }
+    : { kind: 'text', path: null, preservesNonempty: false };
+};
+
 const dataCall = (name: string, args: readonly Value[]): Value | null => {
+  if (name === 're.sub') {
+    return regexSubstitution(args);
+  }
   if (name === 'json.load') {
     return jsonLoad(args);
   }

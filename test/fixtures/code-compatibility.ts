@@ -11,6 +11,80 @@ const js = (code: string): string => `node - <<'JS'\n${code}\nJS`;
 // Rollout references identify the source pattern. Paths and data are synthetic.
 // Neither side of a pair is executable test code: the policy receives strings only.
 const compatibilityPairs: readonly CompatibilityPair[] = [
+  ...[
+    'python',
+    'python3',
+    'python3.13',
+    'uv run --no-sync python',
+    'uv run --no-sync python3',
+    'uv run --locked --no-sync --python 3.13 python3',
+    'uv run --no-sync --python=3.13 -- python3',
+    'uv --offline run --no-sync -p 3.13 python',
+    'env uv run --no-sync --no-python-downloads python3',
+  ].map((command) => ({
+    name: `Python launch form: ${command}`,
+    source: 'Cross-product of observed Python/uv forms and interpreter selection boundary',
+    allow: `${command} -c 'import json; print(json.loads("{}"))'`,
+    block: `${command} -c 'import os; os.unlink("/protected")'`,
+  })),
+  {
+    name: 'Python dictionary summary with an assertion and formatted output',
+    source: 'Astra JSON summary pattern, reduced to inert fields and formatting',
+    allow: python(
+      'import json\nd=json.load(open("results.json"))\nassert "pass" in d\nsummary={"pass": d["pass"], "count": len(d)}\nprint(json.dumps(summary))\nprint(f"count: {len(d)}")',
+    ),
+    block: python('import os\nsummary={"pass": os.unlink("/protected")}\nprint(summary)'),
+  },
+  {
+    name: 'file context managers read JSON without executing callbacks',
+    source: 'Python JSON inspection pattern with a standard file context manager',
+    allow: python('import json\nwith open("results.json") as f:\n print(json.load(f))'),
+    block: python('with open("/protected", "w") as f:\n f.write("")'),
+  },
+  {
+    name: 'JavaScript iteration over JSON records',
+    source: 'astra 2026-09-10 01a08c81-2e34-7052-8dcd-339f145401b1:561 (explicit JSON read)',
+    allow: js(
+      'const fs=require("fs"); const rows=JSON.parse(fs.readFileSync("results.json","utf8")); for (const row of rows) { console.log(row.message); }',
+    ),
+    block: js(
+      'const fs=require("fs"); const rows=JSON.parse(fs.readFileSync("results.json","utf8")); for (const row of rows) { fs.rmSync(row.path); }',
+    ),
+  },
+  {
+    name: 'Python slice bounds are inspected for effects',
+    source: 'astra 2026-09-08 01a07dc3-4685-7893-b3a3-a422b51a06bf:454 (preview boundary)',
+    allow: python('from pathlib import Path\ns=Path("run.log").read_text()\nprint(s[0:2500])'),
+    block: python(
+      'from pathlib import Path\nimport os\ns=Path("run.log").read_text()\nprint(s[os.unlink("/protected"):2500])',
+    ),
+  },
+  {
+    name: 'regex redaction of a log followed by a bounded preview',
+    source: 'astra 2026-09-08 01a07dc3-4685-7893-b3a3-a422b51a06bf:454',
+    allow: python(
+      'from pathlib import Path\nimport re\ns=Path("run.log").read_text()\ns=re.sub(r"(?:sk-|wk-|ws-)[A-Za-z0-9_-]+", "[redacted]", s)\nprint(s[:2500])',
+    ),
+    block: python(
+      'from pathlib import Path\nimport re\np=Path("README.md")\np.write_text(re.sub(r"[\\s\\S]*", "", p.read_text()))',
+    ),
+  },
+  {
+    name: 'regex replacement preserves nonempty file contents',
+    source: 'Astra regex-edit pattern, bounded to literal replacement text',
+    allow: python(
+      'from pathlib import Path\nimport re\np=Path("README.md")\np.write_text(re.sub(r"version: [0-9]+", "version: 2", p.read_text()))',
+    ),
+    block: python(
+      'from pathlib import Path\nimport re\np=Path("README.md")\np.write_text(re.sub(r"()[\\s\\S]*", r"\\1", p.read_text()))',
+    ),
+  },
+  {
+    name: 'TypeScript annotations do not hide effects',
+    source: 'Astra JavaScript edit pattern expressed in the TypeScript REPL dialect',
+    allow: `bun -e 'const fs = require("fs"); const p: string = "README.md"; fs.writeFileSync(p, fs.readFileSync(p,"utf8").replace("old","new"));'`,
+    block: `bun -e 'const fs = require("fs"); const p: string = "/protected"; fs.rmSync(p);'`,
+  },
   {
     name: 'read-modify-write preserves a nonempty file',
     source: 'astra 2026-09-11 01a08c81-2e34-7052-8dcd-339f145401b1:3493',

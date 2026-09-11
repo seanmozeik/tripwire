@@ -14,7 +14,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import packageManifest from '../package.json' with { type: 'json' };
-import { codeFixtures } from '../test/fixtures/embedded-code';
+import { allCodeFixtures } from '../test/fixtures/code-corpus';
 
 const packageVersion = packageManifest.version;
 
@@ -93,7 +93,7 @@ const safeHookInput = {
 const deniedHookInput = { ...safeHookInput, tool_input: { command: 'rm -rf /' } };
 
 const smokeEmbeddedCode = (runtime: readonly string[]): void => {
-  for (const fixture of codeFixtures) {
+  for (const fixture of allCodeFixtures) {
     // The only executable is Tripwire. Destructive strings travel exclusively as JSON stdin.
     const result = runWithInput([...runtime, '--tripwire-hook'], {
       ...safeHookInput,

@@ -1,16 +1,16 @@
 import { performance } from 'node:perf_hooks';
 
 import { decideBash } from '../src/dispatch';
-import { codeFixtures } from '../test/fixtures/embedded-code';
+import { allCodeFixtures } from '../test/fixtures/code-corpus';
 
 // Only invoke the policy function. No fixture can reach a shell or interpreter.
 const timings: number[] = [];
 const cwd = '/tripwire-policy-fixture';
-for (const fixture of codeFixtures) {
+for (const fixture of allCodeFixtures) {
   decideBash(fixture.command, {}, { cwd });
 }
 for (let round = 0; round < 20; round += 1) {
-  for (const fixture of codeFixtures) {
+  for (const fixture of allCodeFixtures) {
     const start = performance.now();
     const decision = decideBash(fixture.command, {}, { cwd });
     timings.push(performance.now() - start);
@@ -26,7 +26,7 @@ process.stdout.write(
   `${JSON.stringify({
     metric: 'warm Bash parsing plus embedded-code policy, milliseconds',
     samples: timings.length,
-    fixtures: codeFixtures.length,
+    fixtures: allCodeFixtures.length,
     p50: percentile(0.5),
     p95: percentile(0.95),
     p99: percentile(0.99),

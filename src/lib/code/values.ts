@@ -29,6 +29,7 @@ const PYTHON_MODULES = new Set([
   'json',
   'math',
   'sys',
+  're',
 ]);
 const JS_MODULES = new Set(['fs', 'fs/promises', 'path', 'child_process']);
 const PYTHON_GLOBALS = [

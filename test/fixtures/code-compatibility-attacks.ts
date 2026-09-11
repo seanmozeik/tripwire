@@ -1,6 +1,19 @@
 // Additional negative controls for each widening of the accepted syntax.
 // These payloads must only be submitted to the policy checker.
 const compatibilityAttacks: readonly string[] = [
+  'node -e \'const fs=require("fs"); const p="README.md"; fs.writeFileSync(p,fs.readFileSync(p,"utf16le").replace("old","new"));\'',
+  'python3 -c \'from pathlib import Path; p=Path("README.md"); p.write_text(p.read_text().replace("old","new"),"custom-codec")\'',
+  "uv run --no-sync --python /tmp/custom-runtime python3 -c 'print(1)'",
+  "uv run --no-sync --python=custom-runtime python3 -c 'print(1)'",
+  'python3 -c \'import os; assert os.unlink("/protected")\'',
+  'python3 -c \'import os; print(f"{os.unlink("/protected")}")\'',
+  'node -e \'const fs=require("fs"); for (const p of ["dist/file", "/protected"]) { fs.rmSync(p); }\'',
+  'node -e \'const fs=require("fs"); for (const row of JSON.parse("[]")) { const fn=fs.rmSync; fn("/protected"); }\'',
+  'python3 - <<\'PY\'\nimport json,os\nfn=print\nfor row in json.loads("[]"):\n fn("/protected")\n fn=os.unlink\nPY',
+  'python3 - <<\'PY\'\nimport json,os\nfn=print\na=print\nb=print\nfor row in json.loads("[]"):\n fn("/protected")\n fn=a\n a=b\n b=os.unlink\nPY',
+  'python3 - <<\'PY\'\nimport os\nfn=print\nfor row in [1,2]:\n fn("/protected")\n fn=os.unlink\nPY',
+  'node -e \'const fs=require("fs"); const p="README.md"; fs.writeFileSync(p, fs.readFileSync(p,"utf8").replace("all contents", "$`"));\'',
+  'python3 -c \'from pathlib import Path; import re; p=Path("README.md"); p.write_text(re.sub(".*", lambda m: "", p.read_text()))\'',
   'python3 -c \'import json; print(json.loads("{}", object_hook=eval))\'',
   'node -e \'JSON.parse("{}", () => require("fs").rmSync("/protected"))\'',
   "python3 -c 'import sys; sys.modules.clear()'",

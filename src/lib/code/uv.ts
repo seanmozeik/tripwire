@@ -12,6 +12,7 @@ const FLAGS = new Set([
   '--offline',
   '--no-project',
   '--no-config',
+  '--no-python-downloads',
   '--quiet',
   '-q',
   '--verbose',
@@ -27,20 +28,39 @@ const uvInvocation = (invocation: ShellInvocation): UvInvocation => {
   }
   let index = 0;
   let noSync = false;
-  const flags = (): void => {
-    while (FLAGS.has(words[index]?.value ?? '')) {
-      noSync ||= words[index]?.value === '--no-sync';
-      index += 1;
+  const flags = (): boolean => {
+    while (index < words.length) {
+      const token = words[index]?.value ?? '';
+      if (FLAGS.has(token)) {
+        noSync ||= token === '--no-sync';
+        index += 1;
+      } else if (token === '--python' || token === '-p' || token.startsWith('--python=')) {
+        const attached = token.startsWith('--python=');
+        const version = attached
+          ? token.slice('--python='.length)
+          : (words[index + 1]?.value ?? '');
+        if (!/^[23](?:\.\d+){0,2}t?$/u.test(version)) {
+          return false;
+        }
+        index += attached ? 1 : 2;
+      } else {
+        break;
+      }
     }
+    return true;
   };
-  flags();
+  if (!flags()) {
+    return { kind: 'blocked', reason: 'The uv Python selector must be a literal version.' };
+  }
   if (words[index]?.value !== 'run') {
     return invocation.tokens.includes('run')
       ? { kind: 'blocked', reason: 'The uv run options require review.' }
       : { kind: 'irrelevant' };
   }
   index += 1;
-  flags();
+  if (!flags()) {
+    return { kind: 'blocked', reason: 'The uv Python selector must be a literal version.' };
+  }
   if (words[index]?.value === '--') {
     index += 1;
   }

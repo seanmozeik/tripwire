@@ -53,10 +53,18 @@ const inspectBranches = (node: SyntaxNode, context: ControlContext): void => {
 // as its old safe value in a later iteration.
 const forgetLoopWrites = (node: SyntaxNode, context: ControlContext): void => {
   const parts = children(node);
-  if (['AssignStatement', 'ImportStatement', 'ForStatement'].includes(node.name)) {
-    const end = parts.findIndex((part) => ['AssignOp', 'in'].includes(part.name));
+  if (
+    [
+      'AssignStatement',
+      'ImportStatement',
+      'ForStatement',
+      'VariableDeclaration',
+      'WithStatement',
+    ].includes(node.name)
+  ) {
+    const end = parts.findIndex((part) => ['AssignOp', 'Equals', 'in'].includes(part.name));
     for (const part of end === -1 ? parts : parts.slice(0, end)) {
-      if (part.name === 'VariableName') {
+      if (part.name === 'VariableName' || part.name === 'VariableDefinition') {
         context.bindings.set(context.text(part), unknown);
       }
     }
@@ -73,7 +81,11 @@ const iterate = (
   visit: () => void,
   body?: SyntaxNode,
 ): void => {
-  if (target?.name !== 'VariableName' || input === undefined) {
+  if (
+    target === undefined ||
+    !['VariableName', 'VariableDefinition'].includes(target.name) ||
+    input === undefined
+  ) {
     return failInspection('Only simple iteration bindings are inspected.');
   }
   const iterable = context.evaluate(input);
@@ -104,6 +116,30 @@ const iterate = (
 
 const inspectLoop = (node: SyntaxNode, context: ControlContext): void => {
   const parts = children(node);
+  const spec = parts.find((part) => part.name === 'ForOfSpec');
+  if (spec !== undefined) {
+    const fields = children(spec);
+    const [, declaration, target, operator, input] = fields;
+    const block = parts.at(2);
+    if (
+      fields.length !== 6 ||
+      !['const', 'let'].includes(declaration?.name ?? '') ||
+      operator?.name !== 'of' ||
+      block?.name !== 'Block'
+    ) {
+      return failInspection('Unsupported JavaScript iteration form.');
+    }
+    iterate(
+      target,
+      input,
+      context,
+      () => {
+        context.statement(block);
+      },
+      block,
+    );
+    return;
+  }
   const index = parts.findIndex((part) => part.name === 'in');
   const body = parts[index + 2];
   if (index !== 2 || body?.name !== 'Body' || parts.length !== 5) {

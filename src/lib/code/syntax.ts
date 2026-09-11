@@ -66,17 +66,19 @@ const parseCode = (language: CodeLanguage, source: string): SyntaxNode => {
 
 // Decode only unambiguous plain literals. No eval, interpreter, or dynamic imports.
 const stringLiteral = (text: string, language: CodeLanguage = 'javascript'): string => {
-  const [quote] = text;
+  const raw = language === 'python' && /^[rR]["']/u.test(text);
+  const literal = raw ? text.slice(1) : text;
+  const [quote] = literal;
   if (quote !== '"' && quote !== "'") {
     throw new CodeInspectionError('Unsupported string literal.');
   }
   const delimiter =
-    language === 'python' && text.startsWith(quote.repeat(3)) ? quote.repeat(3) : quote;
-  if (!text.endsWith(delimiter)) {
+    language === 'python' && literal.startsWith(quote.repeat(3)) ? quote.repeat(3) : quote;
+  if (!literal.endsWith(delimiter)) {
     return failInspection('Incomplete string literal.');
   }
-  const body = text.slice(delimiter.length, -delimiter.length);
-  return decodeEscapes(body);
+  const body = literal.slice(delimiter.length, -delimiter.length);
+  return raw ? body : decodeEscapes(body);
 };
 
 const decodeEscapes = (body: string): string => {

@@ -142,6 +142,9 @@ const pathCall = (
   if (kind === 'read' && args.length > 0) {
     return failInspection('File read encoding and offset options require review.');
   }
+  if (kind === 'write' && args.length !== 1) {
+    return failInspection('File write encoding and callback options require review.');
+  }
   const effect = kind === 'write' ? writeKind(receiver.path, args[0]) : kind;
   context.operations.push({ kind: effect, path: receiver.path, range: context.range });
   return kind === 'read' ? fileText(receiver.path) : unknown;
@@ -232,8 +235,13 @@ const fileOperation = (
   const effect = kind === 'write' ? writeKind(target, args[1]) : kind;
   context.operations.push({ kind: effect, path: target, range: context.range });
   if (kind === 'read') {
-    // An explicit encoding proves a string. Buffer methods remain unsupported.
-    return name.startsWith('Deno.') || args[1]?.kind === 'string' ? fileText(target) : data;
+    // Only UTF-8 preserves nonempty bytes as nonempty text. For example, a
+    // one-byte file decoded as UTF-16LE can produce an empty string.
+    const [, encoding] = args;
+    return name.startsWith('Deno.') ||
+      (encoding?.kind === 'string' && encoding.value.toLowerCase().replace('-', '') === 'utf8')
+      ? fileText(target)
+      : data;
   }
   return unknown;
 };

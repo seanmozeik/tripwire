@@ -29,7 +29,7 @@ const namedMember = (value: Value, member: string, language: CodeLanguage): Valu
   if (value.kind === 'path' || value.kind === 'file') {
     return { kind: 'method', receiver: value, name: member };
   }
-  if (value.kind === 'object') {
+  if (value.kind === 'object' && language !== 'python') {
     return value.entries.get(member) ?? data;
   }
   if (isData(value)) {
