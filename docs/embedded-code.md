@@ -44,6 +44,8 @@ Writes with known nonempty content still follow the existing Write policy. This 
 
 ## Validation and reproduction
 
+Code-bearing invocations through common package launchers (`uv`, Poetry, Pipenv, `npx`, and related tools) block because those launchers can change the interpreter or load project startup code. Versioned Python names also include the free-threaded `t` suffix. Other arbitrary external launchers still require a separate execution policy.
+
 All new destructive fixtures are strings. Unit tests call the analyzer or dispatcher directly. Build smoke tests put those strings in JSON on Tripwire's stdin. The only launched executable is the trusted Tripwire runtime. The symlink test creates and later removes its own temporary directory and checks that its sentinel content stays unchanged.
 
 `bun run verify` checks formatting, lint, types, the complete test suite, and both build outputs. The build sends all 139 primary fixtures through each packaged hook. The adversarial review suite adds option, alias, path, resource, and runtime-context cases. The Pi/OMP tests pass normalized events through the production hook and assert an actual embedded-code denial.

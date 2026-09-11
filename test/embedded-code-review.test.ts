@@ -41,6 +41,16 @@ bunTest.describe('adversarial review regressions (policy-only)', () => {
     'env NODE_OPTIONS="--require ./payload.js" node -e "console.log(1)"',
     'export PYTHONPATH=/untrusted; python3 -c "print(1)"',
     "ssh host node -e 'console.log(1)'",
+    'uv run python3 -c \'import os; os.unlink("/protected")\'',
+    'uv run --script cleanup.py',
+    'poetry run python3 -c \'import os; os.unlink("/protected")\'',
+    'pipenv run python3 -c \'import os; os.unlink("/protected")\'',
+    'npx tsx -e \'require("fs").rmSync("/protected")\'',
+    'timeout 5 node -e \'require("fs").rmSync("/protected")\'',
+    'sudo python3 -c \'import os; os.unlink("/protected")\'',
+    'nice node -e \'require("fs").rmSync("/protected")\'',
+    'command /usr/bin/python3 -c \'import os; os.unlink("/protected")\'',
+    'python3.14t -c \'import os; os.unlink("/protected")\'',
   ])('blocks %s', (command) => {
     bunTest.expect(decideBash(command).kind).toBe('deny');
   });

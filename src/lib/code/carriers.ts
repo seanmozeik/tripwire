@@ -12,7 +12,7 @@ const irrelevant: CodeInput = { kind: 'irrelevant' };
 const blocked = (reason: string): CodeInput => ({ kind: 'blocked', reason });
 const interpreterLanguage = (head: string): CodeLanguage | null => {
   const name = path.posix.basename(head);
-  if (/^(?:python|pypy)(?:[23](?:\.\d+)*)?$/u.test(name)) {
+  if (/^(?:python|pypy)(?:[23](?:\.\d+)*t?)?$/u.test(name)) {
     return 'python';
   }
   if (['node', 'nodejs'].includes(name)) {
@@ -22,6 +22,32 @@ const interpreterLanguage = (head: string): CodeLanguage | null => {
     return 'typescript';
   }
   return null;
+};
+
+const PACKAGE_LAUNCHERS = new Set([
+  'uv',
+  'poetry',
+  'pipenv',
+  'pipx',
+  'npx',
+  'bunx',
+  'npm',
+  'pnpm',
+  'yarn',
+]);
+const CODE_FLAGS = new Set(['--script', '--module', '-m', '-c', '-e', '--eval', '--call']);
+const opaqueCodeLauncher = (invocation: ShellInvocation): boolean => {
+  if (!PACKAGE_LAUNCHERS.has(path.posix.basename(invocation.head))) {
+    return false;
+  }
+  return invocation.words
+    .slice(1)
+    .some(
+      (word) =>
+        interpreterLanguage(word.value) !== null ||
+        CODE_FLAGS.has(word.value) ||
+        /\.(?:py|pyw|mjs|cjs|js|jsx|ts|tsx)$/u.test(word.value),
+    );
 };
 
 const standardInput = (invocation: ShellInvocation, language: CodeLanguage): CodeInput => {
@@ -84,6 +110,11 @@ const inlineInput = (
 };
 
 const interpreterInput = (invocation: ShellInvocation): CodeInput => {
+  if (opaqueCodeLauncher(invocation)) {
+    return blocked(
+      'A package launcher can change the interpreter or load project startup code. Use a directly inspected interpreter.',
+    );
+  }
   const language = interpreterLanguage(invocation.head);
   if (language === null) {
     return irrelevant;
