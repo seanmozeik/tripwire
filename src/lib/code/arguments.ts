@@ -2,55 +2,23 @@ import type { SyntaxNode } from '@lezer/common';
 
 import { failInspection } from './syntax';
 import type { Value } from './types';
-import { valueString } from './values';
 
-const acceptsEncoding = (fn: Value): boolean =>
-  (fn.kind === 'symbol' && fn.name === 'open') ||
-  (fn.kind === 'method' &&
-    fn.receiver.kind === 'path' &&
-    ['read_text', 'write_text'].includes(fn.name));
-
-const validateKeyword = (fn: Value, name: string, value: Value): void => {
-  if (name === 'encoding' && acceptsEncoding(fn)) {
-    const encoding = valueString(value).toLowerCase().replaceAll(/[-_]/gu, '');
-    if (
-      [
-        'utf8',
-        'utf16',
-        'utf16le',
-        'utf16be',
-        'utf32',
-        'utf32le',
-        'utf32be',
-        'ascii',
-        'latin1',
-      ].includes(encoding)
-    ) {
-      return;
-    }
-    return failInspection('Custom Python codecs require review.');
-  }
-  if (
-    name === 'indent' &&
-    fn.kind === 'symbol' &&
-    ['json.dump', 'json.dumps'].includes(fn.name) &&
-    ['number', 'string'].includes(value.kind)
-  ) {
-    return;
-  }
-  return failInspection('Unsupported keyword argument.');
-};
-
-// Only supported keywords are consumed. Python codecs can run user code, so
-// a custom encoding cannot be treated as an inert string option.
+interface CallArguments {
+  readonly positional: readonly Value[];
+  readonly keywords: ReadonlyMap<string, Value>;
+}
+interface CallSignature {
+  readonly parameters: readonly string[];
+  readonly defaults?: Readonly<Record<string, Value>>;
+  readonly options?: Readonly<Record<string, (value: Value) => void>>;
+}
 const callArguments = (
   parts: readonly SyntaxNode[],
-  fn: Value,
   evaluate: (node: SyntaxNode) => Value,
   source: string,
-): readonly Value[] => {
-  const args: Value[] = [];
-  let keywordSeen = false;
+): CallArguments => {
+  const positional: Value[] = [];
+  const keywords = new Map<string, Value>();
   for (let index = 0; index < parts.length; index += 1) {
     const part = parts[index];
     if (part === undefined) {
@@ -58,20 +26,60 @@ const callArguments = (
     }
     if (parts[index + 1]?.name === 'AssignOp') {
       const value = parts[index + 2];
-      if (keywordSeen || value === undefined) {
-        return failInspection('Unsupported keyword argument.');
+      const name = source.slice(part.from, part.to);
+      if (keywords.has(name) || value === undefined) {
+        return failInspection('Duplicate or missing keyword argument.');
       }
-      validateKeyword(fn, source.slice(part.from, part.to), evaluate(value));
-      keywordSeen = true;
+      keywords.set(name, evaluate(value));
       index += 2;
     } else {
-      if (keywordSeen) {
+      if (keywords.size > 0) {
         return failInspection('A positional argument follows a keyword argument.');
       }
-      args.push(evaluate(part));
+      positional.push(evaluate(part));
     }
+  }
+  return { positional, keywords };
+};
+const bindArguments = (input: CallArguments, signature?: CallSignature): readonly Value[] => {
+  if (input.keywords.size === 0) {
+    return input.positional;
+  }
+  if (signature === undefined) {
+    return failInspection('Unsupported keyword argument.');
+  }
+  const values = new Map<number, Value>(input.positional.map((value, index) => [index, value]));
+  for (const [name, value] of input.keywords) {
+    const index = signature.parameters.indexOf(name);
+    if (index === -1) {
+      const validate = Object.hasOwn(signature.options ?? {}, name)
+        ? signature.options?.[name]
+        : undefined;
+      if (validate === undefined) {
+        return failInspection(`Unsupported keyword argument: ${name}.`);
+      }
+      validate(value);
+    } else {
+      if (values.has(index)) {
+        return failInspection(`Duplicate argument: ${name}.`);
+      }
+      values.set(index, value);
+    }
+  }
+  const args: Value[] = [];
+  const end = Math.max(-1, ...values.keys());
+  for (let index = 0; index <= end; index += 1) {
+    const name = signature.parameters[index] ?? '';
+    const fallback = Object.hasOwn(signature.defaults ?? {}, name)
+      ? signature.defaults?.[name]
+      : undefined;
+    const value = values.get(index) ?? fallback;
+    if (value === undefined) {
+      return failInspection(`Missing argument: ${name}.`);
+    }
+    args.push(value);
   }
   return args;
 };
-
-export { callArguments };
+export { bindArguments, callArguments };
+export type { CallArguments, CallSignature };

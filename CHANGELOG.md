@@ -4,6 +4,15 @@ This file records notable project changes. The format follows [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-09-12
+
+### Fixed
+
+- Support common inline Python ZIP reads and writes, directory listings, text diffs, text encoding, and writes filtered to a fixed list of filenames. Apply file policy to archive paths, source files, and output destinations.
+- Support local JavaScript JSON-file imports as data, with the existing protected-file read checks.
+- Verify that JSON imports resolve to regular JSON files, rejecting directories and links to executable modules.
+- Normalize supported keyword arguments against library call signatures and share standard codec validation between file operations and text conversion.
+
 ## [0.9.1] - 2026-09-12
 
 ### Fixed

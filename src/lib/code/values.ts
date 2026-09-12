@@ -30,6 +30,9 @@ const PYTHON_MODULES = new Set([
   'math',
   'sys',
   're',
+  'zipfile',
+  'difflib',
+  'glob',
 ]);
 const JS_MODULES = new Set(['fs', 'fs/promises', 'path', 'child_process']);
 const PYTHON_GLOBALS = [

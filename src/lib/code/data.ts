@@ -1,3 +1,4 @@
+import { validateCodec } from './codecs';
 import { failInspection } from './syntax';
 import type { CodeLanguage, Value } from './types';
 import { unknown } from './values';
@@ -32,6 +33,7 @@ const isData = (value: Value): boolean => {
           break;
         }
         case 'file':
+        case 'archive':
         case 'path':
         case 'method':
         case 'symbol':
@@ -80,6 +82,18 @@ const dataMethod = (
 ): Value => {
   requireData(args);
   if (receiver.kind === 'string' || receiver.kind === 'text') {
+    if (name === 'join' && args.length === 1) {
+      return text;
+    }
+    if (name === 'decode' || name === 'encode') {
+      if (args.length > 1) {
+        return failInspection('Text conversion accepts only a standard encoding.');
+      }
+      if (args[0] !== undefined) {
+        validateCodec(args[0]);
+      }
+      return text;
+    }
     if (name === 'replace' || name === 'replaceAll') {
       return replaceText(args, language);
     }

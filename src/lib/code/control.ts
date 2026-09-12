@@ -176,6 +176,34 @@ const inspectComprehension = (parts: readonly SyntaxNode[], context: ControlCont
         failInspection('Unsupported comprehension filter.');
       }
       requireData([context.evaluate(condition)]);
+      const [left, operator, right] = children(condition);
+      const target = parts[index + 1];
+      if (
+        condition.name === 'BinaryExpression' &&
+        left?.name === 'VariableName' &&
+        operator !== undefined &&
+        context.text(operator) === 'in' &&
+        right !== undefined &&
+        target !== undefined &&
+        context.text(left) === context.text(target)
+      ) {
+        const allowed = context.evaluate(right);
+        if (
+          allowed.kind === 'list' &&
+          allowed.items.length > 0 &&
+          allowed.items.length <= 128 &&
+          allowed.items.every((value) => value.kind === 'string')
+        ) {
+          const name = context.text(target);
+          const previous = context.bindings.get(name) ?? unknown;
+          for (const value of allowed.items) {
+            context.bindings.set(name, value);
+            requireData([context.evaluate(expression)]);
+          }
+          context.bindings.set(name, previous);
+          return;
+        }
+      }
     }
     requireData([context.evaluate(expression)]);
   });

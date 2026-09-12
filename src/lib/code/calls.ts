@@ -1,10 +1,14 @@
 import path from 'node:path';
 
+import type { CallArguments } from './arguments';
+import { normalizeCallArguments } from './call-signatures';
 import { data, dataCall, dataMethod, requireData, text } from './data';
 import { validateReadOptions, validateWriteOptions } from './file-options';
+import { pythonLibraryCall } from './python-library';
 import { failInspection } from './syntax';
 import type { CodeLanguage, CodeOperation, CodeRange, Value } from './types';
 import { moduleName, pythonJoin, symbol, textValue, unknown, valueString } from './values';
+import { archiveCall } from './zipfile';
 
 const FILE_OPERATIONS = new Map<string, 'delete' | 'read' | 'write' | 'truncate'>([
   ...[
@@ -81,6 +85,16 @@ const pathCall = (
   args: readonly Value[],
   context: CallContext,
 ): Value => {
+  if (receiver.kind === 'path' && ['glob', 'rglob', 'iterdir'].includes(member)) {
+    if (args.length !== (member === 'iterdir' ? 0 : 1)) {
+      return failInspection('Directory listing options are not inspected.');
+    }
+    if (args[0] !== undefined) {
+      valueString(args[0]);
+    }
+    context.operations.push({ kind: 'read', path: receiver.path, range: context.range });
+    return data;
+  }
   if (receiver.kind === 'file' && member === 'close' && args.length === 0) {
     return unknown;
   }
@@ -93,6 +107,7 @@ const pathCall = (
           read_bytes: 'read',
           write_text: 'write',
           write_bytes: 'write',
+          mkdir: 'write',
         }
       : { read: 'read', write: 'write' };
   const kind = kinds[member];
@@ -102,14 +117,14 @@ const pathCall = (
   if (kind === 'read' && args.length > 0) {
     return failInspection('File read encoding and offset options require review.');
   }
-  if (kind === 'write' && args.length !== 1) {
+  if (kind === 'write' && args.length !== (member === 'mkdir' ? 0 : 1)) {
     return failInspection('File write encoding and callback options require review.');
   }
   if (kind === 'write') {
     requireData(args);
   }
   context.operations.push({ kind, path: receiver.path, range: context.range });
-  return kind === 'read' ? text : unknown;
+  return kind === 'read' ? text : data;
 };
 
 const openFile = (args: readonly Value[], context: CallContext): Value => {
@@ -140,16 +155,32 @@ const openFile = (args: readonly Value[], context: CallContext): Value => {
   return { kind: 'file', path: target };
 };
 
-const resolveCall = (fn: Value, args: readonly Value[], context: CallContext): Value => {
+const methodCall = (
+  fn: Extract<Value, { kind: 'method' }>,
+  args: readonly Value[],
+  context: CallContext,
+): Value => {
+  if (fn.receiver.kind === 'archive') {
+    return archiveCall(fn.receiver, fn.name, args, context);
+  }
+  return fn.receiver.kind === 'path' || fn.receiver.kind === 'file'
+    ? pathCall(fn.receiver, fn.name, args, context)
+    : dataMethod(fn.receiver, fn.name, args, context.language);
+};
+
+const resolveCall = (fn: Value, input: CallArguments, context: CallContext): Value => {
+  const args = normalizeCallArguments(fn, input);
   if (fn.kind === 'method') {
-    return fn.receiver.kind === 'path' || fn.receiver.kind === 'file'
-      ? pathCall(fn.receiver, fn.name, args, context)
-      : dataMethod(fn.receiver, fn.name, args, context.language);
+    return methodCall(fn, args, context);
   }
   if (fn.kind !== 'symbol') {
     return failInspection('Dynamic call target.');
   }
   const { name } = fn;
+  const library = pythonLibraryCall(name, args, context);
+  if (library !== null) {
+    return library;
+  }
   if (name === 'json.dump') {
     const [value, file] = args;
     if (args.length !== 2 || value === undefined || file?.kind !== 'file') {
@@ -164,7 +195,12 @@ const resolveCall = (fn: Value, args: readonly Value[], context: CallContext): V
     return pure;
   }
   if (name === 'require') {
-    return symbol(moduleName(valueString(args[0]), context.language));
+    const target = valueString(args[0]);
+    if (args.length === 1 && /^(?:\.{1,2}\/|\/).*\.json$/u.test(target)) {
+      context.operations.push({ kind: 'json-module', path: target, range: context.range });
+      return data;
+    }
+    return symbol(moduleName(target, context.language));
   }
   if (name === 'pathlib.Path' || name === 'pathlib.PosixPath') {
     return { kind: 'path', path: pythonJoin(args.map((value) => valueString(value))) };

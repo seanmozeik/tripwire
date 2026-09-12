@@ -148,7 +148,7 @@ class CodeAnalyzer {
       return failInspection('Only a single known file context is inspected.');
     }
     const value = this.#eval(expression);
-    if (value.kind !== 'file') {
+    if (value.kind !== 'file' && value.kind !== 'archive') {
       return failInspection('Context manager callbacks require review.');
     }
     this.#bindings.set(this.#text(target), value);
@@ -340,9 +340,12 @@ class CodeAnalyzer {
     const fn = this.#eval(callee);
     const parts = children(argsNode).filter((part) => !['(', ')', ','].includes(part.name));
     const args = parts.some((part) => part.name === 'for')
-      ? [inspectComprehension(parts, this.#control())]
-      : callArguments(parts, fn, (part) => this.#eval(part), this.#source);
-    if (args.length > 128) {
+      ? {
+          positional: [inspectComprehension(parts, this.#control())],
+          keywords: new Map<string, Value>(),
+        }
+      : callArguments(parts, (part) => this.#eval(part), this.#source);
+    if (args.positional.length + args.keywords.size > 128) {
       return failInspection('Call exceeds the argument count limit.');
     }
     return resolveCall(fn, args, {

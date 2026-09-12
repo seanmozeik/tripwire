@@ -26,7 +26,7 @@ const namedMember = (value: Value, member: string, language: CodeLanguage): Valu
   if (value.kind === 'symbol') {
     return symbol(`${value.name}.${member}`);
   }
-  if (value.kind === 'path' || value.kind === 'file') {
+  if (value.kind === 'path' || value.kind === 'file' || value.kind === 'archive') {
     return { kind: 'method', receiver: value, name: member };
   }
   if (value.kind === 'object' && language !== 'python') {

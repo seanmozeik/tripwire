@@ -123,6 +123,17 @@ const operationDecision = (operation: CodeOperation, policy: CodePolicy): Decisi
     return policy.inspectCommand(operation.argv.map(quoteArgument).join(' '));
   }
   const target = path.resolve(policy.cwd, operation.path);
+  if (operation.kind === 'json-module') {
+    try {
+      const resolved = realpathSync(target);
+      if (path.extname(resolved) !== '.json' || !lstatSync(resolved).isFile()) {
+        return codeDeny('JSON imports must resolve to a regular .json file.');
+      }
+      return merge([readProtect({ file_path: target }), readProtect({ file_path: resolved })]);
+    } catch {
+      return codeDeny('JSON import target could not be verified.');
+    }
+  }
   if (
     (operation.kind === 'delete' || operation.kind === 'truncate') &&
     !safeDeletion(operation.path, policy)
