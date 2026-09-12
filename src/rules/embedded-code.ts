@@ -9,6 +9,7 @@ import { hasPackageScript } from '../lib/code/project-commands';
 import type { CodeLanguage, CodeOperation } from '../lib/code/types';
 import type { SafePathsConfig } from '../lib/config';
 import { allow, deny, merge, type Decision } from '../lib/decision';
+import { applyShellBypass } from './bash-bypass';
 import { pathProtect } from './path-protect';
 import { readProtect } from './read-protect';
 
@@ -148,7 +149,7 @@ const embeddedCode = (program: ShellProgram, policy: CodePolicy): Decision => {
   for (const invocation of program.invocations) {
     const input = interpreterInput(invocation);
     if (input.kind === 'blocked') {
-      return codeDeny(input.reason);
+      decisions.push(applyShellBypass(program, codeDeny(input.reason)));
     }
     if (input.kind === 'project') {
       if (uncertainContext(program, policy)) {

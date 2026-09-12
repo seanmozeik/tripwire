@@ -4,6 +4,13 @@ This file records notable project changes. The format follows [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-09-12
+
+### Fixed
+
+- Allow direct execution of local Python, JavaScript, and TypeScript files without a review marker, including supported Bun, Deno, and uv run commands. File contents and imports use the same trust boundary as project scripts.
+- Apply reason-bearing review markers to interpreter invocation restrictions. Continue to check separate shell commands and inspected inline code for destructive operations.
+
 ## [0.8.0] - 2026-08-31
 
 ### Added

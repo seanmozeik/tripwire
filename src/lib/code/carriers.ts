@@ -14,6 +14,42 @@ type CodeInput =
 
 const irrelevant: CodeInput = { kind: 'irrelevant' };
 const blocked = (reason: string): CodeInput => ({ kind: 'blocked', reason });
+// File execution has the same trust boundary as running a project command.
+// This classifies the invocation; it does not inspect the file or its imports.
+const scriptFileInput = (args: readonly string[], name: string): boolean => {
+  let index = 0;
+  if (name === 'bun' && args[index] === '--cwd') {
+    const directory = args[index + 1] ?? '';
+    if (directory === '' || directory.startsWith('-')) {
+      return false;
+    }
+    index += 2;
+  } else if (name === 'bun' && (args[index]?.startsWith('--cwd=') ?? false)) {
+    index += 1;
+  }
+  if (['bun', 'deno'].includes(name) && args[index] === 'run') {
+    index += 1;
+  }
+  const flags = new Set(['-I', '-S', '-E', '-s', '-B', '-u', '-q', '--no-warnings']);
+  if (name === 'deno') {
+    for (const flag of ['-A', '--allow-all', '--no-check', '--no-config', '--no-prompt']) {
+      flags.add(flag);
+    }
+  }
+  while (flags.has(args[index] ?? '')) {
+    index += 1;
+  }
+  if (args[index] === '--') {
+    index += 1;
+  }
+  const file = args[index];
+  return (
+    file !== undefined &&
+    !file.startsWith('-') &&
+    !/^\w+:/u.test(file) &&
+    /\.(?:py|pyw|mjs|cjs|js|jsx|ts|tsx)$/u.test(file)
+  );
+};
 const interpreterLanguage = (head: string): CodeLanguage | null => {
   const name = path.posix.basename(head);
   if (/^(?:python|pypy)(?:[23](?:\.\d+)*t?)?$/u.test(name)) {
@@ -62,6 +98,9 @@ const uvCommand = (invocation: ShellInvocation): CodeInput => {
   const head = child.argv[0] ?? '';
   const language = head === '-' ? 'python' : interpreterLanguage(head);
   if (language !== null) {
+    if (scriptFileInput(child.argv.slice(1), path.posix.basename(head))) {
+      return irrelevant;
+    }
     if (!child.noSync) {
       return blocked(
         'Inline code through uv requires --no-sync and an existing trusted environment.',
@@ -78,7 +117,7 @@ const uvCommand = (invocation: ShellInvocation): CodeInput => {
     );
   }
   if (/\.(?:py|pyw|mjs|cjs|js|jsx|ts|tsx)$/u.test(head)) {
-    return blocked('Script files require explicit review.');
+    return irrelevant;
   }
   return { kind: 'command', argv: child.argv };
 };
@@ -174,6 +213,9 @@ const interpreterInput = (invocation: ShellInvocation): CodeInput => {
     return irrelevant;
   }
   const values = args.map((word) => word.value);
+  if (scriptFileInput(values, name)) {
+    return irrelevant;
+  }
   return (
     projectCommand(name, values) ??
     inlineInput(values, language, name) ??
