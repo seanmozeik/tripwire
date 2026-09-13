@@ -20,6 +20,7 @@ interface CodeReport {
 }
 
 type Value =
+  | { readonly kind: 'counter' }
   | { readonly kind: 'data' }
   | { readonly kind: 'text' }
   | { readonly kind: 'string'; readonly value: string }

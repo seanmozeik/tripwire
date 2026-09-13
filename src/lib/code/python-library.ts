@@ -33,6 +33,13 @@ const pythonLibraryCall = (
   args: readonly Value[],
   context: { readonly operations: CodeOperation[]; readonly range: CodeRange },
 ): Value | null => {
+  if (name === 'collections.Counter') {
+    requireData(args);
+    if (args.length > 1) {
+      return failInspection('Counter accepts at most one data input.');
+    }
+    return { kind: 'counter' };
+  }
   if (['glob.glob', 'glob.iglob'].includes(name)) {
     if (args.length !== 1) {
       return failInspection('Globbing needs a literal pattern.');

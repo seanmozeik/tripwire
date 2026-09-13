@@ -21,6 +21,7 @@ const isData = (value: Value): boolean => {
         case 'string':
         case 'number':
         case 'text':
+        case 'counter':
         case 'data': {
           break;
         }
@@ -81,6 +82,12 @@ const dataMethod = (
   language: CodeLanguage,
 ): Value => {
   requireData(args);
+  if (language === 'python' && receiver.kind === 'counter' && name === 'most_common') {
+    if (args.length > 1) {
+      return failInspection('Counter.most_common accepts at most one data argument.');
+    }
+    return data;
+  }
   if (receiver.kind === 'string' || receiver.kind === 'text') {
     if (name === 'join' && args.length === 1) {
       return text;

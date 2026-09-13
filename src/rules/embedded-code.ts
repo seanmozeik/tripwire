@@ -5,7 +5,6 @@ import { isSafePathTarget, type ShellProgram } from '../lib/bash';
 import { skipHeadRenamingPrefix } from '../lib/bash/wrappers';
 import { analyzeCode } from '../lib/code/analyze';
 import { interpreterInput } from '../lib/code/carriers';
-import { hasPackageScript } from '../lib/code/project-commands';
 import type { CodeLanguage, CodeOperation } from '../lib/code/types';
 import type { SafePathsConfig } from '../lib/config';
 import { allow, deny, merge, type Decision } from '../lib/decision';
@@ -162,18 +161,8 @@ const embeddedCode = (program: ShellProgram, policy: CodePolicy): Decision => {
     if (input.kind === 'blocked') {
       decisions.push(applyShellBypass(program, codeDeny(input.reason)));
     }
-    if (input.kind === 'project') {
-      if (uncertainContext(program, policy)) {
-        return codeDeny('The project command has an unverified execution context.');
-      }
-      if (
-        input.script !== null &&
-        !hasPackageScript(path.resolve(policy.cwd, input.directory ?? '.'), input.script)
-      ) {
-        return codeDeny(
-          'The named script is absent from the selected package.json. Check the script name and working directory.',
-        );
-      }
+    if (input.kind === 'project' && uncertainContext(program, policy)) {
+      return codeDeny('The project command has an unverified execution context.');
     }
     if (input.kind === 'command') {
       if (uncertainContext(program, policy)) {

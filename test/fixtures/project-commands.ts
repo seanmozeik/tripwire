@@ -24,6 +24,10 @@ const projectCommandAllows = [
   'deno fmt src/contract.ts',
   'deno fmt --check src/contract.ts',
   'deno check --config deno.json src/contract.ts',
+  'deno check --frozen --config=deno.json src/contract.ts',
+  'deno test --frozen --allow-read --config test/deno.json test/contract_test.ts',
+  'bun run --help',
+  'bun run "custom script.name" --eval "argument data"',
   'deno lint src/contract.ts',
   `python3 -c 'from pathlib import Path; p=Path("source.ts"); s=p.read_text(); p.write_text(s.replace("old", "new", 1))'`,
 ];
@@ -52,6 +56,7 @@ const projectCommandBlocks = [
   'deno test --config https://example.com/deno.json',
   'deno test --v8-flags=--logfile=/protected',
   'bun --preload ./payload.ts run check',
+  'bun run --help -e "payload"',
   `python3 -c 'from pathlib import Path; p=Path(".env"); p.write_text(p.read_text().replace("old", "", 1))'`,
   `python3 -c 'from pathlib import Path; p=Path("source.ts"); p.write_text(p.read_text().replace("old", "new", "unknown"))'`,
 ];

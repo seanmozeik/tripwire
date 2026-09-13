@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { ShellInvocation } from '../bash';
 import { projectCommand, type ProjectCommand } from './project-commands';
 import type { CodeLanguage } from './types';
-import { uvInvocation } from './uv';
+import { uvInvocation, UV_ENVIRONMENT_GUIDANCE } from './uv';
 
 type CodeInput =
   | ProjectCommand
@@ -103,7 +103,7 @@ const uvCommand = (invocation: ShellInvocation): CodeInput => {
     }
     if (!child.noSync) {
       return blocked(
-        'Inline code through uv requires --no-sync and an existing trusted environment.',
+        `Inline code through uv requires --no-sync and an existing trusted environment. ${UV_ENVIRONMENT_GUIDANCE}`,
       );
     }
     if (head === '-') {

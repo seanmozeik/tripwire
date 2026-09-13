@@ -1,4 +1,4 @@
-import { data, isData } from './data';
+import { data, isData, text } from './data';
 import { failInspection } from './syntax';
 import type { CodeLanguage, Value } from './types';
 import { symbol } from './values';
@@ -7,7 +7,10 @@ const indexedValue = (value: Value, key: Value): Value => {
   if (!isData(key)) {
     return failInspection('Index has uninspected effects.');
   }
-  if (value.kind === 'data' || value.kind === 'text' || value.kind === 'string') {
+  if (value.kind === 'text' || value.kind === 'string') {
+    return text;
+  }
+  if (value.kind === 'data' || value.kind === 'counter') {
     return data;
   }
   if (value.kind === 'list' && key.kind === 'number') {

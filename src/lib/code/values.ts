@@ -21,6 +21,7 @@ const valueString = (value: Value | undefined): string => {
   return failInspection('An operation has an unresolved path or argument.');
 };
 const PYTHON_MODULES = new Set([
+  'collections',
   'os',
   'os.path',
   'shutil',

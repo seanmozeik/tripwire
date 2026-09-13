@@ -19,6 +19,16 @@ const FLAGS = new Set([
   '-v',
 ]);
 
+const UV_ENVIRONMENT_GUIDANCE =
+  'Declare dependencies in pyproject.toml, run uv sync, then use uv run --no-sync python -c with inline source. If selecting Python, use --python with a literal version such as 3.12.';
+
+const unsupportedOptions = (token: string, fallback: string): UvInvocation => ({
+  kind: 'blocked',
+  reason: /^--with(?:-editable|-requirements)?(?:=|$)/u.test(token)
+    ? `uv dependency injection options are not inspected. ${UV_ENVIRONMENT_GUIDANCE}`
+    : fallback,
+});
+
 // Option ownership stops at the launched command. A pytest .py argument is not
 // interpreter source, and an option after that command belongs to the child.
 const uvInvocation = (invocation: ShellInvocation): UvInvocation => {
@@ -54,7 +64,7 @@ const uvInvocation = (invocation: ShellInvocation): UvInvocation => {
   }
   if (words[index]?.value !== 'run') {
     return invocation.tokens.includes('run')
-      ? { kind: 'blocked', reason: 'The uv run options require review.' }
+      ? unsupportedOptions(words[index]?.value ?? '', 'The uv run options require review.')
       : { kind: 'irrelevant' };
   }
   index += 1;
@@ -66,9 +76,9 @@ const uvInvocation = (invocation: ShellInvocation): UvInvocation => {
   }
   const head = words[index]?.value;
   if (head === undefined || (head.startsWith('-') && head !== '-')) {
-    return { kind: 'blocked', reason: 'The uv run command or options require review.' };
+    return unsupportedOptions(head ?? '', 'The uv run command or options require review.');
   }
   return { kind: 'command', argv: words.slice(index).map((word) => word.value), noSync };
 };
 
-export { uvInvocation };
+export { uvInvocation, UV_ENVIRONMENT_GUIDANCE };

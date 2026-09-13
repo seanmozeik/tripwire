@@ -291,8 +291,13 @@ const collectExecutableToolRules = (
   }
   if (tool === 'ExecCommand') {
     const decoded = decodeExecInput(input);
+    const commandCwd = Option.isSome(decoded) ? (decoded.value.workdir ?? cwd) : cwd;
     return Option.isSome(decoded)
-      ? collectBashRules(decoded.value.cmd, config, cwd === undefined ? {} : { cwd })
+      ? collectBashRules(
+          decoded.value.cmd,
+          config,
+          commandCwd === undefined ? {} : { cwd: commandCwd },
+        )
       : [
           {
             name: 'embedded-code',

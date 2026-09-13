@@ -122,6 +122,8 @@ const smokePackageScripts = (runtime: readonly string[]): void => {
     for (const command of [
       'bun --cwd project run qa:fixture',
       'bun run --cwd=project qa:fixture',
+      'bun --cwd project run qa:missing',
+      'bun --cwd missing run qa:missing',
     ]) {
       assertAllowed(
         runWithInput([...runtime, '--tripwire-hook'], {
@@ -129,13 +131,10 @@ const smokePackageScripts = (runtime: readonly string[]): void => {
           cwd,
           tool_input: { command },
         }),
-        'Manifest-backed package script',
+        'Trusted package script',
       );
     }
-    for (const command of [
-      'bun --cwd project run qa:missing',
-      'bun --cwd project --preload ./payload.ts run qa:fixture',
-    ]) {
+    for (const command of ['bun --cwd project --preload ./payload.ts run qa:fixture']) {
       assertDenied(
         runWithInput([...runtime, '--tripwire-hook'], {
           ...safeHookInput,

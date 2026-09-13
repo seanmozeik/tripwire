@@ -4,12 +4,12 @@ import { callArguments } from './arguments';
 import { resolveCall } from './calls';
 import { containerValue } from './containers';
 import { inspectBranches, inspectComprehension, inspectLoop, type ControlContext } from './control';
-import { data, isData, requireData } from './data';
+import { data, isData, requireData, text as unknownText } from './data';
 import { javascriptImport, pythonImport } from './imports';
 import { indexedValue, namedMember } from './members';
 import { CodeInspectionError, children, failInspection, parseCode, stringLiteral } from './syntax';
 import type { CodeLanguage, CodeOperation, CodeReport, Value } from './types';
-import { initialBindings, pythonJoin, symbol, textValue, valueString } from './values';
+import { initialBindings, pythonJoin, symbol, textValue, unknown, valueString } from './values';
 
 const IGNORE = new Set(['Comment', 'LineComment', 'BlockComment', ';']);
 
@@ -244,10 +244,7 @@ class CodeAnalyzer {
       }
       case 'ParenthesizedExpression':
       case 'AwaitExpression': {
-        const expression = children(node).find((part) => !['(', ')', 'await'].includes(part.name));
-        return expression === undefined
-          ? failInspection('Missing expression.')
-          : this.#eval(expression);
+        return this.#wrappedExpression(node);
       }
       case 'ArrayExpression':
       case 'Array':
@@ -268,6 +265,9 @@ class CodeAnalyzer {
       case 'BinaryExpression': {
         return this.#binary(node);
       }
+      case 'ConditionalExpression': {
+        return this.#conditional(node);
+      }
       case 'MemberExpression': {
         return this.#member(node);
       }
@@ -278,6 +278,34 @@ class CodeAnalyzer {
         return failInspection(`Unsupported expression: ${node.name}.`);
       }
     }
+  }
+
+  #wrappedExpression(node: SyntaxNode): Value {
+    const expression = children(node).find((part) => !['(', ')', 'await'].includes(part.name));
+    return expression === undefined
+      ? failInspection('Missing expression.')
+      : this.#eval(expression);
+  }
+
+  #conditional(node: SyntaxNode): Value {
+    const [yes, keyword, condition, otherwise, no] = children(node);
+    if (
+      this.#language !== 'python' ||
+      keyword?.name !== 'if' ||
+      otherwise?.name !== 'else' ||
+      yes === undefined ||
+      condition === undefined ||
+      no === undefined
+    ) {
+      return failInspection('Unsupported conditional expression.');
+    }
+    requireData([this.#eval(condition)]);
+    const a = this.#eval(yes);
+    const b = this.#eval(no);
+    if (['string', 'text'].includes(a.kind) && ['string', 'text'].includes(b.kind)) {
+      return unknownText;
+    }
+    return isData(a) && isData(b) ? data : unknown;
   }
 
   #binary(node: SyntaxNode): Value {
@@ -321,7 +349,7 @@ class CodeAnalyzer {
     ) {
       const bounds = parts.slice(2, -1).filter((part) => part.name !== ':');
       requireData([value, ...bounds.map((part) => this.#eval(part))]);
-      return data;
+      return value.kind === 'string' || value.kind === 'text' ? unknownText : data;
     }
     if (this.#text(separator) === '[' && parts.length === 4) {
       return indexedValue(value, this.#eval(property));

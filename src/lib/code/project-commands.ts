@@ -1,10 +1,5 @@
-import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
-import path from 'node:path';
-
 interface ProjectCommand {
   readonly kind: 'project';
-  readonly directory: string | null;
-  readonly script: string | null;
 }
 
 // Project tests share the existing bun test trust boundary. This recognizes
@@ -41,6 +36,7 @@ const DENO_FLAGS = new Set([
   '--watch',
   '--parallel',
   '--fail-fast',
+  '--frozen',
 ]);
 const DENO_VALUES = new Set(['--config', '-c', '--filter', '--ignore', '--seed']);
 const DENO_ATTACHED = new Set([
@@ -126,33 +122,89 @@ const denoCheck = (args: readonly string[]): boolean => {
   return true;
 };
 
-const bunScript = (args: readonly string[]): ProjectCommand | null => {
-  let directory: string | null = null;
+const bunOptionValue = (args: readonly string[], index: number): number => {
+  const token = args[index] ?? '';
+  const equals = token.indexOf('=');
+  const value = equals === -1 ? args[index + 1] : token.slice(equals + 1);
+  return value === undefined || value === '' || value.startsWith('-')
+    ? -1
+    : index + (equals === -1 ? 1 : 0);
+};
+
+const BUN_COMMANDS = new Set([
+  'run',
+  'test',
+  'install',
+  'add',
+  'remove',
+  'update',
+  'outdated',
+  'pm',
+  'build',
+  'exec',
+  'x',
+  'repl',
+  'init',
+  'create',
+  'link',
+  'unlink',
+  'publish',
+  'upgrade',
+]);
+
+const BUN_SCRIPT_FLAGS = new Set([
+  '--silent',
+  '--if-present',
+  '--bun',
+  '-b',
+  '--watch',
+  '--hot',
+  '--smol',
+  '--workspaces',
+  '--parallel',
+  '--sequential',
+  '--no-exit-on-error',
+]);
+const BUN_SCRIPT_VALUES = new Set(['--filter', '-F', '--cwd', '--elide-lines', '--shell']);
+
+const bunScript = (args: readonly string[]): { readonly kind: 'irrelevant' } | null => {
+  let directory = false;
   let run = false;
   let index = 0;
   for (; index < args.length; index += 1) {
     const token = args[index] ?? '';
     if (token === 'run' && !run) {
       run = true;
-    } else if ((token === '--cwd' || token.startsWith('--cwd=')) && directory === null) {
-      if (token === '--cwd') {
-        index += 1;
-        directory = args[index] ?? '';
-      } else {
-        directory = token.slice('--cwd='.length);
+    } else if (BUN_SCRIPT_VALUES.has(token.split('=')[0] ?? '')) {
+      if (token.startsWith('--cwd')) {
+        if (directory) {
+          return null;
+        }
+        directory = true;
       }
-      if (directory === '' || directory.startsWith('-')) {
+      index = bunOptionValue(args, index);
+      if (index === -1) {
         return null;
       }
-    } else {
+    } else if (!BUN_SCRIPT_FLAGS.has(token)) {
       break;
     }
   }
   const script = args[index];
-  if (!run || script === undefined || !/^[\w][\w:-]*$/u.test(script)) {
+  if (run && ['--help', '-h'].includes(script ?? '') && index === args.length - 1) {
+    return { kind: 'irrelevant' };
+  }
+  if (
+    script === undefined ||
+    script === '' ||
+    script.startsWith('-') ||
+    (!run && BUN_COMMANDS.has(script))
+  ) {
     return null;
   }
-  return { kind: 'project', directory, script };
+  // Named scripts are a trusted execution boundary. Bun owns script lookup;
+  // options after the script name belong to that script, not the interpreter.
+  return { kind: 'irrelevant' };
 };
 
 const projectCommand = (
@@ -160,66 +212,16 @@ const projectCommand = (
   args: readonly string[],
 ): ProjectCommand | { readonly kind: 'irrelevant' } | null => {
   if (name === 'bun') {
-    // Preserve the established conventional-gate policy. Other names and cwd
-    // forms require an actual script in the selected manifest.
-    if (
-      args[0] === 'run' &&
-      /^(?:check|test|typecheck|lint|format|build|verify)(?::[\w-]+)*$/u.test(args[1] ?? '')
-    ) {
-      return { kind: 'irrelevant' };
-    }
     return bunScript(args);
   }
   if (
     (['node', 'nodejs', 'tsx'].includes(name) && nodeTests(args)) ||
     (name === 'deno' && denoCheck(args))
   ) {
-    return { kind: 'project', directory: null, script: null };
+    return { kind: 'project' };
   }
   return null;
 };
 
-const readManifest = (directory: string): string | null => {
-  const fd = openSync(
-    path.join(directory, 'package.json'),
-    constants.O_RDONLY | constants.O_NONBLOCK,
-  );
-  try {
-    if (!fstatSync(fd).isFile()) {
-      return null;
-    }
-    const bytes = Buffer.alloc(1_048_577);
-    const size = readSync(fd, bytes, 0, bytes.length, 0);
-    return size < bytes.length
-      ? new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, size))
-      : null;
-  } finally {
-    closeSync(fd);
-  }
-};
-
-const hasPackageScript = (directory: string, name: string): boolean => {
-  // Read data only, never import a manifest. Require the selected directory's
-  // manifest so script lookup cannot silently fall through to an executable.
-  try {
-    const source = readManifest(directory);
-    const value: unknown = source === null ? null : JSON.parse(source);
-    if (value === null || typeof value !== 'object' || !('scripts' in value)) {
-      return false;
-    }
-    const { scripts } = value;
-    return (
-      scripts !== null &&
-      typeof scripts === 'object' &&
-      !Array.isArray(scripts) &&
-      Object.entries(scripts).some(
-        ([key, script]) => key === name && typeof script === 'string' && script.trim().length > 0,
-      )
-    );
-  } catch {
-    return false;
-  }
-};
-
-export { hasPackageScript, projectCommand };
+export { projectCommand };
 export type { ProjectCommand };
