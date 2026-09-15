@@ -94,18 +94,27 @@ const safeHookInput = {
 const deniedHookInput = { ...safeHookInput, tool_input: { command: 'rm -rf /' } };
 
 const smokeEmbeddedCode = (runtime: readonly string[]): void => {
-  for (const fixture of allCodeFixtures) {
-    // The only executable is Tripwire. Destructive strings travel exclusively as JSON stdin.
-    const result = runWithInput([...runtime, '--tripwire-hook'], {
-      ...safeHookInput,
-      cwd: '/tripwire-policy-fixture',
-      tool_input: { command: fixture.command },
-    });
-    if (fixture.allowed) {
-      assertAllowed(result, `Embedded code: ${fixture.name}`);
-    } else {
-      assertDenied(result, `Embedded code: ${fixture.name}`);
+  const home = mkdtempSync(path.join(tmpdir(), 'tripwire-corpus-home-'));
+  try {
+    for (const fixture of allCodeFixtures) {
+      // The only executable is Tripwire. Destructive strings travel exclusively as JSON stdin.
+      const result = runWithInput(
+        [...runtime, '--tripwire-hook'],
+        {
+          ...safeHookInput,
+          cwd: '/tripwire-policy-fixture',
+          tool_input: { command: fixture.command },
+        },
+        { ...process.env, HOME: home },
+      );
+      if (fixture.allowed) {
+        assertAllowed(result, `Embedded code: ${fixture.name}`);
+      } else {
+        assertDenied(result, `Embedded code: ${fixture.name}`);
+      }
     }
+  } finally {
+    rmSync(home, { recursive: true, force: true });
   }
 };
 
@@ -134,14 +143,14 @@ const smokePackageScripts = (runtime: readonly string[]): void => {
         'Trusted package script',
       );
     }
-    for (const command of ['bun --cwd project --preload ./payload.ts run qa:fixture']) {
+    for (const command of ['bun --cwd project --preload ./payload.ts -e "console.log(1)"']) {
       assertDenied(
         runWithInput([...runtime, '--tripwire-hook'], {
           ...safeHookInput,
           cwd,
           tool_input: { command },
         }),
-        'Unverified package script',
+        'Unverified inline startup',
       );
     }
   } finally {

@@ -32,7 +32,6 @@ bunTest.describe('uv dependency setup guidance', () => {
     'uv run --with=pandas python -c "print(1)"',
     'uv run --with-requirements requirements.txt python -c "print(1)"',
     'uv run --with-editable . python -c "print(1)"',
-    'uv run python -c "print(1)"',
   ])('gives a complete setup path: %s', (command) => {
     const result = decideBash(command);
     bunTest.expect(result.kind).toBe('deny');
@@ -47,6 +46,7 @@ bunTest.describe('uv dependency setup guidance', () => {
     }
   });
   bunTest.test('accepts the recommended invocation', () => {
+    bunTest.expect(decideBash('uv run python -c "print(1)"').kind).toBe('allow');
     bunTest
       .expect(decideBash('uv run --python 3.12 --no-sync python -c "print(1)"').kind)
       .toBe('allow');

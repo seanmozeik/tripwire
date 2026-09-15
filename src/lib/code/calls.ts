@@ -160,6 +160,26 @@ const methodCall = (
   args: readonly Value[],
   context: CallContext,
 ): Value => {
+  if (fn.receiver.kind === 'bun-file') {
+    if (!['json', 'text', 'arrayBuffer', 'bytes'].includes(fn.name) || args.length !== 0) {
+      return failInspection('Unsupported Bun file read.');
+    }
+    context.operations.push({ kind: 'read', path: fn.receiver.path, range: context.range });
+    return fn.name === 'text' ? text : data;
+  }
+  if (fn.receiver.kind === 'hash') {
+    requireData(args);
+    if (fn.name === 'update' && args.length === 1) {
+      return unknown;
+    }
+    if (fn.name === 'copy' && args.length === 0) {
+      return { kind: 'hash' };
+    }
+    if (['digest', 'hexdigest'].includes(fn.name) && args.length <= 1) {
+      return text;
+    }
+    return failInspection('Unsupported hash operation.');
+  }
   if (fn.receiver.kind === 'archive') {
     return archiveCall(fn.receiver, fn.name, args, context);
   }
@@ -202,7 +222,7 @@ const resolveCall = (fn: Value, input: CallArguments, context: CallContext): Val
     }
     return symbol(moduleName(target, context.language));
   }
-  if (name === 'pathlib.Path' || name === 'pathlib.PosixPath') {
+  if (['pathlib.Path', 'pathlib.PosixPath'].includes(name)) {
     return { kind: 'path', path: pythonJoin(args.map((value) => valueString(value))) };
   }
   if (name === 'os.path.join') {
@@ -213,6 +233,9 @@ const resolveCall = (fn: Value, input: CallArguments, context: CallContext): Val
   }
   if (name === 'open') {
     return openFile(args, context);
+  }
+  if (name === 'Bun.file') {
+    return bunFile(args);
   }
   const kind = FILE_OPERATIONS.get(name);
   if (kind !== undefined) {
@@ -227,6 +250,13 @@ const resolveCall = (fn: Value, input: CallArguments, context: CallContext): Val
     return failInspection(`Call ${JSON.stringify(name)} has uninspected effects.`);
   }
   return unknown;
+};
+
+const bunFile = (args: readonly Value[]): Value => {
+  if (args.length !== 1) {
+    return failInspection('Bun.file requires one literal path.');
+  }
+  return { kind: 'bun-file', path: valueString(args[0]) };
 };
 
 const fileOperation = (

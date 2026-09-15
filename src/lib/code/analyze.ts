@@ -13,6 +13,13 @@ import { initialBindings, pythonJoin, symbol, textValue, unknown, valueString } 
 
 const IGNORE = new Set(['Comment', 'LineComment', 'BlockComment', ';']);
 
+const literalValue = (source: string, language: CodeLanguage): Value => {
+  // Bytes remain inert, unknown contents. Do not reinterpret them as paths.
+  return language === 'python' && /^(?:b|br|rb)["']/iu.test(source)
+    ? unknownText
+    : textValue(stringLiteral(source, language));
+};
+
 class CodeAnalyzer {
   readonly operations: CodeOperation[] = [];
   readonly #bindings: Map<string, Value>;
@@ -225,7 +232,7 @@ class CodeAnalyzer {
     }
     switch (node.name) {
       case 'String': {
-        return textValue(stringLiteral(this.#text(node), this.#language));
+        return literalValue(this.#text(node), this.#language);
       }
       case 'Number': {
         return { kind: 'number', value: Number(this.#text(node)) };

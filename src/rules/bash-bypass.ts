@@ -3,7 +3,6 @@ import { type Decision, allow } from '../lib/decision';
 
 const NON_BYPASSABLE_RULES: ReadonlySet<string> = new Set([
   'unsupported-shell-structure',
-  'source-script',
   'rm-rf-root',
   'rm-rf-home',
   'fork-bomb',

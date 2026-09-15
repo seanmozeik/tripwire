@@ -1,4 +1,26 @@
+import { parse } from 'graphql/language/parser';
+
 import type { ShellInvocation } from './types';
+
+const readOnlyGraphql = (source: string): boolean => {
+  if (source.length > 65_536) {
+    return false;
+  }
+  try {
+    const document = parse(source, { noLocation: true, maxTokens: 12_000 });
+    let queries = 0;
+    for (const definition of document.definitions) {
+      if (definition.kind === 'OperationDefinition' && definition.operation === 'query') {
+        queries += 1;
+      } else if (definition.kind !== 'FragmentDefinition') {
+        return false;
+      }
+    }
+    return queries > 0;
+  } catch {
+    return false;
+  }
+};
 
 const VALUE_FLAGS = new Set([
   '--method',
@@ -30,6 +52,19 @@ const FLAGS = new Set([
   '--allow-escape-sequences',
 ]);
 const BODY_FLAGS = new Set(['--field', '-F', '--raw-field', '-f', '--input']);
+const FIELD_FLAGS = new Set(['--field', '-F', '--raw-field', '-f']);
+const outboundFile = (name: string, value: string): boolean =>
+  name === '--input' ||
+  (['-F', '--field'].includes(name) && value.slice(value.indexOf('=') + 1).startsWith('@'));
+const graphqlMutates = (
+  query: string | null,
+  method: string | null,
+  unresolved: boolean,
+): boolean =>
+  unresolved ||
+  (method !== null && !['GET', 'POST'].includes(method)) ||
+  query === null ||
+  !readOnlyGraphql(query);
 
 const readOption = (
   invocation: ShellInvocation,
@@ -66,6 +101,7 @@ const ghApiMutates = (invocation: ShellInvocation): boolean => {
   let body = false;
   let graphql = false;
   let unresolved = false;
+  let query: string | null = null;
   for (let index = 2; index < invocation.words.length; index += 1) {
     const word = invocation.words[index];
     if (word === undefined) {
@@ -82,24 +118,24 @@ const ghApiMutates = (invocation: ShellInvocation): boolean => {
       }
       // Typed fields can read @file or stdin. Explicit GET must not turn an
       // uninspected local file into an allowed outbound query parameter.
-      if (
-        option.name === '--input' ||
-        (['-F', '--field'].includes(option.name) &&
-          option.value.slice(option.value.indexOf('=') + 1).startsWith('@'))
-      ) {
+      if (outboundFile(option.name, option.value)) {
         return true;
       }
-      if (option.name === '--method' || option.name === '-X') {
+      if (['--method', '-X'].includes(option.name)) {
         method = option.value;
       }
       body ||= BODY_FLAGS.has(option.name);
+      if (FIELD_FLAGS.has(option.name) && option.value.startsWith('query=')) {
+        if (query !== null) {
+          return true;
+        }
+        query = option.value.slice('query='.length);
+      }
       index = option.nextIndex;
     }
   }
-  // GraphQL operation semantics require a separate parser. Keep body-bearing
-  // GraphQL requests under the existing review boundary, including forced GET.
   if (graphql && body) {
-    return true;
+    return graphqlMutates(query, method, unresolved);
   }
   // Preserve ordinary unparameterized endpoint lookups. The new explicit-GET
   // exception requires literal argument boundaries throughout the command.

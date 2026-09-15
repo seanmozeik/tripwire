@@ -4,6 +4,22 @@ This file records notable project changes. The format follows [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-15
+
+### Changed
+
+- Limit interpreter inspection to inline source. Allow script files, Python modules, named package scripts, formatters, compilers, and test runners.
+- Preserve shell argument values and execution context through package wrappers. Keep destructive-command, Git, and protected-file checks active.
+
+### Added
+
+- Support inline Bun JSON-file reads, Python hashing, common uv wrapper options, and parsed GraphQL queries.
+
+### Fixed
+
+- Check startup options for inline stdin source and retain working-directory restrictions through package wrappers.
+- Inspect shell source supplied through stdin device paths.
+
 ## [0.9.2] - 2026-09-12
 
 ### Fixed

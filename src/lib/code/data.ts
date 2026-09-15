@@ -34,6 +34,8 @@ const isData = (value: Value): boolean => {
           break;
         }
         case 'file':
+        case 'bun-file':
+        case 'hash':
         case 'archive':
         case 'path':
         case 'method':

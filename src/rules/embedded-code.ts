@@ -161,14 +161,11 @@ const embeddedCode = (program: ShellProgram, policy: CodePolicy): Decision => {
     if (input.kind === 'blocked') {
       decisions.push(applyShellBypass(program, codeDeny(input.reason)));
     }
-    if (input.kind === 'project' && uncertainContext(program, policy)) {
-      return codeDeny('The project command has an unverified execution context.');
-    }
     if (input.kind === 'command') {
-      if (uncertainContext(program, policy)) {
+      if (uncertainContext(program, policy) && input.requiresContext) {
         return codeDeny('The forwarded command has an unverified execution context.');
       }
-      decisions.push(policy.inspectCommand(input.argv.map(quoteArgument).join(' ')));
+      decisions.push(policy.inspectCommand(input.command));
     }
     if (input.kind === 'source') {
       if (uncertainContext(program, policy)) {

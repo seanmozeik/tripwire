@@ -158,11 +158,11 @@ bunTest.describe('bash-deny', () => {
   bunTest.test('blocks eval running rm -rf / from argv', () => {
     bunTest.expect(allRules('eval rm -rf /').deny.kind).toBe('deny');
   });
-  bunTest.test('blocks source of an arbitrary script', () => {
-    bunTest.expect(allRules('source /tmp/whatever.sh').deny.kind).toBe('deny');
+  bunTest.test('allows source of a script file', () => {
+    bunTest.expect(allRules('source /tmp/whatever.sh').deny.kind).toBe('allow');
   });
-  bunTest.test('blocks dot-source of an arbitrary script', () => {
-    bunTest.expect(allRules('. /tmp/whatever.sh').deny.kind).toBe('deny');
+  bunTest.test('allows dot-source of a script file', () => {
+    bunTest.expect(allRules('. /tmp/whatever.sh').deny.kind).toBe('allow');
   });
   bunTest.test('blocks env wrapping rm -rf /', () => {
     bunTest.expect(allRules('env rm -rf /').deny.kind).toBe('deny');

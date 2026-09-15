@@ -22,13 +22,13 @@ bunTest.describe('script execution policy', () => {
     bunTest.expect(decideBash(`${command} "# tripwire-allow: data"`).kind).toBe('allow');
   });
 
-  bunTest.test('other interpreter restrictions still need a reason-bearing marker', () => {
+  bunTest.test('module execution does not need a review marker', () => {
     const moduleCommand = 'python3 -m example_module';
-    bunTest.expect(decideBash(moduleCommand).kind).toBe('deny');
-    bunTest.expect(decideBash(`${moduleCommand} # tripwire-allow:`).kind).toBe('deny');
+    bunTest.expect(decideBash(moduleCommand).kind).toBe('allow');
+    bunTest.expect(decideBash(`${moduleCommand} # tripwire-allow:`).kind).toBe('allow');
     bunTest
       .expect(decideBash(`${moduleCommand} "# tripwire-allow: quoted data"`).kind)
-      .toBe('deny');
+      .toBe('allow');
     bunTest
       .expect(decideBash(`${moduleCommand} # tripwire-allow: reviewed module`).kind)
       .toBe('allow');

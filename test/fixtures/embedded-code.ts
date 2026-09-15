@@ -75,14 +75,12 @@ const codeFixtures: readonly CodeFixture[] = [
     { name: `Bun heredoc ${index}`, command: `bun - <<'JS'\n${source}\nJS`, allowed: false },
   ]),
   ...[
-    'python3 -m cleanup',
     'python3 -',
     'node',
     'node -r ./cleanup.js -e "1"',
     'node --import ./cleanup.js -e "1"',
     'python3 -ic "print(1)"',
     'printf code | python3',
-    'python3 < cleanup.py',
     'python3 -c "$CODE"',
     'python3 - <<PY\n$CODE\nPY',
     'env python3 -c "import os; os.remove(\'/protected\')"',
@@ -91,6 +89,8 @@ const codeFixtures: readonly CodeFixture[] = [
   ].map((command, index) => ({ name: `Opaque carrier ${index}`, command, allowed: false })),
   ...[
     'python3 cleanup.py',
+    'python3 < cleanup.py',
+    'python3 -m cleanup',
     'node cleanup.js',
     'bun run cleanup.ts',
     'deno run cleanup.ts',

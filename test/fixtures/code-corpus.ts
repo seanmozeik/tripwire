@@ -1,10 +1,12 @@
 import { compatibilityPairs } from './code-compatibility';
 import { compatibilityAttacks } from './code-compatibility-attacks';
 import { codeFixtures } from './embedded-code';
+import { inlineScopeFixtures } from './inline-scope';
 import { projectCommandFixtures } from './project-commands';
 import { writeParityFixtures } from './write-parity';
 
 const allCodeFixtures = [
+  ...inlineScopeFixtures,
   ...writeParityFixtures,
   ...projectCommandFixtures,
   ...codeFixtures,

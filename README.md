@@ -207,7 +207,17 @@ tripwire test --post --tool=Bash --stdout='example output'
 
 The post-tool example requires Betterleaks.
 
-For a longer workflow, inspect one file snapshot and execute the same bytes:
+## Inline code scope
+
+Tripwire inspects inline Python, JavaScript, TypeScript, and shell source. This includes `python -c`, `node -e`, `bun -e`, `deno eval`, literal interpreter heredocs, and supported command wrappers.
+
+Script files, Python modules, package scripts, test runners, formatters, and compilers run under the normal tool policy. The inline-code rule does not inspect their implementations or require an approved list of runner flags. Shell script files and `source` follow the same rule. Arguments after a script name belong to that script.
+
+Inline JSON reads and standard Python hashing are supported. Decoded data and hash output cannot become an unverified file path or callable. Read-only GitHub GraphQL queries pass; mutations, subscriptions, malformed documents, and outbound file arguments remain blocked.
+
+An agent can write a script file and run it. Tripwire accepts this limit. It does not prove the safety of every executable, dependency, or script. Direct destructive commands, protected-path checks, Git rules, and secret scanning still apply.
+
+For an optional check of a longer shell workflow, inspect one file snapshot and execute the same bytes:
 
 ```bash
 tripwire run-script ./scripts/inspect-and-build.sh -- first-argument

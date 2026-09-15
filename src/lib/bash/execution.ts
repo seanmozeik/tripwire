@@ -16,6 +16,7 @@ import {
   RTK_WRAPPER_SUBCOMMANDS,
   SHELL_WRAPPER_HEADS,
   commandFlagValueIndex,
+  hasScriptOperand,
   namedFlagValueIndex,
   pickExecRoot,
   skipHeadRenamingPrefix,
@@ -43,6 +44,9 @@ class ExecutionInspector {
     if (!SHELL_WRAPPER_HEADS.has(invocation.head)) {
       return false;
     }
+    if (hasScriptOperand(invocation)) {
+      return true;
+    }
     let inspected = context.inspectedPipelineInput;
     for (const [index, redirect] of redirects.entries()) {
       if (
@@ -62,11 +66,7 @@ class ExecutionInspector {
         this.#host.inspectShellSource(invocation.redirects[index]?.target, environment, context);
         inspected = true;
       } else if (redirect.operator === '<') {
-        this.#host.addDiagnostic(
-          'dynamic-shell-source',
-          'A shell wrapper reads program source from a file that Tripwire has not inspected.',
-          rangeOf(redirect),
-        );
+        inspected ||= invocation.redirects[index]?.target.kind === 'literal';
       }
     }
     return inspected;
@@ -105,6 +105,9 @@ class ExecutionInspector {
   ): boolean {
     if (!SHELL_WRAPPER_HEADS.has(invocation.head)) {
       return false;
+    }
+    if (hasScriptOperand(invocation)) {
+      return true;
     }
     const scriptIndex = commandFlagValueIndex(invocation.words, 'c');
     if (scriptIndex !== null) {

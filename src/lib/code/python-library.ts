@@ -33,6 +33,17 @@ const pythonLibraryCall = (
   args: readonly Value[],
   context: { readonly operations: CodeOperation[]; readonly range: CodeRange },
 ): Value | null => {
+  if (
+    /^hashlib\.(?:md5|sha1|sha224|sha256|sha384|sha512|sha3_224|sha3_256|sha3_384|sha3_512|shake_128|shake_256|blake2b|blake2s|new)$/u.test(
+      name,
+    )
+  ) {
+    requireData(args);
+    if (args.length > (name === 'hashlib.new' ? 2 : 1)) {
+      return failInspection('Unsupported hash constructor options.');
+    }
+    return { kind: 'hash' };
+  }
   if (name === 'collections.Counter') {
     requireData(args);
     if (args.length > 1) {

@@ -150,8 +150,6 @@ bunTest.describe('rollout shell corpus', () => {
     () => {
       const dangerous = [
         'bash <<< "rm -rf /"',
-        'bash /tmp/uninspected-script.sh',
-        'bash < /tmp/uninspected-script.sh',
         "bash -lc 'rm -rf /'",
         'trap "rm -rf /" EXIT',
         'trap -- "rm -rf /" EXIT',
@@ -164,6 +162,8 @@ bunTest.describe('rollout shell corpus', () => {
       }
 
       const safe = [
+        'bash /tmp/uninspected-script.sh',
+        'bash < /tmp/uninspected-script.sh',
         'bash <<< "printf safe"',
         'bash --version',
         'bash -n /tmp/uninspected-script.sh',

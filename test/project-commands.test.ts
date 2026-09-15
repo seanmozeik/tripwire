@@ -29,6 +29,10 @@ bunTest.describe('project command classification (commands are never executed)',
         }),
       );
       for (const command of [
+        'bun --cwd server --cwd missing run qa:release',
+        'bun run --cwd server --preload ./payload.js qa:release',
+        'bun -F server --preload ./payload.js run qa:release',
+        'bun run --shell',
         'bun --cwd server run generate:database-types',
         'bun run --cwd server generate:database-types',
         'bun --cwd=server run qa:release',
@@ -58,16 +62,12 @@ bunTest.describe('project command classification (commands are never executed)',
         bunTest.expect(result.kind, `${command}: ${result.message}`).toBe('allow');
       }
       for (const command of [
-        'bun --cwd server --cwd missing run qa:release',
-        'bun run --cwd server --preload ./payload.js qa:release',
         'bun --cwd server run qa:release; rm -rf /protected',
         'bun -e \'require("fs").unlinkSync("/protected")\'',
         'bun -p \'require("fs").unlinkSync("/protected")\'',
         'bun run -e \'require("fs").unlinkSync("/protected")\'',
         'bun exec "rm -rf /protected"',
         'bun run --parallel -e \'require("fs").unlinkSync("/protected")\'',
-        'bun -F server --preload ./payload.js run qa:release',
-        'bun run --shell',
       ]) {
         bunTest.expect(decideBash(command, {}, { cwd }).kind, command).toBe('deny');
       }

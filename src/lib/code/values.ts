@@ -34,6 +34,7 @@ const PYTHON_MODULES = new Set([
   'zipfile',
   'difflib',
   'glob',
+  'hashlib',
 ]);
 const JS_MODULES = new Set(['fs', 'fs/promises', 'path', 'child_process']);
 const PYTHON_GLOBALS = [
@@ -54,7 +55,7 @@ const PYTHON_GLOBALS = [
   'any',
   'all',
 ];
-const JS_GLOBALS = ['console', 'require', 'JSON', 'Deno'];
+const JS_GLOBALS = ['console', 'require', 'JSON', 'Deno', 'Bun'];
 
 const initialBindings = (language: CodeLanguage): Map<string, Value> =>
   new Map(

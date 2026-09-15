@@ -144,31 +144,31 @@ const runTest = (config: {
 const testCommand = Command.make(
   'test',
   {
-    command: Argument.string('command').pipe(
+    command: Argument.String('command').pipe(
       Argument.optional,
       Argument.withDescription('Command to test (for Bash tool)'),
     ),
-    content: Flag.string('content').pipe(
+    content: Flag.String('content').pipe(
       Flag.optional,
       Flag.withDescription('Content for Write/Edit tools'),
     ),
-    path: Flag.string('path').pipe(
+    path: Flag.String('path').pipe(
       Flag.optional,
       Flag.withDescription('File path for Read/Write/Edit tools'),
     ),
-    post: Flag.boolean('post').pipe(
+    post: Flag.Boolean('post').pipe(
       Flag.withDefault(false),
       Flag.withDescription('Test PostToolUse instead of PreToolUse'),
     ),
-    stderr: Flag.string('stderr').pipe(
+    stderr: Flag.String('stderr').pipe(
       Flag.optional,
       Flag.withDescription('Stderr for PostToolUse Bash'),
     ),
-    stdout: Flag.string('stdout').pipe(
+    stdout: Flag.String('stdout').pipe(
       Flag.optional,
       Flag.withDescription('Stdout for PostToolUse Bash'),
     ),
-    tool: Flag.string('tool').pipe(
+    tool: Flag.String('tool').pipe(
       Flag.withDefault('Bash'),
       Flag.withDescription('Tool name (Bash, Read, Write, Edit, MultiEdit)'),
     ),
@@ -256,18 +256,18 @@ const runInstall = (target: string): Effect.Effect<void> =>
 const installCommand = Command.make(
   'install',
   {
-    target: Argument.string('target').pipe(
+    target: Argument.String('target').pipe(
       Argument.withDescription('Target agent (claude, codex, cursor, pi, oh-my-pi, or all)'),
     ),
   },
   ({ target }) => runInstall(target),
 ).pipe(Command.withDescription('Install tripwire hooks for AI agents'));
 
-const checkedScriptPath = Argument.string('script').pipe(
+const checkedScriptPath = Argument.String('script').pipe(
   Argument.withDescription('Bash script file to inspect and execute from the checked bytes'),
 );
 
-const checkedScriptArguments = Argument.string('argument').pipe(
+const checkedScriptArguments = Argument.String('argument').pipe(
   Argument.variadic(),
   Argument.withDescription('Arguments passed to the script after --'),
 );

@@ -18,7 +18,7 @@ bun run verify
 
 `bun run verify` runs the non-mutating format check, lint, TypeScript 7 strict type check, all tests, and the build. Run it before release work. Use `bun run format` when files need formatting.
 
-The runtime uses Effect 4.0.0-rc.112. Read the installed Effect source and types before changing an API that may differ from Effect 3 or an earlier release candidate.
+The runtime uses Effect 4.0.0-rc.115. Read the installed Effect source and types before changing an API that may differ from Effect 3 or an earlier release candidate.
 
 ## Package contract
 
@@ -113,6 +113,8 @@ Betterleaks 1.5.0 or later is the default post-tool scanner. It receives content
 Do not change a host failure policy without a lifecycle test.
 
 ## Shell and path checks
+
+The inline-code rule inspects submitted inline source. It permits script files, Python modules, named package scripts, tests, formatters, and compilers without a runner allowlist. Shell file execution and sourcing follow the same boundary. An agent can write code to a file and execute it; this is an accepted limit. Preserve the separate destructive-command, path, Git, and secret-scanning rules.
 
 `src/lib/bash/` uses `unbash` 4.0.10 as its only Bash parser. One exhaustive AST pass produces typed shell values, normalized executable invocations, redirects, pipelines, inspection diagnostics, and same-program temporary-path provenance. Rules consume that shared program model.
 

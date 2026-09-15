@@ -1,6 +1,6 @@
 {
   "name": "@seanmozeik/tripwire",
-  "version": "0.9.3",
+  "version": "0.10.0",
   "description": "Configurable safety hooks for Claude Code, Codex, Cursor, Pi, and Oh My Pi",
   "keywords": [
     "ai-agents",
@@ -63,25 +63,26 @@
     "@lezer/common": "1.5.2",
     "@lezer/javascript": "1.5.4",
     "@lezer/python": "1.1.19",
+    "graphql": "17.0.2",
     "unbash": "4.0.11"
   },
   "devDependencies": {
-    "@effect/platform-bun": "4.0.0-rc.112",
+    "@effect/platform-bun": "4.0.0-rc.115",
     "@effect/tsgo": "0.45.0",
     "@seanmozeik/de-clank": "0.1.8",
     "bun-types": "1.4.2",
-    "effect": "4.0.0-rc.112",
-    "oxfmt": "0.67.0",
-    "oxlint": "1.82.0",
+    "effect": "4.0.0-rc.115",
+    "oxfmt": "0.68.0",
+    "oxlint": "1.83.0",
     "oxlint-tsgolint": "7.0.2001",
     "typescript": "7.0.2"
   },
   "peerDependencies": {
-    "@effect/platform-bun": "4.0.0-rc.112",
-    "effect": "4.0.0-rc.112"
+    "@effect/platform-bun": "4.0.0-rc.115",
+    "effect": "4.0.0-rc.115"
   },
   "optionalDependencies": {
-    "@seanmozeik/tripwire-darwin-arm64": "0.9.3"
+    "@seanmozeik/tripwire-darwin-arm64": "0.10.0"
   },
   "engines": {
     "bun": ">=1.4"

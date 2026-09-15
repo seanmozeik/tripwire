@@ -29,7 +29,6 @@ bunTest.describe('adversarial review regressions (policy-only)', () => {
     'python3 -c "print(1)" extra-argument',
     'node -e "console.log(1)" --require ./uninspected.js',
     'python3 - <<< "$CODE"',
-    'node - < source.js',
     'python3 - <<PY\nprint("$(uninspected)")\nPY',
     'node - <<JS\nconsole.log(`uninspected`)\nJS',
     `python3 -c '${'('.repeat(100)}1${')'.repeat(100)}'`,
@@ -42,7 +41,6 @@ bunTest.describe('adversarial review regressions (policy-only)', () => {
     'export PYTHONPATH=/untrusted; python3 -c "print(1)"',
     "ssh host node -e 'console.log(1)'",
     'uv run python3 -c \'import os; os.unlink("/protected")\'',
-    'uv run --script cleanup.py',
     'uv run "$PROGRAM"',
     'uv run - <<\'PY\'\nimport os; os.unlink("/protected")\nPY',
     'uv run --python 3.13 - <<\'PY\'\nimport os; os.unlink("/protected")\nPY',
@@ -64,6 +62,8 @@ bunTest.describe('adversarial review regressions (policy-only)', () => {
   });
 
   bunTest.test.each([
+    'uv run --script cleanup.py',
+    'node - < source.js',
     python('import os\nos.unlink("/tmp/tripwire-review-fixture")'),
     javascript('require("fs").rmSync("/tmp/tripwire-review-fixture")'),
     javascript('const {rmSync: del} = require("fs"); del("dist/fixture")'),

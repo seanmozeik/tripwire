@@ -1,5 +1,28 @@
 import type { ShellInvocation, ShellWord } from './types';
 
+// Shell options stop at a script operand. Later -c arguments belong to the file.
+const hasScriptOperand = (invocation: Pick<ShellInvocation, 'words'>): boolean => {
+  const values = new Set(['-o', '+o', '--rcfile', '--init-file']);
+  for (let index = 1; index < invocation.words.length; index += 1) {
+    const word = invocation.words[index];
+    if (word?.kind !== 'literal') {
+      return false;
+    }
+    if (word.value === '--') {
+      const operand = invocation.words[index + 1];
+      return operand?.kind === 'literal' && !['/dev/stdin', '/dev/fd/0'].includes(operand.value);
+    }
+    if (values.has(word.value)) {
+      index += 1;
+    } else if (/^-[^-]*[cs]/u.test(word.value)) {
+      return false;
+    } else if (!word.value.startsWith('-') && !word.value.startsWith('+')) {
+      return !['/dev/stdin', '/dev/fd/0'].includes(word.value);
+    }
+  }
+  return false;
+};
+
 const SHELL_WRAPPER_HEADS: ReadonlySet<string> = new Set([
   'sh',
   'bash',
@@ -310,6 +333,7 @@ export {
   RTK_WRAPPER_SUBCOMMANDS,
   SHELL_WRAPPER_HEADS,
   commandFlagValueIndex,
+  hasScriptOperand,
   namedFlagValueIndex,
   pickExecRoot,
   skipHeadRenamingPrefix,
