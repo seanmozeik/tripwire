@@ -29,7 +29,11 @@ const miseContextChanged = (program: ShellProgram): boolean => {
   }
   if (
     program.environmentAssignments?.some(
-      (name) => name.startsWith('MISE_') || name.startsWith('XDG_') || name === 'HOME',
+      (name) =>
+        name.startsWith('MISE_') ||
+        name.startsWith('__MISE') ||
+        name.startsWith('XDG_') ||
+        name === 'HOME',
     ) === true
   ) {
     return true;
@@ -212,7 +216,10 @@ const embeddedCode = (program: ShellProgram, policy: CodePolicy): Decision => {
         (invocation.checkedStartup === true && miseContextChanged(program))
       ) {
         return codeDeny(
-          'Interpreter startup, working directory, or remote filesystem state is not verified.',
+          invocation.startupReason ??
+            (invocation.checkedStartup === true && miseContextChanged(program)
+              ? 'mise exec startup blocked: earlier commands, redirects, or environment assignments can change the inspected configuration.'
+              : 'Interpreter startup, working directory, or remote filesystem state is not verified.'),
         );
       }
       decisions.push(inspectCode(input.language, input.source, localPolicy, input.argv));

@@ -24,6 +24,8 @@ This file records notable project changes. The format follows [Keep a Changelog]
 
 ### Fixed
 
+- Allow statically safe mise startup in activated agent shells, including supported global settings and verified core backend metadata. Report the config key, environment variable, plugin, or parse failure behind a startup denial, and cover the real CLI in a hermetic child process without the test preload.
+
 - Report inline syntax errors with language, line, column, and a bounded excerpt. Explain literal `\n` in single shell quotes and identify unexpected failures as internal inspector errors.
 - Isolate tests from the developer's home, launch directory, temporary-directory contents, and executable overrides. Replace elapsed-time assertions with inspection-budget outcomes.
 - Protect directory destinations for `mv`, `cp`, `ln`, `rsync`, and `install`. `mv x ~/.ssh` and `cp x ~/.ssh/` were allowed.

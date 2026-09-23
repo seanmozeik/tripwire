@@ -1,7 +1,8 @@
 import path from 'node:path';
 
 import { STARTUP_VARIABLES } from '../interpreter-startup';
-import { readOptional, record } from './files';
+import { readOptional, record, parseToml } from './files';
+import { requireSafe } from './result';
 
 const CORE_TOOLS = new Set([
   'bun',
@@ -22,7 +23,8 @@ const startupName = (name: string): boolean =>
   STARTUP_VARIABLES.has(name) ||
   ['PATH', 'HOME', 'SHELL', 'ENV', 'BASH_ENV', 'ZDOTDIR'].includes(name) ||
   name.startsWith('MISE_') ||
-  name.startsWith('XDG_');
+  name.startsWith('XDG_') ||
+  name.startsWith('__MISE');
 
 const literal = (value: unknown): boolean =>
   typeof value === 'string' && !/\{[{%#]|\$|`/u.test(value);
@@ -33,7 +35,7 @@ const coreTool = (name: string): boolean => CORE_TOOLS.has(name.replace(/^core:/
 const dotenv = (filename: string): boolean => {
   const source = readOptional(filename);
   if (source === null) {
-    return false;
+    throw new Error(`Missing dotenv file ${filename}.`);
   }
   return source.split(/\r?\n/u).every((line) => {
     if (line.trim() === '' || line.trimStart().startsWith('#')) {
@@ -44,12 +46,13 @@ const dotenv = (filename: string): boolean => {
     );
     const name = match?.groups?.['name'];
     const value = match?.groups?.['value'];
-    return (
+    return requireSafe(
       name !== undefined &&
-      !startupName(name) &&
-      literal(value) &&
-      typeof value === 'string' &&
-      (/^[^'"\\]*$/u.test(value) || /^"[^"\\]*"$/u.test(value) || /^'[^'\\]*'$/u.test(value))
+        !startupName(name) &&
+        literal(value) &&
+        typeof value === 'string' &&
+        (/^[^'"\\]*$/u.test(value) || /^"[^"\\]*"$/u.test(value) || /^'[^'\\]*'$/u.test(value)),
+      `${filename}: unverified dotenv variable ${name ?? '(invalid assignment)'}.`,
     );
   });
 };
@@ -58,39 +61,43 @@ const envTable = (value: unknown, directory: string): boolean => {
   if (Array.isArray(value)) {
     return value.every((item) => envTable(item, directory));
   }
-  return Object.entries(record(value)).every(([name, setting]) => {
+  return Object.entries(record(value, 'env')).every(([name, setting]) => {
     if (name === '_') {
-      return Object.entries(record(setting)).every(([directive, files]) => {
+      return Object.entries(record(setting, 'env._')).every(([directive, files]) => {
         if (directive !== 'file') {
-          return false;
+          throw new Error(`Unverified config key env._.${directive}.`);
         }
-        return (Array.isArray(files) ? files : [files]).every(
-          (file: unknown) =>
-            typeof file === 'string' &&
-            literal(file) &&
-            !/[?*[\]]/u.test(file) &&
-            dotenv(path.resolve(directory, file)),
+        return requireSafe(
+          (Array.isArray(files) ? files : [files]).every(
+            (file: unknown) =>
+              typeof file === 'string' &&
+              literal(file) &&
+              !/[?*[\]]/u.test(file) &&
+              dotenv(path.resolve(directory, file)),
+          ),
+          'Unverified config key env._.file.',
         );
       });
     }
-    return (
+    return requireSafe(
       !startupName(name) &&
-      (literal(setting) || typeof setting === 'number' || typeof setting === 'boolean')
+        (literal(setting) || typeof setting === 'number' || typeof setting === 'boolean'),
+      `Unverified config key env.${name}.`,
     );
   });
 };
 
-const toolsTable = (value: unknown, tools: Set<string>): boolean =>
-  Object.entries(record(value)).every(([name, setting]) => {
-    if (
-      !coreTool(name) ||
-      !(Array.isArray(setting) ? setting : [setting]).every((item: unknown) => version(item))
-    ) {
-      return false;
-    }
+const toolsTable = (value: unknown, tools: Set<string>): boolean => {
+  for (const [name, setting] of Object.entries(record(value, 'tools'))) {
+    const versions = Array.isArray(setting) ? setting : [setting];
+    requireSafe(
+      coreTool(name) && versions.length > 0 && versions.every((item: unknown) => version(item)),
+      `Unverified config key tools.${name} (backend or version).`,
+    );
     tools.add(name.replace(/^core:/u, ''));
-    return true;
-  });
+  }
+  return true;
+};
 
 const templateFree = (value: unknown, depth = 0): boolean => {
   if (depth > 64) {
@@ -111,6 +118,31 @@ const templateFree = (value: unknown, depth = 0): boolean => {
   return true;
 };
 
+const settingsTable = (value: unknown, tools: Set<string>): boolean =>
+  Object.entries(record(value, 'settings')).every(([name, setting]) => {
+    if (name === 'idiomatic_version_file_enable_tools' && Array.isArray(setting)) {
+      for (const tool of setting) {
+        if (typeof tool !== 'string' || !/^[a-z][a-z0-9-]*$/u.test(tool)) {
+          throw new Error(`Unverified config key settings.${name}.`);
+        }
+        tools.add(tool);
+      }
+      return true;
+    }
+    if (name === 'ruby') {
+      return Object.entries(record(setting, 'settings.ruby')).every(([key, item]) =>
+        requireSafe(
+          key === 'compile' && typeof item === 'boolean',
+          `Unverified config key settings.ruby.${key}.`,
+        ),
+      );
+    }
+    return requireSafe(
+      ['verbose', 'quiet', 'yes', 'color'].includes(name) && typeof setting === 'boolean',
+      `Unverified config key settings.${name}.`,
+    );
+  });
+
 const configSafe = (
   filename: string,
   tools: Set<string>,
@@ -128,14 +160,16 @@ const configSafe = (
       if (name === undefined || name === '') {
         return true;
       }
-      return toolsTable({ [name]: versions }, tools) && versions.length > 0;
+      return requireSafe(
+        toolsTable({ [name]: versions }, tools) && versions.length > 0,
+        `Unverified tool-version entry ${name}.`,
+      );
     });
   }
-  const config: unknown = Bun.TOML.parse(source);
-  if (!templateFree(config)) {
-    return false;
-  }
+  const config: unknown = parseToml(filename, source);
+
   return Object.entries(record(config)).every(([name, setting]) => {
+    requireSafe(templateFree({ [name]: setting }), `Unverified template in config key ${name}.`);
     switch (name) {
       case 'env': {
         return envTable(setting, root);
@@ -143,15 +177,18 @@ const configSafe = (
       case 'tools': {
         return toolsTable(setting, tools);
       }
+      case 'settings': {
+        return settingsTable(setting, tools);
+      }
       case 'min_version': {
-        return version(setting);
+        return requireSafe(version(setting), 'Unverified config key min_version.');
       }
       // Plain tasks are inert; templates were rejected throughout the decoded tree.
       case 'tasks': {
         return true;
       }
       default: {
-        return false;
+        throw new Error(`Unverified config key ${name}.`);
       }
     }
   });

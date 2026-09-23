@@ -1,3 +1,4 @@
+import type { StartupResult } from '../mise/result';
 import { miseStartupSafe } from '../mise/startup';
 import { resolveDirectory } from './cwd';
 import type { ExecutionContext, ExecutionHost } from './execution-types';
@@ -15,7 +16,7 @@ interface WrapperSpec {
   readonly operands?: number;
   readonly delimiter?: boolean;
   readonly startup?: boolean;
-  readonly checkStartup?: (invocation: ShellInvocation, environment: Environment) => boolean;
+  readonly checkStartup?: (invocation: ShellInvocation, environment: Environment) => StartupResult;
   readonly shell?: boolean;
 }
 
@@ -198,9 +199,13 @@ const inspectToolWrapper = (
   }
   const index = wrapperCommand(invocation, spec, child);
   child.checkedStartup ||= spec.checkStartup !== undefined;
-  if (index !== null && spec.checkStartup !== undefined && !spec.checkStartup(invocation, child)) {
-    child.unverifiedStartup = true;
-    child.bindings.delete('HOME');
+  if (index !== null && spec.checkStartup !== undefined) {
+    const result = spec.checkStartup(invocation, child);
+    if (!result.safe) {
+      child.unverifiedStartup = true;
+      child.startupReason = `mise exec startup blocked: ${result.reason}`;
+      child.bindings.delete('HOME');
+    }
   }
   if (index === null || invocation.words[index] === undefined) {
     host.addDiagnostic(

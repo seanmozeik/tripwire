@@ -92,6 +92,8 @@ const environmentsAgree = (environments: readonly Environment[]): Environment =>
   }
   return {
     unverifiedStartup: environments.some((environment) => environment.unverifiedStartup),
+    startupReason: environments.find((environment) => environment.startupReason !== undefined)
+      ?.startupReason,
     checkedStartup: environments.some((environment) => environment.checkedStartup),
     cwd: rest.every((environment) => environment.cwd === first.cwd) ? first.cwd : null,
     directoryStack: rest.every(
@@ -112,6 +114,7 @@ const environmentsAgree = (environments: readonly Environment[]): Environment =>
 
 const replaceEnvironment = (target: Environment, source: Environment): void => {
   target.unverifiedStartup = source.unverifiedStartup;
+  target.startupReason = source.startupReason;
   target.checkedStartup = source.checkedStartup;
   target.cwd = source.cwd;
   target.directoryStack = [...source.directoryStack];
@@ -161,6 +164,7 @@ const propagateFunctionEffects = (
   propagateMap(target.bindings, source.bindings, excludedVariables);
   propagateMap(target.temps, source.temps, excludedVariables);
   target.unverifiedStartup = source.unverifiedStartup;
+  target.startupReason = source.startupReason;
   target.checkedStartup = source.checkedStartup;
   target.cwd = source.cwd;
   target.directoryStack = [...source.directoryStack];
@@ -1042,6 +1046,7 @@ class BashAnalyzer {
       ...(home?.kind === 'literal' && { home: home.value }),
       cwd: environment.cwd,
       unverifiedStartup: environment.unverifiedStartup,
+      startupReason: environment.startupReason,
       checkedStartup: environment.checkedStartup,
       id: this.#nextInvocationId,
       head: basename(executable.value),

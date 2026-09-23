@@ -73,3 +73,5 @@ The full verification run passed 829 tests and all 355 fixtures through each of 
 Run `bun scripts/benchmark-code.ts` for the warm policy benchmark. A local run before the command-classification changes, on Bun 1.4.2, produced 5,060 samples over 253 fixtures: median 0.033 ms, p95 0.083 ms, p99 0.136 ms, maximum 2.015 ms. These historical measurements include Bash analysis and filesystem policy checks; they exclude process startup and do not measure the added command paths. The benchmark verifies each decision against its fixture expectation.
 
 Before installing this change, review the intentional blocks on dynamic code and persistent REPLs. The implementation was built in an isolated worktree so validation did not replace the installed hook or alter host settings.
+
+For the mise configuration boundary, accepted activation state, and source audit, see [Mise startup inspection](mise-startup.md).

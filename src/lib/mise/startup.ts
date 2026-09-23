@@ -4,19 +4,36 @@ import path from 'node:path';
 import type { ShellInvocation } from '../bash/types';
 import type { Environment } from '../bash/values';
 import { currentEnvironment } from '../environment';
+import { checkBackends } from './backends';
 import { configSafe, coreTool, literal, version } from './config';
 import {
   ancestors,
   configRoot,
   configDirectory,
-  entries,
   localNames,
   readOptional,
   record,
+  parseToml,
 } from './files';
+import { requireSafe, type StartupResult } from './result';
 
+// Activation state is inert for exec additions; see docs/mise-startup.md for
+// the source audit. Unknown private variables still fail closed.
 const ENVIRONMENT_KEYS = new Set([
   'MISE_SHELL',
+  '__MISE_DIFF',
+  '__MISE_ORIG_PATH',
+  '__MISE_SESSION',
+  '__MISE_LAST_UNTRUSTED_CONFIG_WARNING_KEY',
+  '__MISE_ZSH_ACTIVATE_ENV',
+  '__MISE_ZSH_ACTIVATE_PATH',
+  '__MISE_ZSH_CHPWD_RAN',
+  '__MISE_ZSH_PRECMD_RUN',
+  '__MISE_BASH_CHPWD_RAN',
+  '__MISE_BASH_SKIP_FIRST_PROMPT',
+  '__MISE_EXE',
+  '__MISE_FLAGS',
+  '__MISE_HOOK_ENABLED',
   'MISE_OVERRIDE_CONFIG_FILENAMES',
   'MISE_OVERRIDE_TOOL_VERSIONS_FILENAMES',
   'MISE_DEFAULT_CONFIG_FILENAME',
@@ -35,10 +52,10 @@ const ENVIRONMENT_KEYS = new Set([
   'MISE_PLUGINS_DIR',
 ]);
 
-const profilesFrom = (value: string | undefined): string[] => {
+const profilesFrom = (value: string | undefined, origin: string): string[] => {
   const profiles = value?.split(',') ?? [];
   if (profiles.length > 16 || profiles.some((name) => !/^[\w-]+$/u.test(name))) {
-    throw new Error('Uninspectable mise profile.');
+    throw new Error(`Uninspectable mise profile from ${origin}.`);
   }
   return profiles;
 };
@@ -63,12 +80,12 @@ const commandTools = (
       }
       const value = inline ?? invocation.words[index]?.value;
       if (flag === '-E' || flag === '--env') {
-        profiles.push(...profilesFrom(value));
+        profiles.push(...profilesFrom(value, `command option ${flag}`));
       }
     } else if (!['exec', 'x'].includes(word.value)) {
       const [tool, requested, ...rest] = word.value.split('@');
       if (tool === undefined || !coreTool(tool) || !version(requested) || rest.length > 0) {
-        return false;
+        throw new Error(`Unverified mise command tool ${tool ?? '(missing)'} or its version.`);
       }
       tools.add(tool.replace(/^core:/u, ''));
     }
@@ -81,49 +98,21 @@ const misercProfiles = (filename: string, profiles: string[]): void => {
   if (source === null) {
     return;
   }
-  const config: unknown = Bun.TOML.parse(source);
+  const config: unknown = parseToml(filename, source);
   for (const [name, setting] of Object.entries(record(config))) {
     if (name !== 'env') {
-      throw new Error('Uninspectable mise early setting.');
+      throw new Error(`${filename}: unverified early config key ${name}.`);
     }
     for (const profile of Array.isArray(setting) ? setting : [setting]) {
       if (typeof profile !== 'string') {
-        throw new TypeError('Uninspectable mise environment.');
+        throw new TypeError(`${filename}: uninspectable early config key env.`);
       }
-      profiles.push(...profilesFrom(profile));
+      profiles.push(...profilesFrom(profile, `${filename}: env`));
       if (profiles.length > 16) {
-        throw new Error('Mise profile count exceeds inspection limit.');
+        throw new Error(`${filename}: env profile count exceeds inspection limit.`);
       }
     }
   }
-};
-
-const backendSafe = (installs: string, plugins: string, tools: ReadonlySet<string>): boolean => {
-  const source = readOptional(path.join(installs, '.mise-installs.toml'));
-  const manifest = source === null ? {} : record(Bun.TOML.parse(source));
-  const installedPlugins = new Set(entries(plugins));
-  for (const tool of tools) {
-    if (installedPlugins.has(tool)) {
-      return false;
-    }
-    // Older metadata formats can select a plugin instead of the core backend.
-    for (const filename of ['.mise.backend', '.mise.backend.json', '.mise.backend.toml']) {
-      if (readOptional(path.join(installs, tool, filename)) !== null) {
-        return false;
-      }
-    }
-    const value = manifest[tool];
-    if (value !== undefined) {
-      const entry = record(value);
-      if (
-        entry['full'] !== `core:${tool}` ||
-        (entry['opts'] !== undefined && Object.keys(record(entry['opts'])).length > 0)
-      ) {
-        return false;
-      }
-    }
-  }
-  return true;
 };
 
 const startupEnvironment = (environment: Environment): Record<string, string | undefined> => {
@@ -132,25 +121,27 @@ const startupEnvironment = (environment: Environment): Record<string, string | u
   }
   const env = currentEnvironment();
   for (const [name, word] of environment.bindings) {
-    if (name === 'HOME' || name.startsWith('MISE_') || name.startsWith('XDG_')) {
+    if (
+      name === 'HOME' ||
+      name.startsWith('MISE_') ||
+      name.startsWith('XDG_') ||
+      name.startsWith('__MISE')
+    ) {
       if (word.kind !== 'literal') {
-        throw new Error('Unknown mise environment.');
+        throw new Error(`Unknown mise environment variable ${name}.`);
       }
       env[name] = word.value;
     }
   }
-  if (
-    Object.keys(env).some(
-      (name) =>
-        (name.startsWith('MISE_') && !ENVIRONMENT_KEYS.has(name)) || name.startsWith('__MISE'),
-    )
-  ) {
-    throw new Error('Unsupported mise environment setting.');
+  for (const name of Object.keys(env)) {
+    if ((name.startsWith('MISE_') || name.startsWith('__MISE')) && !ENVIRONMENT_KEYS.has(name)) {
+      throw new Error(`Unsupported mise environment variable ${name}.`);
+    }
   }
   return env;
 };
 
-const filenameList = (value: string | undefined): string[] => {
+const filenameList = (value: string | undefined, variable: string): string[] => {
   const names = value?.split(path.delimiter) ?? [];
   if (
     names.length > 32 ||
@@ -163,7 +154,7 @@ const filenameList = (value: string | undefined): string[] => {
         name.split('/').includes('..'),
     )
   ) {
-    throw new Error('Uninspectable mise filenames.');
+    throw new Error(`Uninspectable mise filenames from ${variable}.`);
   }
   return names;
 };
@@ -174,7 +165,7 @@ const localFiles = (
 ): { readonly toml: string[]; readonly versions: string[]; readonly fragments: boolean } => {
   for (const name of ['MISE_DEFAULT_CONFIG_FILENAME', 'MISE_DEFAULT_TOOL_VERSIONS_FILENAME']) {
     if (env[name]?.includes(path.delimiter) === true) {
-      throw new Error('A default mise filename must be one literal path.');
+      throw new Error(`${name} must be one literal path.`);
     }
   }
   const defaults = new Set(localNames([]));
@@ -183,18 +174,30 @@ const localFiles = (
   const toml =
     override === undefined
       ? localNames(profiles).filter((name) => name !== '.tool-versions')
-      : filenameList(override).concat(localNames(profiles).filter((name) => !defaults.has(name)));
+      : filenameList(override, 'MISE_OVERRIDE_CONFIG_FILENAMES').concat(
+          localNames(profiles).filter((name) => !defaults.has(name)),
+        );
   if (env['MISE_DEFAULT_CONFIG_FILENAME'] !== undefined) {
-    toml.push(...filenameList(env['MISE_DEFAULT_CONFIG_FILENAME']));
+    toml.push(...filenameList(env['MISE_DEFAULT_CONFIG_FILENAME'], 'MISE_DEFAULT_CONFIG_FILENAME'));
   }
   if (toml.some((name) => !name.endsWith('.toml'))) {
-    throw new Error('Mise TOML filename is unverified.');
+    throw new Error(
+      'MISE_OVERRIDE_CONFIG_FILENAMES or MISE_DEFAULT_CONFIG_FILENAME contains a non-TOML filename.',
+    );
   }
   let versions = ['.tool-versions'];
   if (versionsOverride !== undefined) {
-    versions = versionsOverride === 'none' ? [] : filenameList(versionsOverride);
+    versions =
+      versionsOverride === 'none'
+        ? []
+        : filenameList(versionsOverride, 'MISE_OVERRIDE_TOOL_VERSIONS_FILENAMES');
   }
-  versions.push(...filenameList(env['MISE_DEFAULT_TOOL_VERSIONS_FILENAME']));
+  versions.push(
+    ...filenameList(
+      env['MISE_DEFAULT_TOOL_VERSIONS_FILENAME'],
+      'MISE_DEFAULT_TOOL_VERSIONS_FILENAME',
+    ),
+  );
   return { toml, versions, fragments: override === undefined };
 };
 
@@ -208,7 +211,7 @@ const discover = (
   const { global, system, home } = roots;
   const ceilings = env['MISE_CEILING_PATHS']?.split(path.delimiter) ?? [];
   if (ceilings.some((ceiling) => !path.isAbsolute(ceiling) || !literal(ceiling))) {
-    throw new Error('Uninspectable mise ceiling.');
+    throw new Error('Uninspectable mise directory variable MISE_CEILING_PATHS.');
   }
   const limits = new Set(ceilings.flatMap((ceiling) => [ceiling, realpathSync(ceiling)]));
   const parents = new Set([...ancestors(cwd, limits), ...ancestors(realpathSync(cwd), limits)]);
@@ -251,7 +254,9 @@ const discover = (
     const names = override === undefined ? configDirectory(directoryName, profiles) : [override];
     for (const filename of names) {
       if (!literal(filename) || !path.isAbsolute(filename)) {
-        throw new Error('Uninspectable mise override.');
+        throw new Error(
+          'Uninspectable mise config override: MISE_CONFIG_FILE, MISE_GLOBAL_CONFIG_FILE, or MISE_SYSTEM_CONFIG_FILE must be an absolute literal filename.',
+        );
       }
       files.set(filename, root ?? configRoot(filename));
     }
@@ -267,21 +272,21 @@ const discover = (
 
 // No subprocesses, template rendering, plugins, or mise caches are consulted.
 // Unknown discovery/settings inputs fail closed rather than silently omitting files.
-const miseStartupSafe = (invocation: ShellInvocation, environment: Environment): boolean => {
+const miseStartupSafe = (invocation: ShellInvocation, environment: Environment): StartupResult => {
   try {
     const { cwd } = environment;
     if (cwd === null || invocation.cwd === null || !statSync(cwd).isDirectory()) {
-      return false;
+      throw new Error('Unverified mise working directory.');
     }
     const env = startupEnvironment(environment);
     const home = env['HOME'];
     if (home === undefined || !path.isAbsolute(home)) {
-      return false;
+      throw new Error('Unverified mise HOME: expected an absolute path.');
     }
     const directory = (name: string, fallback: string): string => {
       const value = env[name] ?? fallback;
       if (!path.isAbsolute(value) || !literal(value)) {
-        throw new Error('Uninspectable mise directory.');
+        throw new Error(`Uninspectable mise directory variable ${name}.`);
       }
       return value;
     };
@@ -294,31 +299,44 @@ const miseStartupSafe = (invocation: ShellInvocation, environment: Environment):
       'MISE_DATA_DIR',
       path.join(directory('XDG_DATA_HOME', path.join(home, '.local/share')), 'mise'),
     );
-    const profiles = profilesFrom(env['MISE_ENV'] ?? env['MISE_ENVIRONMENT']);
+    const profiles = profilesFrom(
+      env['MISE_ENV'] ?? env['MISE_ENVIRONMENT'],
+      env['MISE_ENV'] === undefined ? 'MISE_ENVIRONMENT' : 'MISE_ENV',
+    );
     const tools = new Set<string>();
     if (!commandTools(invocation, profiles, tools)) {
-      return false;
+      throw new Error('Unverified mise command tool or version.');
     }
     const { files, versions } = discover(cwd, invocation.cwd, env, profiles, {
       global,
       system,
       home,
     });
-    if (
-      files.size > 2048 ||
-      ![...files].every(([filename, root]) =>
-        configSafe(filename, tools, root, versions.has(filename)),
-      )
-    ) {
-      return false;
+    requireSafe(files.size <= 2048, 'Mise config discovery exceeds 2048 files.');
+    for (const [filename, root] of files) {
+      try {
+        requireSafe(
+          configSafe(filename, tools, root, versions.has(filename)),
+          'Unverified config value.',
+        );
+      } catch (cause) {
+        throw new Error(
+          `${filename}: ${cause instanceof Error ? cause.message : 'Config inspection failed.'}`,
+          { cause },
+        );
+      }
     }
-    return backendSafe(
+    checkBackends(
       directory('MISE_INSTALLS_DIR', path.join(data, 'installs')),
       directory('MISE_PLUGINS_DIR', path.join(data, 'plugins')),
       tools,
     );
-  } catch {
-    return false;
+    return { safe: true };
+  } catch (cause) {
+    return {
+      safe: false,
+      reason: cause instanceof Error ? cause.message : 'Mise inspection failed.',
+    };
   }
 };
 

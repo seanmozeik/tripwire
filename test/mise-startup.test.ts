@@ -257,3 +257,112 @@ bunTest.test('default filenames cannot be mistaken for override filename lists',
   write('project/fictional.toml:other.toml', '[env]\nNODE_OPTIONS="--require fictional"');
   bunTest.expect(inspect()).toBe('deny');
 });
+
+bunTest.test.each([
+  ['.mise.backend', 'python\ncore:python\n', 'python\nasdf:python\n'],
+  [
+    '.mise.backend.json',
+    '{"short":"python","id":"core:python"}',
+    '{"short":"python","id":"asdf:python"}',
+  ],
+  [
+    '.mise.backend.toml',
+    'short="python"\nfull="core:python"',
+    'short="python"\nfull="asdf:python"',
+  ],
+])('core metadata is inspected rather than rejected: %s', (name, safe, unsafe) => {
+  write('project/mise.toml', '[tools]\npython="3.13"');
+  const filename = `data/installs/python/${name}`;
+  write(filename, safe);
+  bunTest.expect(inspect()).toBe('allow');
+  write(filename, unsafe);
+  const decision = decideBash(
+    "mise exec -- python3 -c 'print(1)'",
+    {},
+    { cwd: path.join(root, 'project') },
+  );
+  bunTest.expect(decision.kind).toBe('deny');
+  bunTest.expect(decision.message).toContain(filename);
+  bunTest.expect(decision.message).toContain('python');
+});
+
+bunTest.test.each([
+  ['[env]\nPYTHONPATH="payload"', 'env.PYTHONPATH'],
+  ['[env._]\nsource="payload.sh"', 'env._.source'],
+  ['[env._]\nfile="*.env"', 'env._.file'],
+  ['[tools]\n"asdf:python"="3.13"', 'tools.asdf:python'],
+  ['[settings]\nenv_cache=true', 'settings.env_cache'],
+  ['[settings.ruby]\ncompile="unknown"', 'settings.ruby.compile'],
+  ['[hooks]\nenter="echo example"', 'hooks'],
+  ['[env', 'TOML parse error'],
+])('mise denial identifies config and key or parser: %s', (config, reason) => {
+  write('project/mise.toml', config);
+  const decision = decideBash(
+    "mise exec -- python3 -c 'print(1)'",
+    {},
+    { cwd: path.join(root, 'project') },
+  );
+  bunTest.expect(decision.kind).toBe('deny');
+  bunTest.expect(decision.message).toContain(path.join(root, 'project/mise.toml'));
+  bunTest.expect(decision.message).toContain(reason);
+});
+
+bunTest.test.each(['zsh', 'bash', 'fish', 'nu', 'elvish', 'pwsh', 'xonsh'])(
+  'inherited %s activation bookkeeping does not add startup effects',
+  (shell) => {
+    process.env['MISE_SHELL'] = shell;
+    for (const name of [
+      '__MISE_DIFF',
+      '__MISE_ORIG_PATH',
+      '__MISE_SESSION',
+      '__MISE_LAST_UNTRUSTED_CONFIG_WARNING_KEY',
+      '__MISE_ZSH_ACTIVATE_ENV',
+      '__MISE_ZSH_ACTIVATE_PATH',
+      '__MISE_ZSH_CHPWD_RAN',
+      '__MISE_ZSH_PRECMD_RUN',
+      '__MISE_BASH_CHPWD_RAN',
+      '__MISE_BASH_SKIP_FIRST_PROMPT',
+      '__MISE_EXE',
+      '__MISE_FLAGS',
+      '__MISE_HOOK_ENABLED',
+    ]) {
+      process.env[name] = 'fictional';
+    }
+    process.env['PYTHONPATH'] = 'inherited';
+    write('project/mise.toml', '[tools]\npython="3.13"');
+    bunTest.expect(inspect()).toBe('allow');
+    write('project/mise.toml', '[env]\nPYTHONPATH="added-by-mise"');
+    bunTest.expect(inspect()).toBe('deny');
+  },
+);
+
+bunTest.test.each([
+  '__MISE_SCRIPT',
+  '__MISE_SHIM',
+  '__MISE_ENV_CACHE_KEY',
+  '__MISE_UNKNOWN',
+  'MISE_UNKNOWN_SETTING',
+])('unsupported environment names are reported: %s', (name) => {
+  process.env[name] = 'fictional';
+  const decision = decideBash("mise exec -- python3 -c 'print(1)'", {}, { cwd: root });
+  bunTest.expect(decision.kind).toBe('deny');
+  bunTest.expect(decision.message).toContain(name);
+});
+
+bunTest.test('settings retain plugin and startup boundaries', () => {
+  write(
+    'global/config.toml',
+    '[tools]\npython="3.13"\n[settings]\nidiomatic_version_file_enable_tools=["ruby"]\n[settings.ruby]\ncompile=false',
+  );
+  bunTest.expect(inspect()).toBe('allow');
+  write('data/plugins/ruby/bin/list-idiomatic-filenames', 'echo fictional');
+  const decision = decideBash("mise exec -- python3 -c 'print(1)'", {}, { cwd: root });
+  bunTest.expect(decision.kind).toBe('deny');
+  bunTest.expect(decision.message).toContain('data/plugins/ruby');
+});
+
+bunTest.test('submitted activation mutations cannot reuse inherited bookkeeping approval', () => {
+  bunTest.expect(inspect('__MISE_DIFF=fictional mise exec --')).toBe('deny');
+  write('project/mise.toml', '[env]\n__MISE_DIFF="fictional"');
+  bunTest.expect(inspect()).toBe('deny');
+});

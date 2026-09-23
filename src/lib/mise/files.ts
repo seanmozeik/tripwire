@@ -8,7 +8,9 @@ const readOptional = (filename: string): string | null => {
   try {
     const stat = statSync(filename);
     if (!stat.isFile() || stat.size > 131_072) {
-      throw new Error('Uninspectable mise file.');
+      throw new Error(
+        `Uninspectable mise file ${filename}: expected a regular file of at most 131072 bytes.`,
+      );
     }
     return readFileSync(filename, 'utf8');
   } catch (cause) {
@@ -23,7 +25,7 @@ const entries = (directory: string): string[] => {
   try {
     const names = readdirSync(directory);
     if (names.length > 256) {
-      throw new Error('Mise directory exceeds inspection limit.');
+      throw new Error(`Mise directory ${directory} exceeds inspection limit.`);
     }
     return names;
   } catch (cause) {
@@ -91,11 +93,29 @@ const configRoot = (filename: string): string => {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-const record = (value: unknown): Record<string, unknown> => {
+const record = (value: unknown, context = 'mise config'): Record<string, unknown> => {
   if (!isRecord(value)) {
-    throw new TypeError('Expected a mise table.');
+    throw new TypeError(`${context}: expected a table.`);
   }
   return value;
 };
 
-export { configRoot, ancestors, configDirectory, entries, localNames, readOptional, record };
+const parseToml = (filename: string, source: string): unknown => {
+  try {
+    return Bun.TOML.parse(source);
+  } catch {
+    // Parser messages can contain config values; identify the file without leaking them.
+    throw new Error(`TOML parse error in ${filename}.`);
+  }
+};
+
+export {
+  parseToml,
+  configRoot,
+  ancestors,
+  configDirectory,
+  entries,
+  localNames,
+  readOptional,
+  record,
+};
