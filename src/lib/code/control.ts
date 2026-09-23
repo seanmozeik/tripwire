@@ -101,6 +101,10 @@ const bindTarget = (target: SyntaxNode, value: Value, context: ControlContext): 
 const containerMutated = (value: Extract<Value, { kind: 'list' }>): boolean =>
   value.opaque === true;
 
+const containsLoopJump = (node: SyntaxNode): boolean =>
+  ['ContinueStatement', 'BreakStatement'].includes(node.name) ||
+  children(node).some((part) => containsLoopJump(part));
+
 const iterate = (
   target: SyntaxNode | undefined,
   input: SyntaxNode | undefined,
@@ -129,13 +133,17 @@ const iterate = (
   }
   const before = context.snapshot();
   const states: ScopeSnapshot[] = [before];
-  if ((iterable.kind !== 'list' || iterable.opaque === true) && body !== undefined) {
+  const repeated =
+    iterable.kind !== 'list' ||
+    iterable.opaque === true ||
+    (body !== undefined && containsLoopJump(body));
+  if (repeated && body !== undefined) {
     forgetLoopWrites(body, context);
   }
   // Empty bodies are also checked; unreachable syntax cannot hide operations.
   for (const value of values.length === 0 ? [unknown] : values) {
     bindTarget(target, value, context);
-    if (iterable.kind === 'list' && iterable.opaque !== true) {
+    if (iterable.kind === 'list' && !repeated) {
       visit();
       if (containerMutated(iterable)) {
         failInspection('Mutation of an iterated container changes the iteration bounds.');

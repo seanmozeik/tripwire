@@ -6,6 +6,21 @@ import type { CodeLanguage, CodeOperation } from '../src/lib/code/types';
 
 const quote = (value: string): string => `'${value.replaceAll("'", String.raw`'\''`)}'`;
 const denied: readonly [CodeLanguage, string][] = [
+  [
+    'python',
+    'from pathlib import Path\np="/tmp/example"\nfor x in [1,2]:\n Path(p).unlink()\n p="/"\n continue\n p="/tmp/example"',
+  ],
+
+  [
+    'javascript',
+    'const cmd=["z","rm"]; const alias=cmd; alias.sort(); require("child_process").execFileSync(cmd[0],["-rf","/"])',
+  ],
+  [
+    'python',
+    'import subprocess\ncmd=["z","rm"]\nother=cmd\nother.sort()\nsubprocess.run([cmd[0],"-rf","/"])',
+  ],
+  ['python', 'from pathlib import Path\nxs=[1,2]\nxs.sort(key=lambda x: Path("/").unlink())'],
+
   ['javascript', 'try {console.log(1)} finally {require("fs").rmSync("/")}'],
   [
     'javascript',

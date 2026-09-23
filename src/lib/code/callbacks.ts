@@ -14,7 +14,16 @@ const methodCallback = (
     return null;
   }
   requireData([fn.receiver]);
-  const [callback, ...rest] = input.positional;
+  const [positional, ...rest] = input.positional;
+  const callback = input.keywords.get('key') ?? positional;
+  for (const [name, value] of input.keywords) {
+    if (name !== 'key' || fn.name !== 'sort') {
+      requireData([value]);
+    }
+  }
+  if (fn.name === 'sort' && (fn.receiver.kind === 'list' || fn.receiver.kind === 'object')) {
+    fn.receiver.opaque = true;
+  }
   if (callback === undefined && fn.name === 'sort') {
     return data;
   }
@@ -24,12 +33,11 @@ const methodCallback = (
   requireData(rest);
   const result = invoke(
     callback,
-    fn.name === 'reduce' || fn.name === 'sort' ? [data, data] : [data],
+    fn.name === 'reduce' || (fn.name === 'sort' && !input.keywords.has('key'))
+      ? [data, data]
+      : [data],
   );
   requireData([result]);
-  if (fn.name === 'sort' && (fn.receiver.kind === 'list' || fn.receiver.kind === 'object')) {
-    fn.receiver.opaque = true;
-  }
   return data;
 };
 

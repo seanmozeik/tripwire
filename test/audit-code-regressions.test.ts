@@ -29,6 +29,8 @@ const javascript = [
   'console.log(JSON.stringify({x:1}, (k,v)=>v))',
 ];
 const python = [
+  'xs=[1,2]\nxs.sort(key=lambda x:-x)\nprint(xs)',
+
   'import datetime\nprint(datetime.datetime.fromtimestamp(1,datetime.timezone.utc).isoformat(timespec="milliseconds"))',
   'import re\nprint(re.sub("a",lambda m:m.group(0),"aaa"))',
   'import sys\nsys.stdout.write("example")',
