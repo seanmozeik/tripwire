@@ -28,9 +28,6 @@ const transferOperands = (command: ShellInvocation): string[] | null => {
         }
       }
     } else {
-      if (word.source.startsWith('~')) {
-        return null;
-      }
       operands.push(word.value);
     }
   }

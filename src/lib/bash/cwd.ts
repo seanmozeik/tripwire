@@ -1,5 +1,4 @@
 import { statSync } from 'node:fs';
-import { homedir } from 'node:os';
 import path from 'node:path';
 
 import type { ShellInvocation, ShellWord } from './types';
@@ -10,12 +9,7 @@ const resolveDirectory = (target: ShellWord | undefined, cwd: string | null): st
   if (target?.kind !== 'literal' || target.value === '-' || target.value === '') {
     return null;
   }
-  let expanded = target.value;
-  if (!target.quoted && expanded === '~') {
-    expanded = homedir();
-  } else if (!target.quoted && expanded.startsWith('~/')) {
-    expanded = path.join(homedir(), expanded.slice(2));
-  }
+  const expanded = target.value;
   if (!path.isAbsolute(expanded) && cwd === null) {
     return null;
   }
@@ -63,14 +57,8 @@ const changeDirectory = (invocation: ShellInvocation, environment: Environment):
     if (invocation.head === 'pushd') {
       environment.directoryStack.push(environment.cwd);
     }
-    const target = args[0] ?? {
-      kind: 'literal',
-      value: '~',
-      source: '~',
-      quoted: false,
-      range: invocation.range,
-    };
-    const searched = usesCdpath(target, environment);
+    const target = args[0] ?? environment.bindings.get('HOME');
+    const searched = target !== undefined && usesCdpath(target, environment);
     environment.cwd =
       args.length <= 1 && !searched ? resolveDirectory(target, environment.cwd) : null;
   }

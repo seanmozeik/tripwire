@@ -101,7 +101,9 @@ const SPECS: readonly Spec[] = [
     match: (seg) =>
       seg.head === 'rm' &&
       flagPresent(seg, '-rf', '-fr', '-Rf', '-fR') &&
-      seg.tokens.some((t) => /^(?<home>~|\$HOME|\$\{HOME\})$/u.test(t)),
+      seg.words.some(
+        (word) => word.value === seg.home || /^(?<home>~|\$HOME|\$\{HOME\})$/u.test(word.source),
+      ),
   },
   {
     rule: 'fork-bomb',

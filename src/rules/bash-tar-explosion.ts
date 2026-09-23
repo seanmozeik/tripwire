@@ -27,12 +27,20 @@ const findChangeDir = (seg: ShellInvocation): string | null => {
   return null;
 };
 
-const isUnsafeExtractDest = (dest: string, cwd: string | null | undefined): boolean => {
+const isUnsafeExtractDest = (
+  dest: string,
+  cwd: string | null | undefined,
+  home: string | undefined,
+): boolean => {
   if (cwd === null && !path.isAbsolute(dest)) {
     return true;
   }
   const resolved = resolveWritePath(path.resolve(cwd ?? process.cwd(), dest));
-  return resolved === '/' || resolved === homedir() || /^(?<home>~|\$HOME|\$\{HOME\})$/u.test(dest);
+  return (
+    resolved === '/' ||
+    resolved === (home ?? homedir()) ||
+    /^(?<home>~|\$HOME|\$\{HOME\})$/u.test(dest)
+  );
 };
 
 const unzipDestination = (seg: ShellInvocation): string | undefined => {
@@ -51,7 +59,7 @@ const bashTarExplosion = (program: ShellProgram): Decision => {
           /^[a-zA-Z]+$/u.test(legacyOptionWord) &&
           legacyOptionWord.includes('x'));
       const dest = extracting ? findChangeDir(seg) : null;
-      if (dest !== null && isUnsafeExtractDest(dest, seg.cwd)) {
+      if (dest !== null && isUnsafeExtractDest(dest, seg.cwd, seg.home)) {
         return deny(
           'tar-extract-to-root',
           `tar -x with -C ${dest} can overwrite arbitrary system files. Refuse — extract to a contained directory (e.g. ./tmp/extract) and inspect before moving anything elsewhere.`,
@@ -63,7 +71,7 @@ const bashTarExplosion = (program: ShellProgram): Decision => {
   for (const seg of program.invocations) {
     if (seg.head === 'unzip') {
       const dest = unzipDestination(seg);
-      if (dest !== undefined && isUnsafeExtractDest(dest, seg.cwd)) {
+      if (dest !== undefined && isUnsafeExtractDest(dest, seg.cwd, seg.home)) {
         return deny(
           'unzip-to-root',
           `unzip -d ${dest} can overwrite arbitrary system files. Refuse — extract to a contained directory.`,

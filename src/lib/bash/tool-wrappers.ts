@@ -173,6 +173,9 @@ const inspectToolWrapper = (
   }
   const child = cloneEnvironment(environment);
   child.unverifiedStartup ||= spec.startup === true;
+  if (spec.startup === true) {
+    child.bindings.delete('HOME');
+  }
   const index = wrapperCommand(invocation, spec, child);
   if (index === null || invocation.words[index] === undefined) {
     host.addDiagnostic(

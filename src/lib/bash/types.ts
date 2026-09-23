@@ -8,6 +8,7 @@ interface SourceRange {
 type ShellWordKind = 'literal' | 'dynamic' | 'trusted-temp-path' | 'background-pid';
 
 interface BashAnalysisOptions {
+  readonly home?: string;
   readonly cwd?: string;
   readonly executionCarrierAliases?: readonly ExecutionCarrierAlias[];
   readonly positionalArguments?: readonly string[];
@@ -39,6 +40,7 @@ interface PipelinePosition {
 }
 
 interface ShellInvocation {
+  readonly home?: string;
   readonly cwd?: string | null;
   readonly unverifiedStartup?: boolean;
   readonly id: number;

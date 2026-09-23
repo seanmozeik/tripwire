@@ -1,3 +1,5 @@
+import { homedir } from 'node:os';
+
 import {
   parse,
   type ArithmeticExpression,
@@ -38,6 +40,7 @@ import {
   trustedTempWord,
   wordIsStatic,
 } from './values';
+import { skipHeadRenamingPrefix } from './wrappers';
 
 interface VisitContext {
   readonly inspectedPipelineInput: boolean;
@@ -224,6 +227,80 @@ const mayChangeDirectory = (node: Node, environment: Environment): boolean => {
   return false;
 };
 
+const mayMutateHomeIndirectly = (invocation: ShellInvocation): boolean => {
+  if (['source', '.', 'eval', 'read', 'getopts', 'let'].includes(invocation.head)) {
+    return true;
+  }
+  if (invocation.head === 'printf' && invocation.tokens.includes('-v')) {
+    return true;
+  }
+  if (['export', 'readonly', 'declare', 'typeset', 'local', 'unset'].includes(invocation.head)) {
+    return (
+      invocation.words.slice(1).some((word) => word.kind !== 'literal') ||
+      invocation.flags.some((flag) => /^-[^-]*n/u.test(flag))
+    );
+  }
+  return false;
+};
+
+const restoreExportedHome = (
+  invocation: ShellInvocation,
+  word: ShellWord,
+  previous: ShellWord | undefined,
+  environment: Environment,
+): void => {
+  if (invocation.head !== 'export' || word.kind !== 'literal') {
+    return;
+  }
+  if (word.value.startsWith('HOME=')) {
+    environment.bindings.set('HOME', { ...word, value: word.value.slice(5) });
+  } else if (word.value === 'HOME' && previous !== undefined) {
+    environment.bindings.set('HOME', previous);
+  }
+};
+
+const HOME_MUTATION_WORDS = new Set([
+  'HOME',
+  'source',
+  '.',
+  'eval',
+  'read',
+  'getopts',
+  'let',
+  'printf',
+  'export',
+  'declare',
+  'typeset',
+  'unset',
+]);
+
+// Loops may revisit an operand after a later mutation. Invalidate before the
+// first visit unless the body cannot change the home binding.
+const mayChangeHome = (node: Node, environment: Environment): boolean => {
+  const pending: unknown[] = [node];
+  while (pending.length > 0) {
+    const value = pending.pop();
+    if (typeof value === 'object' && value !== null) {
+      if ('name' in value && value.name === 'HOME') {
+        return true;
+      }
+      if (
+        'value' in value &&
+        typeof value.value === 'string' &&
+        (HOME_MUTATION_WORDS.has(value.value) ||
+          value.value.startsWith('HOME=') ||
+          environment.functions.has(value.value) ||
+          environment.aliases.has(value.value))
+      ) {
+        return true;
+      }
+      const fields: unknown[] = Object.values(value);
+      pending.push(...fields);
+    }
+  }
+  return false;
+};
+
 class BashAnalyzer {
   readonly #source: string;
   readonly #invocations: ShellInvocation[] = [];
@@ -272,6 +349,7 @@ class BashAnalyzer {
         variable: name,
       });
     };
+    bindLiteral('HOME', this.#options.home ?? homedir());
     if (this.#options.cwd !== undefined) {
       bindLiteral('PWD', this.#options.cwd);
     }
@@ -410,6 +488,12 @@ class BashAnalyzer {
       replaceEnvironment(environment, environmentsAgree([thenEnvironment, elseEnvironment]));
       return true;
     }
+    if (
+      ['ArithmeticFor', 'While', 'For', 'Select'].includes(node.type) &&
+      mayChangeHome(node, environment)
+    ) {
+      environment.bindings.delete('HOME');
+    }
     if (node.type === 'For' || node.type === 'Select') {
       this.#visitFor(node, environment, context);
       return true;
@@ -533,20 +617,28 @@ class BashAnalyzer {
         applyAssignment(effect, environment);
       }
     }
-    const redirects = this.#visitRedirects(command.redirects, environment, context);
+    const operandEnvironment = assignmentEffects.some((effect) => effect.name === 'HOME')
+      ? cloneEnvironment(environment)
+      : environment;
+    for (const effect of assignmentEffects) {
+      if (effect.name === 'HOME') {
+        applyAssignment(effect, operandEnvironment);
+      }
+    }
+    const redirects = this.#visitRedirects(command.redirects, operandEnvironment, context);
     if (command.name === undefined) {
       return;
     }
     const name = this.#normalizeWord(command.name, environment, context);
     const suffix = command.suffix.flatMap((word) =>
-      this.#normalizeWordMany(word, environment, context),
+      this.#normalizeWordMany(word, operandEnvironment, context),
     );
     if (name.kind === 'literal' && environment.functions.has(name.value)) {
       this.#invokeFunction(name.value, suffix, assignmentEffects, environment, context);
       return;
     }
     if (name.kind === 'literal' && environment.aliases.has(name.value)) {
-      this.#invokeAlias(name.value, suffix, environment, context, rangeOf(command));
+      this.#invokeAlias(name.value, suffix, operandEnvironment, context, rangeOf(command));
       return;
     }
     const invocation = this.#emitInvocation(
@@ -571,10 +663,10 @@ class BashAnalyzer {
     const inlineShellSource = this.#execution.inspectShellInput(
       invocation,
       command.redirects,
-      environment,
+      operandEnvironment,
       context,
     );
-    this.#execution.inspectWrapper(invocation, environment, context, inlineShellSource);
+    this.#execution.inspectWrapper(invocation, operandEnvironment, context, inlineShellSource);
     this.#applyVariableBuiltin(invocation, environment);
     if (
       assignmentEffects.some((effect) => effect.name === 'CDPATH') &&
@@ -667,6 +759,18 @@ class BashAnalyzer {
       return bound;
     }
     if (wordIsStatic(word)) {
+      if (word.text.startsWith('~')) {
+        const home = environment.bindings.get('HOME');
+        const known =
+          /^(?:~$|~\/)/u.test(word.value) && home?.kind === 'literal' && home.value.startsWith('/');
+        return {
+          source: word.text,
+          value: known ? home.value + word.value.slice(1) : DYNAMIC_VALUE,
+          kind: known ? 'literal' : 'dynamic',
+          range: rangeOf(word),
+          quoted: (word.parts ?? []).some((part) => isQuotedPart(part)),
+        };
+      }
       return {
         source: word.text,
         value: word.value,
@@ -742,6 +846,9 @@ class BashAnalyzer {
     environment: Environment,
     context: VisitContext,
   ): void {
+    if (part.parameter === 'HOME' && ['=', ':='].includes(part.operator ?? '')) {
+      environment.bindings.delete('HOME');
+    }
     for (const child of part.indexParts ?? []) {
       this.#visitWordPart(child, environment, context);
     }
@@ -767,6 +874,9 @@ class BashAnalyzer {
   ): void {
     if (expression === undefined) {
       return;
+    }
+    if (JSON.stringify(expression).includes('HOME')) {
+      environment.bindings.delete('HOME');
     }
     switch (expression.type) {
       case 'ArithmeticBinary': {
@@ -911,7 +1021,9 @@ class BashAnalyzer {
     const tokens = words.map((word) => word.value);
     const flags = tokens.slice(1).filter((token) => token.startsWith('-') && token !== '-');
     const args = tokens.slice(1).filter((token) => !token.startsWith('-') || token === '-');
+    const home = environment.bindings.get('HOME');
     const invocation: ShellInvocation = {
+      ...(home?.kind === 'literal' && { home: home.value }),
       cwd: environment.cwd,
       unverifiedStartup: environment.unverifiedStartup,
       id: this.#nextInvocationId,
@@ -1102,6 +1214,7 @@ class BashAnalyzer {
       environment,
     );
     if (invocation !== null) {
+      this.#applyVariableBuiltin(invocation, environment);
       this.#execution.inspectWrapper(
         invocation,
         environment,
@@ -1151,6 +1264,17 @@ class BashAnalyzer {
         invocation.range,
       );
     }
+    if (['command', 'builtin'].includes(invocation.head)) {
+      const words = invocation.words.slice(skipHeadRenamingPrefix(invocation));
+      const [head] = words;
+      if (head?.kind === 'literal') {
+        this.#applyVariableBuiltin({ ...invocation, head: head.value, words }, environment);
+      }
+      return;
+    }
+    if (mayMutateHomeIndirectly(invocation)) {
+      environment.bindings.delete('HOME');
+    }
     if (invocation.head === 'unset') {
       for (const word of invocation.words.slice(1)) {
         if (/^[A-Za-z_][A-Za-z0-9_]*$/u.test(word.value)) {
@@ -1171,8 +1295,10 @@ class BashAnalyzer {
         if (invocation.head === 'local') {
           functionScope?.localNames.add(name);
         }
+        const previous = environment.bindings.get(name);
         environment.temps.delete(name);
         environment.bindings.delete(name);
+        restoreExportedHome(invocation, word, previous, environment);
       }
     }
   }

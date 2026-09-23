@@ -6,7 +6,7 @@ import { PipelineInputInspector } from './pipeline-inputs';
 import { rangeOf } from './static-command';
 import { inspectToolWrapper } from './tool-wrappers';
 import type { ExecutionCarrierAlias, ShellInvocation, ShellWord } from './types';
-import { DYNAMIC_VALUE, type Environment } from './values';
+import { cloneEnvironment, DYNAMIC_VALUE, type Environment } from './values';
 import {
   FD_EXEC_FLAGS,
   FD_PLACEHOLDERS,
@@ -24,6 +24,32 @@ import {
   skipOptions,
   type PrefixWrapper,
 } from './wrappers';
+
+const wrapperEnvironment = (
+  invocation: ShellInvocation,
+  environment: Environment,
+  start: number,
+): Environment => {
+  const child = cloneEnvironment(environment);
+  if (invocation.head === 'env') {
+    for (const word of invocation.words.slice(1, start)) {
+      if (
+        ['-i', '--ignore-environment', '-', 'HOME', '--unset=HOME', '-uHOME'].includes(word.value)
+      ) {
+        child.bindings.delete('HOME');
+      }
+      if (word.value.startsWith('HOME=') || /^['"]?HOME=/u.test(word.source)) {
+        child.bindings.delete('HOME');
+        if (word.kind === 'literal') {
+          child.bindings.set('HOME', { ...word, value: word.value.slice(5) });
+        }
+      }
+    }
+  } else if (['sudo', 'su', 'doas'].includes(invocation.head)) {
+    child.bindings.delete('HOME');
+  }
+  return child;
+};
 
 class ExecutionInspector {
   readonly #carriers: ExecutionCarriers;
@@ -208,7 +234,12 @@ class ExecutionInspector {
   ): void {
     if (HEAD_RENAMING_HEADS.has(invocation.head)) {
       const start = skipHeadRenamingPrefix(invocation);
-      this.#host.emitSynthetic(invocation.words.slice(start), invocation, environment, context);
+      this.#host.emitSynthetic(
+        invocation.words.slice(start),
+        invocation,
+        wrapperEnvironment(invocation, environment, start),
+        context,
+      );
     } else if (invocation.head === 'fd' || invocation.head === 'fdfind') {
       this.#inspectExecFlag(invocation, FD_EXEC_FLAGS, FD_PLACEHOLDERS, environment, context);
     } else if (invocation.head === 'find' || invocation.head === 'gfind') {
