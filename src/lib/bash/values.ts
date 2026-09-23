@@ -13,6 +13,7 @@ interface TrustedTempValue {
 interface Environment {
   cwd: string | null;
   unverifiedStartup: boolean;
+  checkedStartup: boolean;
   directoryStack: (string | null)[];
   readonly aliases: Map<string, string>;
   backgroundPidAvailable: boolean;
@@ -40,6 +41,7 @@ const basename = (value: string): string => {
 const emptyEnvironment = (): Environment => ({
   cwd: null,
   unverifiedStartup: false,
+  checkedStartup: false,
   directoryStack: [],
   aliases: new Map(),
   backgroundPidAvailable: false,
@@ -51,6 +53,7 @@ const emptyEnvironment = (): Environment => ({
 const cloneEnvironment = (environment: Environment): Environment => ({
   cwd: environment.cwd,
   unverifiedStartup: environment.unverifiedStartup,
+  checkedStartup: environment.checkedStartup,
   directoryStack: [...environment.directoryStack],
   aliases: new Map(environment.aliases),
   backgroundPidAvailable: environment.backgroundPidAvailable,

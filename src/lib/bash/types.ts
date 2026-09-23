@@ -43,6 +43,7 @@ interface ShellInvocation {
   readonly home?: string;
   readonly cwd: string | null;
   readonly unverifiedStartup?: boolean;
+  readonly checkedStartup?: boolean;
   readonly id: number;
   readonly head: string;
   readonly words: readonly ShellWord[];

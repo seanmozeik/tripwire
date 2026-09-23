@@ -8,6 +8,7 @@ import { interpreterInput } from '../lib/code/carriers';
 import type { CodeLanguage, CodeOperation } from '../lib/code/types';
 import type { SafePathsConfig } from '../lib/config';
 import { allow, deny, merge, type Decision } from '../lib/decision';
+import { STARTUP_VARIABLES } from '../lib/interpreter-startup';
 import { applyShellBypass } from './bash-bypass';
 import { transferDecision } from './file-transfer';
 import { pathProtect } from './path-protect';
@@ -20,16 +21,30 @@ interface CodePolicy {
   readonly remoteHeads: ReadonlySet<string>;
 }
 
-const STARTUP_VARIABLES = new Set([
-  'NODE_OPTIONS',
-  'NODE_PATH',
-  'PYTHONPATH',
-  'PYTHONHOME',
-  'PYTHONSTARTUP',
-  'LD_PRELOAD',
-  'DYLD_INSERT_LIBRARIES',
-  'BUN_OPTIONS',
-]);
+const miseContextChanged = (program: ShellProgram): boolean => {
+  if (
+    program.redirects.some((redirect) => ['>', '>>', '>&', '<>', '&>', '&>>'].includes(redirect.op))
+  ) {
+    return true;
+  }
+  if (
+    program.environmentAssignments?.some(
+      (name) => name.startsWith('MISE_') || name.startsWith('XDG_') || name === 'HOME',
+    ) === true
+  ) {
+    return true;
+  }
+  let sources = 0;
+  for (const command of program.invocations) {
+    if (interpreterInput(command).kind === 'source') {
+      sources += 1;
+    } else if (!['mise', 'cd', 'pwd', 'printf', 'echo', 'true', 'false'].includes(command.head)) {
+      // Another executable can change configuration before mise reads it.
+      return true;
+    }
+  }
+  return sources > 1;
+};
 
 const uncertainContext = (program: ShellProgram, policy: CodePolicy): boolean => {
   if (program.environmentAssignments?.some((name) => STARTUP_VARIABLES.has(name)) === true) {
@@ -191,7 +206,11 @@ const embeddedCode = (program: ShellProgram, policy: CodePolicy): Decision => {
       decisions.push(policy.inspectCommand(input.command, localPolicy.cwd));
     }
     if (input.kind === 'source') {
-      if (uncertainContext(program, policy) || invocation.unverifiedStartup === true) {
+      if (
+        uncertainContext(program, policy) ||
+        invocation.unverifiedStartup === true ||
+        (invocation.checkedStartup === true && miseContextChanged(program))
+      ) {
         return codeDeny(
           'Interpreter startup, working directory, or remote filesystem state is not verified.',
         );

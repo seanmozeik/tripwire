@@ -1,3 +1,4 @@
+import { miseStartupSafe } from '../mise/startup';
 import { resolveDirectory } from './cwd';
 import type { ExecutionContext, ExecutionHost } from './execution-types';
 import type { ShellInvocation } from './types';
@@ -14,6 +15,7 @@ interface WrapperSpec {
   readonly operands?: number;
   readonly delimiter?: boolean;
   readonly startup?: boolean;
+  readonly checkStartup?: (invocation: ShellInvocation, environment: Environment) => boolean;
   readonly shell?: boolean;
 }
 
@@ -29,10 +31,10 @@ const specs: Readonly<Record<string, WrapperSpec>> = {
   },
   mise: {
     subcommands: ['exec', 'x'],
-    values: ['-C', '--cd', '-j', '--jobs'],
+    values: ['-C', '--cd', '-j', '--jobs', '-E', '--env'],
     cwdOptions: ['-C', '--cd'],
     delimiter: true,
-    startup: true,
+    checkStartup: miseStartupSafe,
   },
   direnv: { subcommands: ['exec'], operands: 1, cwdOperand: 0, startup: true },
   dotenv: {
@@ -195,6 +197,11 @@ const inspectToolWrapper = (
     child.bindings.delete('HOME');
   }
   const index = wrapperCommand(invocation, spec, child);
+  child.checkedStartup ||= spec.checkStartup !== undefined;
+  if (index !== null && spec.checkStartup !== undefined && !spec.checkStartup(invocation, child)) {
+    child.unverifiedStartup = true;
+    child.bindings.delete('HOME');
+  }
   if (index === null || invocation.words[index] === undefined) {
     host.addDiagnostic(
       'dynamic-shell-source',

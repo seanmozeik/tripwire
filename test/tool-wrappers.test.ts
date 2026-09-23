@@ -1,4 +1,5 @@
 import * as bunTest from 'bun:test';
+import { tmpdir } from 'node:os';
 
 import { decideBash } from '../src/dispatch';
 
@@ -39,7 +40,9 @@ bunTest.test('shell text wrapper and unknown flags', () => {
   bunTest.expect(decideBash('nix-shell --run "rm -rf /"').kind).toBe('deny');
   bunTest.expect(decideBash('nix-shell --run "printf example"').kind).toBe('allow');
   bunTest.expect(decideBash('mise exec --unknown -- printf example').kind).toBe('deny');
-  bunTest.expect(decideBash('mise exec -- python3 -c "print(1)"').kind).toBe('deny');
+  bunTest
+    .expect(decideBash('mise exec -- python3 -c "print(1)"', {}, { cwd: tmpdir() }).kind)
+    .toBe('allow');
   bunTest.expect(decideBash('caffeinate -i python3 -c "print(1)"').kind).toBe('allow');
 });
 
