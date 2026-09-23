@@ -593,6 +593,52 @@ const isReadOnlyInvocation = (invocation: GitInvocation): boolean => {
   if (READ_ONLY.has(invocation.subcommand)) {
     return true;
   }
+  if (invocation.subcommand === 'branch') {
+    const args = invocation.subArgs;
+    const readFlags = new Set([
+      '--show-current',
+      '--list',
+      '-l',
+      '-v',
+      '-vv',
+      '-a',
+      '-r',
+      '--all',
+      '--remotes',
+      '--verbose',
+      '--no-color',
+      '--color',
+      '--no-column',
+      '--column',
+    ]);
+    const filters = new Set([
+      '--contains',
+      '--no-contains',
+      '--merged',
+      '--no-merged',
+      '--points-at',
+      '--sort',
+      '--format',
+    ]);
+    let listing = args.length === 0;
+    for (let index = 0; index < args.length; index += 1) {
+      const arg = args[index] ?? '';
+      if (readFlags.has(arg) || /^-[avr]+$/u.test(arg)) {
+        listing = true;
+      } else if (filters.has(arg.split('=')[0] ?? '')) {
+        listing = true;
+        if (!arg.includes('=') && args[index + 1]?.startsWith('-') === false) {
+          index += 1;
+        }
+      } else if (
+        arg.startsWith('-') ||
+        !args.some((value) => value === '--list' || value === '-l')
+      ) {
+        return false;
+      }
+    }
+    return listing;
+  }
   if (invocation.subcommand !== 'remote') {
     return false;
   }
@@ -613,6 +659,8 @@ const bashGit = (program: ShellProgram, config: GitConfig): Decision => {
       }
       if (
         (!isReadOnlyInvocation(inv) ||
+          (inv.subcommand === 'branch' &&
+            seg.words.slice(inv.subcommandIndex + 1).some((word) => word.kind === 'dynamic')) ||
           inv.subcommand === 'reflog' ||
           inv.subcommand === 'symbolic-ref') &&
         seg.words.slice(1).some((word) => word.kind === 'dynamic')

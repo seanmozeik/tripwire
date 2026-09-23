@@ -240,7 +240,17 @@ const forwardedInput = (
     ? !hasScriptOperand(child)
     : ['rm', 'find', 'env', 'uv'].includes(head);
   return input.kind === 'irrelevant'
-    ? { kind: 'command', command: words.map((word) => word.source).join(' '), requiresContext }
+    ? {
+        kind: 'command',
+        command: words
+          .map((word) =>
+            word.kind === 'literal'
+              ? `'${word.value.replaceAll("'", String.raw`'\''`)}'`
+              : `\${TRIPWIRE_UNRESOLVED}`,
+          )
+          .join(' '),
+        requiresContext,
+      }
     : input;
 };
 
