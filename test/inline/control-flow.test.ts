@@ -1,8 +1,7 @@
 import * as bunTest from 'bun:test';
 
-import { decideBash } from '../src/dispatch';
-import { analyzeCode } from '../src/lib/code/analyze';
-import type { CodeLanguage, CodeOperation } from '../src/lib/code/types';
+import { decideBash } from '../../src/dispatch';
+import type { CodeLanguage } from '../../src/lib/code/types';
 
 const quote = (value: string): string => `'${value.replaceAll("'", String.raw`'\''`)}'`;
 const denied: readonly [CodeLanguage, string][] = [
@@ -99,35 +98,4 @@ bunTest.test.each(denied)('denies effects through %s state: %s', (language, sour
   bunTest
     .expect(decideBash(`${language === 'python' ? 'python3 -c' : 'node -e'} ${quote(source)}`).kind)
     .toBe('deny');
-});
-const transfers: readonly [CodeLanguage, string, readonly CodeOperation['kind'][]][] = [
-  [
-    'python',
-    'from pathlib import Path\nPath("/tmp/example-a").rename("/tmp/example-b")',
-    ['process'],
-  ],
-  [
-    'python',
-    'from pathlib import Path\nPath("/tmp/example-a").replace("/tmp/example-b")',
-    ['process'],
-  ],
-  ['python', 'from pathlib import Path\nPath("example-a").symlink_to("example-b")', ['process']],
-  ['python', 'import os\nos.rename("/tmp/example-a","/tmp/example-b")', ['process']],
-  ['python', 'import shutil\nshutil.copy("example-a","example-b")', ['process']],
-  ['python', 'import shutil\nshutil.move("/tmp/example-a","/tmp/example-b")', ['process']],
-  ['javascript', 'require("fs").renameSync("/tmp/example-a","/tmp/example-b")', ['process']],
-  ['javascript', 'require("fs").copyFileSync("example-a","example-b")', ['process']],
-  ['javascript', 'require("fs").mkdirSync("example")', ['write']],
-  ['javascript', 'require("fs").symlinkSync("example-a","example-b")', ['process']],
-];
-bunTest.test.each(transfers)('extracts %s file effects: %s', (language, source, kinds) => {
-  const report = analyzeCode(language, source);
-  bunTest.expect(report.gap).toBeNull();
-  bunTest.expect(report.operations.map((operation) => operation.kind)).toEqual([...kinds]);
-  const runner = language === 'python' ? 'python3 -c' : 'node -e';
-  bunTest.expect(decideBash(`${runner} ${quote(source)}`).kind).toBe('allow');
-  const dangerous = source
-    .replaceAll('example-b', '.env')
-    .replaceAll('mkdirSync("example")', 'mkdirSync(".ssh/example")');
-  bunTest.expect(decideBash(`${runner} ${quote(dangerous)}`).kind).toBe('deny');
 });

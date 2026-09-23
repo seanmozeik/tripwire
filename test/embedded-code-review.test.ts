@@ -83,7 +83,12 @@ bunTest.describe('adversarial review regressions (policy-only)', () => {
     bunTest
       .expect(report.operations)
       .toEqual([
-        { kind: 'delete', path: '/protected', cwd: '.', range: { start: 37, end: source.length } },
+        {
+          kind: 'delete',
+          path: '/protected',
+          cwd: process.cwd(),
+          range: { start: 37, end: source.length },
+        },
       ]);
   });
 

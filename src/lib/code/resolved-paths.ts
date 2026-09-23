@@ -2,36 +2,32 @@ import { readlinkSync } from 'node:fs';
 import path from 'node:path';
 
 import { resolveWritePath } from '../path-resolution';
+import { recordOperation, type OperationContext } from './operations';
 import { failInspection } from './syntax';
-import type { CodeOperation, CodeRange, Value } from './types';
+import type { CodeOperation, Value } from './types';
 
 const overlaps = (first: string, second: string): boolean =>
   first === second || first.startsWith(`${second}/`) || second.startsWith(`${first}/`);
 
 const changedPaths = (operation: CodeOperation): readonly string[] | null => {
-  if (operation.kind !== 'process') {
-    return operation.kind === 'read' || operation.kind === 'json-module' ? [] : [operation.path];
+  if (operation.kind === 'process') {
+    return operation.mutations;
   }
-  const [command] = operation.argv;
-  if (command === undefined || !['mv', 'cp', 'ln'].includes(command)) {
-    return null;
+  if (operation.kind === 'transfer') {
+    return operation.command === 'mv'
+      ? [...operation.sources, operation.destination]
+      : [operation.destination];
   }
-  return command === 'mv'
-    ? operation.argv.slice(operation.argv.indexOf('--') + 1)
-    : operation.argv.slice(-1);
+  return operation.kind === 'read' || operation.kind === 'json-module' ? [] : [operation.path];
 };
 
 const resolvePathCall = (
   submitted: string,
   method: string,
   args: readonly Value[],
-  context: {
-    readonly operations: CodeOperation[];
-    readonly range: CodeRange;
-    readonly cwd?: string;
-  },
+  context: OperationContext,
 ): Value => {
-  if (args.length > 0 || context.cwd === undefined) {
+  if (args.length > 0 || context.cwd === null) {
     return failInspection('Path resolution needs a known working directory and checked options.');
   }
   const target = path.resolve(context.cwd, submitted);
@@ -41,7 +37,7 @@ const resolvePathCall = (
     if (
       affected === null ||
       affected.some((value) => {
-        const mutation = path.resolve(operation.cwd ?? context.cwd ?? '.', value);
+        const mutation = path.resolve(operation.cwd, value);
         return overlaps(target, mutation) || overlaps(actual, resolveWritePath(mutation));
       })
     ) {
@@ -50,7 +46,7 @@ const resolvePathCall = (
       );
     }
   }
-  context.operations.push({ kind: 'read', path: target, range: context.range });
+  recordOperation(context, { kind: 'read', path: target, range: context.range });
   if (method === 'resolve') {
     return { kind: 'path', path: actual };
   }

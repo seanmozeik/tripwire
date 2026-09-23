@@ -9,13 +9,14 @@ import type { CodeLanguage, CodeOperation } from '../lib/code/types';
 import type { SafePathsConfig } from '../lib/config';
 import { allow, deny, merge, type Decision } from '../lib/decision';
 import { applyShellBypass } from './bash-bypass';
+import { transferDecision } from './file-transfer';
 import { pathProtect } from './path-protect';
 import { readProtect } from './read-protect';
 
 interface CodePolicy {
   readonly safePaths: SafePathsConfig;
-  readonly cwd: string;
-  readonly inspectCommand: (command: string, cwd?: string) => Decision;
+  readonly cwd: string | null;
+  readonly inspectCommand: (command: string, cwd: string | null) => Decision;
   readonly remoteHeads: ReadonlySet<string>;
 }
 
@@ -90,7 +91,7 @@ const canonicalPath = (target: string): string | null => {
 };
 
 const safeDeletion = (target: string, policy: CodePolicy): boolean => {
-  if (target === '' || target.includes('\0')) {
+  if (policy.cwd === null || target === '' || target.includes('\0')) {
     return false;
   }
   const resolved = canonicalPath(path.resolve(policy.cwd, target));
@@ -116,14 +117,8 @@ const quoteArgument = (argument: string): string =>
   `'${argument.replaceAll("'", String.raw`'\''`)}'`;
 
 const operationDecision = (operation: CodeOperation, originalPolicy: CodePolicy): Decision => {
-  const policy = {
-    ...originalPolicy,
-    cwd:
-      operation.cwd === undefined
-        ? originalPolicy.cwd
-        : path.resolve(originalPolicy.cwd, operation.cwd),
-  };
-  if (operation.cwd !== undefined && policy.cwd !== originalPolicy.cwd) {
+  const policy = { ...originalPolicy, cwd: operation.cwd };
+  if (policy.cwd !== originalPolicy.cwd) {
     try {
       if (!statSync(policy.cwd).isDirectory()) {
         return codeDeny('The operation has an unresolved working directory.');
@@ -134,6 +129,14 @@ const operationDecision = (operation: CodeOperation, originalPolicy: CodePolicy)
   }
   if (operation.kind === 'process') {
     return policy.inspectCommand(operation.argv.map(quoteArgument).join(' '), policy.cwd);
+  }
+  if (operation.kind === 'transfer') {
+    return transferDecision(
+      operation.command,
+      operation.sources,
+      operation.destination,
+      operation.cwd,
+    );
   }
   const target = path.resolve(policy.cwd, operation.path);
   if (operation.kind === 'json-module') {
@@ -177,7 +180,7 @@ const embeddedCode = (program: ShellProgram, policy: CodePolicy): Decision => {
   const decisions: Decision[] = [];
   for (const invocation of program.invocations) {
     const input = interpreterInput(invocation);
-    const localPolicy = { ...policy, cwd: invocation.cwd ?? policy.cwd };
+    const localPolicy = { ...policy, cwd: invocation.cwd };
     if (input.kind === 'blocked') {
       decisions.push(applyShellBypass(program, codeDeny(input.reason)));
     }
@@ -192,15 +195,6 @@ const embeddedCode = (program: ShellProgram, policy: CodePolicy): Decision => {
         return codeDeny(
           'Interpreter startup, working directory, or remote filesystem state is not verified.',
         );
-      }
-      const report = analyzeCode(input.language, input.source, input.argv, localPolicy.cwd);
-      if (
-        invocation.cwd === null &&
-        report.operations.some(
-          (operation) => operation.kind === 'process' || !path.isAbsolute(operation.path),
-        )
-      ) {
-        return codeDeny('An operation depends on an unresolved working directory.');
       }
       decisions.push(inspectCode(input.language, input.source, localPolicy, input.argv));
     }

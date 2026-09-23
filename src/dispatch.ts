@@ -261,22 +261,19 @@ const collectBashRules = (
   return rules;
 };
 
-const codePolicy = (config: ResolvedConfig, cwd: string | undefined, depth = 0): CodePolicy => ({
+const codePolicy = (
+  config: ResolvedConfig,
+  cwd: string | null | undefined,
+  depth = 0,
+): CodePolicy => ({
   safePaths: config.safePaths,
   remoteHeads: new Set([
     'ssh',
     ...config.shell.executionCarrierAliases.map((alias) => alias.command[0] ?? ''),
   ]),
-  cwd: cwd ?? process.cwd(),
-  inspectCommand: (command, commandCwd = cwd) =>
-    runRulesSync(
-      collectBashRules(
-        command,
-        config,
-        commandCwd === undefined ? {} : { cwd: commandCwd },
-        depth + 1,
-      ),
-    ),
+  cwd: cwd === undefined ? process.cwd() : cwd,
+  inspectCommand: (command, commandCwd) =>
+    runRulesSync(collectBashRules(command, config, { cwd: commandCwd }, depth + 1)),
 });
 
 const collectExecutableToolRules = (

@@ -1,5 +1,6 @@
 import type { SyntaxNode } from '@lezer/common';
 
+import type { BaseClassContract } from './class-contracts';
 import type { Scope } from './scope';
 
 type CodeLanguage = 'python' | 'javascript' | 'typescript';
@@ -9,14 +10,27 @@ interface CodeRange {
   readonly end: number;
 }
 
-type CodeOperation = (
+type CodeEffect =
   | {
       readonly kind: 'read' | 'write' | 'delete' | 'truncate' | 'json-module';
       readonly path: string;
       readonly range: CodeRange;
     }
-  | { readonly kind: 'process'; readonly argv: readonly string[]; readonly range: CodeRange }
-) & { readonly cwd?: string };
+  | {
+      readonly kind: 'transfer';
+      readonly command: 'mv' | 'cp' | 'ln';
+      readonly sources: readonly string[];
+      readonly destination: string;
+      readonly range: CodeRange;
+    }
+  | {
+      readonly kind: 'process';
+      readonly argv: readonly string[];
+      readonly mutations: readonly string[] | null;
+      readonly range: CodeRange;
+    };
+
+type CodeOperation = CodeEffect & { readonly cwd: string };
 
 interface CodeReport {
   readonly operations: readonly CodeOperation[];
@@ -35,14 +49,19 @@ interface ClosureParameter {
 type Value =
   | {
       readonly kind: 'class';
-      readonly htmlParser?: boolean;
+      readonly contract?: BaseClassContract;
       readonly methods: ReadonlyMap<string, Value>;
     }
   | {
       readonly kind: 'instance';
-      readonly htmlParser?: boolean;
+      readonly contract?: BaseClassContract;
       readonly methods: ReadonlyMap<string, Value>;
       readonly entries: Map<string, Value>;
+    }
+  | {
+      readonly kind: 'contract-method';
+      readonly receiver: Extract<Value, { kind: 'instance' }>;
+      readonly name: string;
     }
   | { readonly kind: 'bound-method'; readonly fn: Value; readonly receiver: Value }
   | { readonly kind: 'builtin'; readonly name: string }
@@ -71,4 +90,12 @@ type Value =
   | { readonly kind: 'object'; opaque?: boolean; readonly entries: ReadonlyMap<string, Value> }
   | { readonly kind: 'unknown' };
 
-export type { ClosureParameter, CodeLanguage, CodeOperation, CodeRange, CodeReport, Value };
+export type {
+  ClosureParameter,
+  CodeLanguage,
+  CodeEffect,
+  CodeOperation,
+  CodeRange,
+  CodeReport,
+  Value,
+};

@@ -12,7 +12,7 @@ bunTest.describe('bounded abstract data analysis', () => {
     bunTest
       .expect(
         report.operations.map((operation) =>
-          operation.kind === 'process' ? operation : { kind: operation.kind, path: operation.path },
+          'path' in operation ? { kind: operation.kind, path: operation.path } : operation,
         ),
       )
       .toEqual([
@@ -28,9 +28,7 @@ bunTest.describe('bounded abstract data analysis', () => {
     bunTest.expect(report.gap).toBeNull();
     bunTest
       .expect(
-        report.operations.map((operation) =>
-          operation.kind === 'process' ? operation.argv : operation.path,
-        ),
+        report.operations.map((operation) => ('path' in operation ? operation.path : operation)),
       )
       .toEqual(['dist/first', '/protected']);
   });
@@ -42,9 +40,7 @@ bunTest.describe('bounded abstract data analysis', () => {
     bunTest.expect(report.gap).toBeNull();
     bunTest
       .expect(
-        report.operations.map((operation) =>
-          operation.kind === 'process' ? operation.argv : operation.path,
-        ),
+        report.operations.map((operation) => ('path' in operation ? operation.path : operation)),
       )
       .toEqual(['dist/first', '/protected']);
   });

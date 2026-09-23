@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
-import path from 'node:path';
 
 import type { ShellInvocation, ShellProgram } from '../lib/bash';
+import { resolveShellPath } from '../lib/bash/cwd';
 import { type Decision, allow, deny } from '../lib/decision';
 import { resolveWritePath } from './path-protect';
 
@@ -29,13 +29,14 @@ const findChangeDir = (seg: ShellInvocation): string | null => {
 
 const isUnsafeExtractDest = (
   dest: string,
-  cwd: string | null | undefined,
+  cwd: string | null,
   home: string | undefined,
 ): boolean => {
-  if (cwd === null && !path.isAbsolute(dest)) {
+  const target = resolveShellPath(dest, cwd);
+  if (target === null) {
     return true;
   }
-  const resolved = resolveWritePath(path.resolve(cwd ?? process.cwd(), dest));
+  const resolved = resolveWritePath(target);
   return (
     resolved === '/' ||
     resolved === (home ?? homedir()) ||

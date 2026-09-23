@@ -1,7 +1,7 @@
 import * as bunTest from 'bun:test';
 
-import { analyzeCode } from '../src/lib/code/analyze';
-import type { CodeLanguage } from '../src/lib/code/types';
+import { analyzeCode } from '../../src/lib/code/analyze';
+import type { CodeLanguage } from '../../src/lib/code/types';
 
 const javascript = [
   'console.log(new Set([1,2]).size,new Map().set("x",1).get("x"),new URL("https://example.com").hostname,Math.PI,Buffer.from("example").toString("utf8"))',

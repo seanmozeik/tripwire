@@ -6,12 +6,17 @@ import { children, failInspection } from './syntax';
 import type { Value } from './types';
 import { unknown } from './values';
 
+interface EvaluationSnapshot {
+  readonly scopes: ScopeSnapshot;
+  readonly cwd: string | null;
+}
+
 interface ControlContext {
   readonly bindings: Scope;
-  readonly repeat: (visit: () => void) => void;
-  readonly snapshot: () => ScopeSnapshot;
-  readonly restore: (snapshot: ScopeSnapshot) => void;
-  readonly join: (states: readonly ScopeSnapshot[]) => void;
+  readonly repeat: (body: SyntaxNode, visit: () => void) => void;
+  readonly snapshot: () => EvaluationSnapshot;
+  readonly restore: (snapshot: EvaluationSnapshot) => void;
+  readonly join: (states: readonly EvaluationSnapshot[]) => void;
   readonly text: (node: SyntaxNode) => string;
   readonly evaluate: (node: SyntaxNode) => Value;
   readonly statement: (node: SyntaxNode) => void;
@@ -19,7 +24,7 @@ interface ControlContext {
 
 const inspectBranches = (node: SyntaxNode, context: ControlContext): void => {
   let before = context.snapshot();
-  const states: ScopeSnapshot[] = [before];
+  const states: EvaluationSnapshot[] = [before];
   for (const part of children(node).filter(
     (child) => !['if', 'elif', 'else', '(', ')'].includes(child.name),
   )) {
@@ -136,14 +141,11 @@ const iterate = (
     return failInspection('Iteration needs bounded literals or inert JSON data.');
   }
   const before = context.snapshot();
-  const states: ScopeSnapshot[] = [before];
+  const states: EvaluationSnapshot[] = [before];
   const repeated =
     iterable.kind !== 'list' ||
     iterable.opaque === true ||
     (body !== undefined && containsLoopJump(body));
-  if (repeated && body !== undefined) {
-    forgetLoopWrites(body, context);
-  }
   // Empty bodies are also checked; unreachable syntax cannot hide operations.
   for (const value of values.length === 0 ? [unknown] : values) {
     bindTarget(target, value, context);
@@ -153,7 +155,7 @@ const iterate = (
         failInspection('Mutation of an iterated container changes the iteration bounds.');
       }
     } else {
-      context.repeat(visit);
+      context.repeat(body ?? input, visit);
     }
     states.push(context.snapshot());
   }
@@ -225,48 +227,54 @@ const inspectComprehension = (parts: readonly SyntaxNode[], context: ControlCont
     return failInspection('Only single-generator comprehensions are inspected.');
   }
   const before = context.snapshot();
-  iterate(parts[index + 1], parts[index + 3], context, () => {
-    if (parts.length === 7) {
-      const [, candidate] = parts.slice(5);
-      const condition = candidate ?? failInspection('Missing comprehension filter.');
-      if (parts[5]?.name !== 'if') {
-        failInspection('Unsupported comprehension filter.');
-      }
-      requireData([context.evaluate(condition)]);
-      const [left, operator, right] = children(condition);
-      const target = parts[index + 1];
-      if (
-        condition.name === 'BinaryExpression' &&
-        left?.name === 'VariableName' &&
-        operator !== undefined &&
-        context.text(operator) === 'in' &&
-        right !== undefined &&
-        target !== undefined &&
-        context.text(left) === context.text(target)
-      ) {
-        const allowed = context.evaluate(right);
+  iterate(
+    parts[index + 1],
+    parts[index + 3],
+    context,
+    () => {
+      if (parts.length === 7) {
+        const [, candidate] = parts.slice(5);
+        const condition = candidate ?? failInspection('Missing comprehension filter.');
+        if (parts[5]?.name !== 'if') {
+          failInspection('Unsupported comprehension filter.');
+        }
+        requireData([context.evaluate(condition)]);
+        const [left, operator, right] = children(condition);
+        const target = parts[index + 1];
         if (
-          allowed.kind === 'list' &&
-          allowed.items.length > 0 &&
-          allowed.items.length <= 128 &&
-          allowed.items.every((value) => value.kind === 'string')
+          condition.name === 'BinaryExpression' &&
+          left?.name === 'VariableName' &&
+          operator !== undefined &&
+          context.text(operator) === 'in' &&
+          right !== undefined &&
+          target !== undefined &&
+          context.text(left) === context.text(target)
         ) {
-          const name = context.text(target);
-          const previous = context.bindings.get(name) ?? unknown;
-          for (const value of allowed.items) {
-            context.bindings.set(name, value);
-            requireData([context.evaluate(expression)]);
+          const allowed = context.evaluate(right);
+          if (
+            allowed.kind === 'list' &&
+            allowed.items.length > 0 &&
+            allowed.items.length <= 128 &&
+            allowed.items.every((value) => value.kind === 'string')
+          ) {
+            const name = context.text(target);
+            const previous = context.bindings.get(name) ?? unknown;
+            for (const value of allowed.items) {
+              context.bindings.set(name, value);
+              requireData([context.evaluate(expression)]);
+            }
+            context.bindings.set(name, previous);
+            return;
           }
-          context.bindings.set(name, previous);
-          return;
         }
       }
-    }
-    requireData([context.evaluate(expression)]);
-  });
+      requireData([context.evaluate(expression)]);
+    },
+    expression.parent ?? expression,
+  );
   context.restore(before);
   return data;
 };
 
 export { forgetLoopWrites, inspectBranches, inspectComprehension, inspectLoop };
-export type { ControlContext };
+export type { ControlContext, EvaluationSnapshot };

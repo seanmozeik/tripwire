@@ -5,6 +5,13 @@ import type { ShellInvocation, ShellWord } from './types';
 import type { Environment } from './values';
 import { skipHeadRenamingPrefix } from './wrappers';
 
+const resolveShellPath = (target: string, cwd: string | null): string | null => {
+  if (path.isAbsolute(target)) {
+    return path.resolve(target);
+  }
+  return cwd === null ? null : path.resolve(cwd, target);
+};
+
 const resolveDirectory = (target: ShellWord | undefined, cwd: string | null): string | null => {
   if (target?.kind !== 'literal' || target.value === '-' || target.value === '') {
     return null;
@@ -14,8 +21,8 @@ const resolveDirectory = (target: ShellWord | undefined, cwd: string | null): st
     return null;
   }
   try {
-    const resolved = path.resolve(cwd ?? '/', expanded);
-    return statSync(resolved).isDirectory() ? resolved : null;
+    const resolved = resolveShellPath(expanded, cwd);
+    return resolved !== null && statSync(resolved).isDirectory() ? resolved : null;
   } catch {
     return null;
   }
@@ -68,4 +75,4 @@ const changeDirectory = (invocation: ShellInvocation, environment: Environment):
   environment.bindings.delete('PWD');
 };
 
-export { changeDirectory, resolveDirectory };
+export { changeDirectory, resolveDirectory, resolveShellPath };

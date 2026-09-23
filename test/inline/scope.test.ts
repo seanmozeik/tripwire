@@ -1,7 +1,7 @@
 import * as bunTest from 'bun:test';
 
-import { decideBash } from '../src/dispatch';
-import { inlineScopeFixtures } from './fixtures/inline-scope';
+import { decideBash } from '../../src/dispatch';
+import { inlineScopeFixtures } from '../fixtures/inline-scope';
 
 bunTest.test.each(inlineScopeFixtures)('$name', (fixture) => {
   const result = decideBash(fixture.command);

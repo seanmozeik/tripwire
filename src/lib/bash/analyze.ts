@@ -1,4 +1,5 @@
 import { homedir } from 'node:os';
+import path from 'node:path';
 
 import {
   parse,
@@ -338,7 +339,7 @@ class BashAnalyzer {
 
   analyze(script: ParsedScript): ShellProgram {
     const environment = emptyEnvironment();
-    environment.cwd = this.#options.cwd ?? process.cwd();
+    environment.cwd = this.#options.cwd === undefined ? process.cwd() : this.#options.cwd;
     const bindLiteral = (name: string, value: string): void => {
       environment.bindings.set(name, {
         source: value,
@@ -350,8 +351,8 @@ class BashAnalyzer {
       });
     };
     bindLiteral('HOME', this.#options.home ?? homedir());
-    if (this.#options.cwd !== undefined) {
-      bindLiteral('PWD', this.#options.cwd);
+    if (environment.cwd !== null) {
+      bindLiteral('PWD', environment.cwd);
     }
     for (const [index, value] of (this.#options.positionalArguments ?? []).entries()) {
       bindLiteral((index + 1).toString(), value);
@@ -543,7 +544,9 @@ class BashAnalyzer {
       environment.directoryStack = [];
     }
     const name = this.#normalizeWord(node.name, environment, context);
-    const values = node.wordlist.map((word) => this.#normalizeWord(word, environment, context));
+    const values = node.wordlist.flatMap((word) =>
+      this.#normalizeWordMany(word, environment, context),
+    );
     if (
       name.kind === 'literal' &&
       /^[A-Za-z_][A-Za-z0-9_]*$/u.test(name.value) &&
@@ -715,14 +718,24 @@ class BashAnalyzer {
     if (normalized.kind !== 'literal' || normalized.quoted || !/[*?[]/u.test(normalized.value)) {
       return [normalized];
     }
+    const cwd = path.isAbsolute(normalized.value)
+      ? path.parse(normalized.value).root
+      : environment.cwd;
+    if (normalized.value.includes('**') || cwd === null) {
+      return [{ ...normalized, kind: 'dynamic' }];
+    }
     try {
-      const matches = [
-        ...new Bun.Glob(normalized.value).scanSync({
-          cwd: environment.cwd ?? process.cwd(),
-          onlyFiles: false,
-          dot: true,
-        }),
-      ];
+      const matches: string[] = [];
+      for (const match of new Bun.Glob(normalized.value).scanSync({
+        cwd,
+        onlyFiles: false,
+        dot: true,
+      })) {
+        if (matches.length === 128) {
+          return [{ ...normalized, kind: 'dynamic' }];
+        }
+        matches.push(match);
+      }
       if (matches.length === 0) {
         return [normalized];
       }
@@ -738,7 +751,7 @@ class BashAnalyzer {
       }
       return expanded;
     } catch {
-      return [normalized];
+      return [{ ...normalized, kind: 'dynamic' }];
     }
   }
 
@@ -1146,6 +1159,7 @@ class BashAnalyzer {
         ...arguments_,
       ];
       const parent: ShellInvocation = {
+        cwd: environment.cwd,
         id: 0,
         head: name,
         words: [],

@@ -7,6 +7,7 @@ import {
   type ShellInvocation,
   type ShellProgram,
 } from '../lib/bash';
+import { resolveShellPath } from '../lib/bash/cwd';
 import type { SafePathsConfig } from '../lib/config';
 import { type Decision, allow, deny } from '../lib/decision';
 import { resolveWritePath } from './path-protect';
@@ -32,13 +33,13 @@ const safeTarget = (
   if (target === '' || target.includes('\0') || target.includes(DYNAMIC_VALUE)) {
     return false;
   }
-  if (!path.isAbsolute(target) && seg.cwd === null) {
+  const resolved = resolveShellPath(target, seg.cwd);
+  if (resolved === null) {
     return false;
   }
-  const cwd = seg.cwd ?? process.cwd();
-  const actual = resolveWritePath(path.resolve(cwd, target));
-  if (!path.isAbsolute(target) && isSafePathTarget(target, relative, [])) {
-    return isSafePathTarget(path.relative(resolveWritePath(cwd), actual), relative, []);
+  const actual = resolveWritePath(resolved);
+  if (seg.cwd !== null && !path.isAbsolute(target) && isSafePathTarget(target, relative, [])) {
+    return isSafePathTarget(path.relative(resolveWritePath(seg.cwd), actual), relative, []);
   }
   return isSafePathTarget(actual, [], absolute);
 };

@@ -1,13 +1,9 @@
 import type { CallSignature } from './arguments';
 import { data, requireData, text } from './data';
+import { recordOperation, type OperationContext } from './operations';
 import { failInspection } from './syntax';
-import type { CodeOperation, CodeRange, Value } from './types';
+import type { Value } from './types';
 import { valueString } from './values';
-
-interface ArchiveContext {
-  readonly operations: CodeOperation[];
-  readonly range: CodeRange;
-}
 
 const zipSignatures: Readonly<Record<string, CallSignature>> = {
   'zipfile.ZipFile': {
@@ -22,7 +18,7 @@ const archiveSignatures: Readonly<Record<string, CallSignature>> = {
   writestr: { parameters: ['zinfo_or_arcname', 'data'] },
 };
 
-const openArchive = (args: readonly Value[], context: ArchiveContext): Value => {
+const openArchive = (args: readonly Value[], context: OperationContext): Value => {
   if (args.length < 1 || args.length > 3) {
     return failInspection('ZIP constructor options are not inspected.');
   }
@@ -42,7 +38,7 @@ const openArchive = (args: readonly Value[], context: ArchiveContext): Value => 
   ) {
     return failInspection('ZIP compression must be a standard constant.');
   }
-  context.operations.push({
+  recordOperation(context, {
     kind: mode === 'r' ? 'read' : 'write',
     path: target,
     range: context.range,
@@ -54,7 +50,7 @@ const archiveCall = (
   archive: Extract<Value, { kind: 'archive' }>,
   member: string,
   args: readonly Value[],
-  context: ArchiveContext,
+  context: OperationContext,
 ): Value => {
   requireData(args);
   if (['close', 'namelist', 'testzip', 'printdir'].includes(member) && args.length === 0) {
@@ -64,14 +60,15 @@ const archiveCall = (
     return text;
   }
   if (member === 'write' && args.length >= 1 && args.length <= 2) {
-    context.operations.push(
+    recordOperation(
+      context,
       { kind: 'read', path: valueString(args[0]), range: context.range },
       { kind: 'write', path: archive.path, range: context.range },
     );
     return data;
   }
   if (member === 'writestr' && args.length === 2) {
-    context.operations.push({ kind: 'write', path: archive.path, range: context.range });
+    recordOperation(context, { kind: 'write', path: archive.path, range: context.range });
     return data;
   }
   if (member === 'extract' || member === 'extractall') {

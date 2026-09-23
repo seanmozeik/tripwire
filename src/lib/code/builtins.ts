@@ -3,13 +3,95 @@ import { failInspection } from './syntax';
 import { transpiler, transpile } from './transpiler';
 import type { Value } from './types';
 
+const builtinExceptions: ReadonlySet<string> = new Set([
+  'BaseException',
+  'BaseExceptionGroup',
+  'Exception',
+  'ExceptionGroup',
+  'ArithmeticError',
+  'AssertionError',
+  'AttributeError',
+  'BufferError',
+  'EOFError',
+  'ImportError',
+  'ModuleNotFoundError',
+  'LookupError',
+  'IndexError',
+  'KeyError',
+  'MemoryError',
+  'NameError',
+  'UnboundLocalError',
+  'OSError',
+  'BlockingIOError',
+  'ChildProcessError',
+  'ConnectionError',
+  'BrokenPipeError',
+  'ConnectionAbortedError',
+  'ConnectionRefusedError',
+  'ConnectionResetError',
+  'FileExistsError',
+  'FileNotFoundError',
+  'InterruptedError',
+  'IsADirectoryError',
+  'NotADirectoryError',
+  'PermissionError',
+  'ProcessLookupError',
+  'TimeoutError',
+  'ReferenceError',
+  'RuntimeError',
+  'NotImplementedError',
+  'RecursionError',
+  'StopIteration',
+  'StopAsyncIteration',
+  'SyntaxError',
+  'IndentationError',
+  'TabError',
+  'SystemError',
+  'TypeError',
+  'ValueError',
+  'UnicodeError',
+  'UnicodeDecodeError',
+  'UnicodeEncodeError',
+  'UnicodeTranslateError',
+  'ZeroDivisionError',
+  'FloatingPointError',
+  'OverflowError',
+  'SystemExit',
+  'KeyboardInterrupt',
+  'GeneratorExit',
+  'Warning',
+  'UserWarning',
+  'DeprecationWarning',
+  'PendingDeprecationWarning',
+  'SyntaxWarning',
+  'RuntimeWarning',
+  'FutureWarning',
+  'ImportWarning',
+  'UnicodeWarning',
+  'BytesWarning',
+  'ResourceWarning',
+  'EncodingWarning',
+  'EnvironmentError',
+  'IOError',
+  'Error',
+  'RangeError',
+  'EvalError',
+  'URIError',
+  'AggregateError',
+]);
+
+const isBuiltinException = (value: Value): boolean =>
+  value.kind === 'symbol'
+    ? builtinExceptions.has(value.name)
+    : value.kind === 'list' && value.opaque !== true && value.items.every(isBuiltinException);
+
 // Each entry is a callable contract. Import permission never authorizes a module's members.
 const pureMembers = {
   plistlib: ['loads', 'dumps'],
   util: ['isDeepStrictEqual'],
   'Bun.TOML': ['parse'],
   inspect: ['cleandoc'],
-  os: ['getcwd', 'tmpdir', 'homedir', 'platform', 'arch'],
+  os: ['tmpdir', 'homedir', 'platform', 'arch'],
   path: ['dirname', 'basename', 'extname'],
   math: [
     'ceil',
@@ -59,7 +141,7 @@ const pureMembers = {
     'combine',
   ],
   'datetime.date': ['today', 'fromtimestamp', 'fromisoformat'],
-  re: ['search', 'match', 'fullmatch', 'findall', 'finditer', 'split', 'escape', 'compile'],
+  re: ['search', 'match', 'fullmatch', 'findall', 'finditer', 'split', 'escape'],
   statistics: [
     'mean',
     'fmean',
@@ -144,7 +226,6 @@ const pureMembers = {
   Array: ['isArray', 'of'],
   Date: ['now', 'parse', 'UTC'],
   Buffer: ['from', 'alloc', 'byteLength', 'concat', 'isBuffer'],
-  process: ['cwd'],
 };
 const pureCalls = new Set(
   Object.entries(pureMembers).flatMap(([module, members]) =>
@@ -167,12 +248,6 @@ const conversions = new Set([
   'zip',
   'range',
   'repr',
-  'type',
-  'SystemExit',
-  'Error',
-  'TypeError',
-  'Exception',
-  'ValueError',
   'iter',
   'next',
   'reversed',
@@ -247,7 +322,7 @@ const builtinCall = (name: string, args: readonly Value[]): Value | null => {
     requireData(args);
     return name === 'Array' ? data : { kind: 'builtin', name: name.split('.')[0] ?? name };
   }
-  if (pureCalls.has(name) || conversions.has(name)) {
+  if (pureCalls.has(name) || conversions.has(name) || builtinExceptions.has(name)) {
     requireData(args);
     return data;
   }
@@ -258,114 +333,139 @@ const builtinCall = (name: string, args: readonly Value[]): Value | null => {
   return null;
 };
 
-const builtinMethods: Readonly<Record<string, ReadonlySet<string>>> = {
-  'python-regex': new Set([
-    'finditer',
-    'findall',
-    'search',
-    'match',
-    'fullmatch',
-    'split',
-    'sub',
-    'subn',
-  ]),
-  'sequence-matcher': new Set(['get_opcodes', 'get_matching_blocks', 'ratio', 'quick_ratio']),
-  'json-decoder': new Set(['raw_decode', 'decode']),
-  Date: new Set([
-    'toISOString',
-    'toJSON',
-    'toString',
-    'getTime',
-    'getFullYear',
-    'getMonth',
-    'getDate',
-    'getUTCFullYear',
-  ]),
-  Set: new Set(['has', 'values', 'keys', 'entries']),
-  Map: new Set(['get', 'has', 'values', 'keys', 'entries']),
-  RegExp: new Set(['test', 'exec']),
-  URL: new Set(['toString', 'toJSON']),
-  URLSearchParams: new Set(['get', 'getAll', 'has', 'entries', 'keys', 'values', 'toString']),
-  datetime: new Set(['isoformat', 'strftime', 'timestamp', 'date', 'time', 'total_seconds']),
+const builtinMethods: Readonly<Record<string, Readonly<Record<string, Value>>>> = {
+  'python-regex': {
+    finditer: { kind: 'data' as const },
+    findall: { kind: 'data' as const },
+    search: { kind: 'data' as const },
+    match: { kind: 'data' as const },
+    fullmatch: { kind: 'data' as const },
+    split: { kind: 'data' as const },
+    subn: { kind: 'data' as const },
+    sub: { kind: 'text' as const },
+  },
+  'sequence-matcher': {
+    get_opcodes: { kind: 'data' as const },
+    get_matching_blocks: { kind: 'data' as const },
+    ratio: { kind: 'data' as const },
+    quick_ratio: { kind: 'data' as const },
+  },
+  'json-decoder': { raw_decode: { kind: 'data' as const }, decode: { kind: 'data' as const } },
+  Date: {
+    toISOString: { kind: 'text' as const },
+    toJSON: { kind: 'data' as const },
+    toString: { kind: 'text' as const },
+    getTime: { kind: 'data' as const },
+    getFullYear: { kind: 'data' as const },
+    getMonth: { kind: 'data' as const },
+    getDate: { kind: 'data' as const },
+    getUTCFullYear: { kind: 'data' as const },
+  },
+  Set: {
+    has: { kind: 'data' as const },
+    values: { kind: 'data' as const },
+    keys: { kind: 'data' as const },
+    entries: { kind: 'data' as const },
+    delete: { kind: 'data' as const },
+    clear: { kind: 'data' as const },
+    add: { kind: 'builtin', name: 'Set' },
+  },
+  Map: {
+    get: { kind: 'data' as const },
+    has: { kind: 'data' as const },
+    values: { kind: 'data' as const },
+    keys: { kind: 'data' as const },
+    entries: { kind: 'data' as const },
+    delete: { kind: 'data' as const },
+    clear: { kind: 'data' as const },
+    set: { kind: 'builtin', name: 'Map' },
+  },
+  RegExp: { test: { kind: 'data' as const }, exec: { kind: 'data' as const } },
+  URL: { toString: { kind: 'text' as const }, toJSON: { kind: 'text' as const } },
+  URLSearchParams: {
+    toString: { kind: 'text' as const },
+    get: { kind: 'data' as const },
+    getAll: { kind: 'data' as const },
+    has: { kind: 'data' as const },
+    entries: { kind: 'data' as const },
+    keys: { kind: 'data' as const },
+    values: { kind: 'data' as const },
+  },
+  datetime: {
+    isoformat: { kind: 'text' as const },
+    strftime: { kind: 'text' as const },
+    timestamp: { kind: 'data' as const },
+    date: { kind: 'data' as const },
+    time: { kind: 'data' as const },
+    total_seconds: { kind: 'data' as const },
+  },
 };
 const builtinMethod = (receiver: string, name: string, args: readonly Value[]): Value | null => {
   if (receiver === 'transpiler') {
     return transpile(name, args);
   }
-  if (['Map', 'Set'].includes(receiver) && ['set', 'add', 'delete', 'clear'].includes(name)) {
+  const result =
+    Object.hasOwn(builtinMethods, receiver) && Object.hasOwn(builtinMethods[receiver] ?? {}, name)
+      ? builtinMethods[receiver]?.[name]
+      : undefined;
+  if (result !== undefined) {
     requireData(args);
-    return { kind: 'builtin', name: receiver };
-  }
-  if (Object.hasOwn(builtinMethods, receiver) && builtinMethods[receiver]?.has(name) === true) {
-    requireData(args);
-    return text;
+    return result;
   }
   return null;
 };
 
-const builtinProperty = (receiver: string, member: string): Value | null => {
-  if (receiver === 'process-result' && ['stdout', 'stderr', 'returncode'].includes(member)) {
-    return member === 'returncode' ? data : text;
-  }
-  if (['Map', 'Set'].includes(receiver) && member === 'size') {
-    return data;
-  }
-  if (receiver === 'URL' && member === 'searchParams') {
-    return { kind: 'builtin', name: 'URLSearchParams' };
-  }
-  if (
-    receiver === 'URL' &&
-    [
-      'href',
-      'origin',
-      'protocol',
-      'host',
-      'hostname',
-      'port',
-      'pathname',
-      'search',
-      'hash',
-      'username',
-      'password',
-    ].includes(member)
-  ) {
-    return text;
-  }
-  if (
-    receiver === 'RegExp' &&
-    [
-      'source',
-      'flags',
-      'global',
-      'ignoreCase',
-      'multiline',
-      'unicode',
-      'sticky',
-      'dotAll',
-      'lastIndex',
-    ].includes(member)
-  ) {
-    return data;
-  }
-  if (
-    receiver === 'datetime' &&
-    [
-      'year',
-      'month',
-      'day',
-      'hour',
-      'minute',
-      'second',
-      'microsecond',
-      'days',
-      'seconds',
-      'microseconds',
-    ].includes(member)
-  ) {
-    return data;
-  }
-  return null;
+const builtinProperties: Readonly<Record<string, Readonly<Record<string, Value>>>> = {
+  'process-result': {
+    stdout: { kind: 'text' as const },
+    stderr: { kind: 'text' as const },
+    returncode: { kind: 'data' as const },
+  },
+  Map: { size: { kind: 'data' as const } },
+  Set: { size: { kind: 'data' as const } },
+  URL: {
+    searchParams: { kind: 'builtin', name: 'URLSearchParams' },
+    href: { kind: 'text' as const },
+    origin: { kind: 'text' as const },
+    protocol: { kind: 'text' as const },
+    host: { kind: 'text' as const },
+    hostname: { kind: 'text' as const },
+    port: { kind: 'text' as const },
+    pathname: { kind: 'text' as const },
+    search: { kind: 'text' as const },
+    hash: { kind: 'text' as const },
+    username: { kind: 'text' as const },
+    password: { kind: 'text' as const },
+  },
+  RegExp: {
+    source: { kind: 'text' as const },
+    flags: { kind: 'text' as const },
+    global: { kind: 'data' as const },
+    ignoreCase: { kind: 'data' as const },
+    multiline: { kind: 'data' as const },
+    unicode: { kind: 'data' as const },
+    sticky: { kind: 'data' as const },
+    dotAll: { kind: 'data' as const },
+    lastIndex: { kind: 'data' as const },
+  },
+  datetime: {
+    year: { kind: 'data' as const },
+    month: { kind: 'data' as const },
+    day: { kind: 'data' as const },
+    hour: { kind: 'data' as const },
+    minute: { kind: 'data' as const },
+    second: { kind: 'data' as const },
+    microsecond: { kind: 'data' as const },
+    days: { kind: 'data' as const },
+    seconds: { kind: 'data' as const },
+    microseconds: { kind: 'data' as const },
+  },
 };
+const builtinProperty = (receiver: string, member: string): Value | null =>
+  Object.hasOwn(builtinProperties, receiver) &&
+  Object.hasOwn(builtinProperties[receiver] ?? {}, member)
+    ? (builtinProperties[receiver]?.[member] ?? null)
+    : null;
 
 const dataProperties = new Set([
   'process.argv',
@@ -407,4 +507,11 @@ const dataProperties = new Set([
   'string.whitespace',
 ]);
 
-export { builtinCall, builtinMethod, builtinProperty, dataProperties };
+export {
+  builtinCall,
+  builtinMethod,
+  builtinProperty,
+  dataProperties,
+  builtinExceptions,
+  isBuiltinException,
+};

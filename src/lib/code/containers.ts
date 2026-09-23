@@ -122,25 +122,4 @@ const formatValue = (node: SyntaxNode, evaluate: (node: SyntaxNode) => Value): V
   return { kind: 'text' };
 };
 
-const containerValue = (
-  node: SyntaxNode,
-  evaluate: (node: SyntaxNode) => Value,
-  text: (node: SyntaxNode) => string,
-): Value | null => {
-  switch (node.name) {
-    case 'ObjectExpression': {
-      return objectValue(node, evaluate, text);
-    }
-    case 'DictionaryExpression': {
-      return dictionaryValue(node, evaluate);
-    }
-    case 'FormatString': {
-      return formatValue(node, evaluate);
-    }
-    default: {
-      return null;
-    }
-  }
-};
-
-export { containerValue };
+export { objectValue, dictionaryValue, formatValue };

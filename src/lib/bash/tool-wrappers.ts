@@ -4,6 +4,10 @@ import type { ShellInvocation } from './types';
 import { cloneEnvironment, type Environment } from './values';
 
 interface WrapperSpec {
+  readonly extraDelimiters?: readonly string[];
+  readonly flagBundle?: RegExp;
+  readonly cwdOptions?: readonly string[];
+  readonly cwdOperand?: number;
   readonly subcommands: readonly string[];
   readonly values?: readonly string[];
   readonly flags?: readonly string[];
@@ -26,10 +30,11 @@ const specs: Readonly<Record<string, WrapperSpec>> = {
   mise: {
     subcommands: ['exec', 'x'],
     values: ['-C', '--cd', '-j', '--jobs'],
+    cwdOptions: ['-C', '--cd'],
     delimiter: true,
     startup: true,
   },
-  direnv: { subcommands: ['exec'], operands: 1, startup: true },
+  direnv: { subcommands: ['exec'], operands: 1, cwdOperand: 0, startup: true },
   dotenv: {
     subcommands: [],
     values: ['-e', '--env', '-v', '--variable'],
@@ -46,8 +51,19 @@ const specs: Readonly<Record<string, WrapperSpec>> = {
     flags: ['--no-session'],
     startup: true,
   },
-  nix: { subcommands: ['develop'], delimiter: true, startup: true },
-  'nix-shell': { subcommands: [], delimiter: true, startup: true, shell: true },
+  nix: {
+    extraDelimiters: ['-c', '--command'],
+    subcommands: ['develop'],
+    delimiter: true,
+    startup: true,
+  },
+  'nix-shell': {
+    extraDelimiters: ['--run', '--command'],
+    subcommands: [],
+    delimiter: true,
+    startup: true,
+    shell: true,
+  },
   devbox: { subcommands: ['run'], startup: true },
   pixi: { subcommands: ['run'], values: ['-e', '--environment', '--manifest-path'], startup: true },
   pdm: { subcommands: ['run'], startup: true },
@@ -55,6 +71,7 @@ const specs: Readonly<Record<string, WrapperSpec>> = {
   conda: {
     subcommands: ['run'],
     values: ['-n', '--name', '-p', '--prefix', '--cwd'],
+    cwdOptions: ['--cwd'],
     flags: ['--no-capture-output', '--live-stream'],
     startup: true,
   },
@@ -63,7 +80,12 @@ const specs: Readonly<Record<string, WrapperSpec>> = {
   rbenv: { subcommands: ['exec'] },
   pyenv: { subcommands: ['exec'] },
   volta: { subcommands: ['run'], values: ['--node', '--npm', '--yarn', '--pnpm'] },
-  caffeinate: { subcommands: [], flags: ['-i', '-d', '-m', '-s', '-u'], values: ['-t', '-w'] },
+  caffeinate: {
+    flagBundle: /^-[dimsu]+$/u,
+    subcommands: [],
+    flags: ['-i', '-d', '-m', '-s', '-u'],
+    values: ['-t', '-w'],
+  },
 };
 
 interface WrapperCursor {
@@ -73,7 +95,11 @@ interface WrapperCursor {
   readonly environment: Environment;
 }
 
-const optionValue = (invocation: ShellInvocation, cursor: WrapperCursor): boolean => {
+const optionValue = (
+  invocation: ShellInvocation,
+  cursor: WrapperCursor,
+  spec: WrapperSpec,
+): boolean => {
   const word = invocation.words[cursor.index];
   if (word === undefined) {
     return false;
@@ -85,7 +111,7 @@ const optionValue = (invocation: ShellInvocation, cursor: WrapperCursor): boolea
   if (target?.kind !== 'literal') {
     return false;
   }
-  if (['-C', '--cd', '--cwd'].includes(flag ?? '')) {
+  if (spec.cwdOptions?.includes(flag ?? '') === true) {
     cursor.environment.cwd = resolveDirectory(target, cursor.environment.cwd);
   }
   if (!word.value.includes('=')) {
@@ -108,11 +134,7 @@ const wrapperCommand = (
   const subcommands = new Set(spec.subcommands);
   const values = new Set(spec.values);
   const flags = new Set(spec.flags);
-  const delimiters = new Set([
-    '--',
-    ...(invocation.head === 'nix' ? ['-c', '--command'] : []),
-    ...(spec.shell === true ? ['--run', '--command'] : []),
-  ]);
+  const delimiters = new Set(['--', ...(spec.extraDelimiters ?? [])]);
   for (; cursor.index < invocation.words.length; cursor.index += 1) {
     const word = invocation.words[cursor.index];
     if (word?.kind !== 'literal') {
@@ -124,16 +146,13 @@ const wrapperCommand = (
     } else if (cursor.subcommand && delimiters.has(value)) {
       return cursor.operands === 0 ? cursor.index + 1 : null;
     } else if (values.has(value.split('=')[0] ?? '')) {
-      if (!optionValue(invocation, cursor)) {
+      if (!optionValue(invocation, cursor, spec)) {
         return null;
       }
-    } else if (
-      flags.has(value) ||
-      (invocation.head === 'caffeinate' && /^-[dimsu]+$/u.test(value))
-    ) {
+    } else if (flags.has(value) || spec.flagBundle?.test(value) === true) {
       // Known flags have no argument.
     } else {
-      const result = wrapperOperand(invocation, spec, cursor, word);
+      const result = wrapperOperand(spec, cursor, word);
       if (result !== undefined) {
         return result;
       }
@@ -143,7 +162,6 @@ const wrapperCommand = (
 };
 
 const wrapperOperand = (
-  invocation: ShellInvocation,
   spec: WrapperSpec,
   cursor: WrapperCursor,
   word: ShellInvocation['words'][number],
@@ -152,7 +170,7 @@ const wrapperOperand = (
     return null;
   }
   if (cursor.operands > 0) {
-    if (invocation.head === 'direnv') {
+    if (spec.cwdOperand === (spec.operands ?? 0) - cursor.operands) {
       cursor.environment.cwd = resolveDirectory(word, cursor.environment.cwd);
     }
     cursor.operands -= 1;

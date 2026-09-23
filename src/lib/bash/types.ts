@@ -9,7 +9,7 @@ type ShellWordKind = 'literal' | 'dynamic' | 'trusted-temp-path' | 'background-p
 
 interface BashAnalysisOptions {
   readonly home?: string;
-  readonly cwd?: string;
+  readonly cwd?: string | null;
   readonly executionCarrierAliases?: readonly ExecutionCarrierAlias[];
   readonly positionalArguments?: readonly string[];
 }
@@ -26,7 +26,7 @@ interface ShellWord {
 }
 
 interface ShellRedirect {
-  readonly cwd?: string | null;
+  readonly cwd: string | null;
   /** Source bytes for a heredoc; never execute these bytes during inspection. */
   readonly heredoc?: { readonly content: string; readonly quoted: boolean };
   readonly op: '>' | '>>' | '<' | '<<' | '<<<' | '<>' | '>&' | '<&' | '&>' | '&>>';
@@ -41,7 +41,7 @@ interface PipelinePosition {
 
 interface ShellInvocation {
   readonly home?: string;
-  readonly cwd?: string | null;
+  readonly cwd: string | null;
   readonly unverifiedStartup?: boolean;
   readonly id: number;
   readonly head: string;

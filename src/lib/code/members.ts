@@ -38,12 +38,8 @@ const instanceMember = (value: Value, member: string): Value | null => {
     return { kind: 'method', receiver: value, name: member };
   }
   if (value.kind === 'instance') {
-    if (value.htmlParser === true && ['feed', 'close'].includes(member)) {
-      return {
-        kind: 'bound-method',
-        fn: { kind: 'symbol', name: 'html-parser.feed' },
-        receiver: value,
-      };
+    if (value.contract?.entries.has(member) === true) {
+      return { kind: 'contract-method', name: member, receiver: value };
     }
     const method = value.methods.get(member);
     return (

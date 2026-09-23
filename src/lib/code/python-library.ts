@@ -2,8 +2,9 @@ import path from 'node:path';
 
 import type { CallSignature } from './arguments';
 import { data, requireData } from './data';
+import { recordOperation, type OperationContext } from './operations';
 import { failInspection } from './syntax';
-import type { CodeOperation, CodeRange, Value } from './types';
+import type { Value } from './types';
 import { valueString } from './values';
 import { openArchive } from './zipfile';
 
@@ -31,7 +32,7 @@ const pythonSignatures: Readonly<Record<string, CallSignature>> = {
 const pythonLibraryCall = (
   name: string,
   args: readonly Value[],
-  context: { readonly operations: CodeOperation[]; readonly range: CodeRange },
+  context: OperationContext,
 ): Value | null => {
   if (
     /^hashlib\.(?:md5|sha1|sha224|sha256|sha384|sha512|sha3_224|sha3_256|sha3_384|sha3_512|shake_128|shake_256|blake2b|blake2s|new)$/u.test(
@@ -57,7 +58,7 @@ const pythonLibraryCall = (
     }
     const pattern = valueString(args[0]);
     const prefix = pattern.split(/[?*[]/u)[0] ?? '';
-    context.operations.push({
+    recordOperation(context, {
       kind: 'read',
       path: path.posix.dirname(prefix),
       range: context.range,
@@ -71,7 +72,7 @@ const pythonLibraryCall = (
     if (args.length !== 1) {
       return failInspection('ZIP inspection needs one file path.');
     }
-    context.operations.push({ kind: 'read', path: valueString(args[0]), range: context.range });
+    recordOperation(context, { kind: 'read', path: valueString(args[0]), range: context.range });
     return data;
   }
   if (

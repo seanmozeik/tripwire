@@ -38,7 +38,7 @@ const basename = (value: string): string => {
 };
 
 const emptyEnvironment = (): Environment => ({
-  cwd: process.cwd(),
+  cwd: null,
   unverifiedStartup: false,
   directoryStack: [],
   aliases: new Map(),

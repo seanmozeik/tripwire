@@ -1,15 +1,17 @@
 import path from 'node:path';
 
+import { resolveShellPath } from '../bash/cwd';
 import type { CallArguments } from './arguments';
 import { builtinCall, builtinMethod } from './builtins';
 import { normalizeCallArguments } from './call-signatures';
 import { callbackCall } from './callbacks';
 import { data, dataCall, dataMethod, isData, requireData, text } from './data';
 import { validateReadOptions, validateWriteOptions } from './file-options';
-import { resolvePathCall } from './path-resolution';
+import { recordOperation, recordProcess, type OperationContext } from './operations';
 import { pythonLibraryCall } from './python-library';
+import { resolvePathCall } from './resolved-paths';
 import { failInspection } from './syntax';
-import type { CodeLanguage, CodeOperation, CodeRange, Value } from './types';
+import type { CodeLanguage, Value } from './types';
 import { moduleName, pythonJoin, symbol, textValue, unknown, valueString } from './values';
 import { archiveCall } from './zipfile';
 
@@ -56,12 +58,11 @@ const PROCESS = new Set([
   'child_process.spawnSync',
 ]);
 
-interface CallContext {
+interface CallContext extends OperationContext {
   readonly callback: (fn: Value, args: readonly Value[]) => Value;
   readonly language: CodeLanguage;
-  readonly cwd?: string;
-  readonly range: CodeRange;
-  readonly operations: CodeOperation[];
+  readonly changeCwd: (cwd: string | null) => void;
+  readonly repeated: boolean;
 }
 
 const processArguments = (name: string, args: readonly Value[]): readonly string[] => {
@@ -95,12 +96,11 @@ const pathEffect = (
     if (args.length !== 1) {
       return failInspection('File transfer options require inspection.');
     }
-    context.operations.push({
-      kind: 'process',
-      argv:
-        member === 'symlink_to'
-          ? ['ln', '-s', '--', target, receiver.path]
-          : ['mv', '--', receiver.path, target],
+    recordOperation(context, {
+      kind: 'transfer',
+      command: member === 'symlink_to' ? 'ln' : 'mv',
+      sources: [member === 'symlink_to' ? target : receiver.path],
+      destination: member === 'symlink_to' ? receiver.path : target,
       range: context.range,
     });
     return { kind: 'path', path: target };
@@ -119,7 +119,7 @@ const pathEffect = (
     ['stat', 'is_symlink', 'exists', 'is_file', 'is_dir'].includes(member)
   ) {
     requireData(args);
-    context.operations.push({ kind: 'read', path: receiver.path, range: context.range });
+    recordOperation(context, { kind: 'read', path: receiver.path, range: context.range });
     return data;
   }
   return null;
@@ -142,7 +142,7 @@ const pathCall = (
     if (args[0] !== undefined) {
       valueString(args[0]);
     }
-    context.operations.push({ kind: 'read', path: receiver.path, range: context.range });
+    recordOperation(context, { kind: 'read', path: receiver.path, range: context.range });
     return data;
   }
   if (receiver.kind === 'file' && member === 'close' && args.length === 0) {
@@ -173,7 +173,7 @@ const pathCall = (
   if (kind === 'write') {
     requireData(args);
   }
-  context.operations.push({ kind, path: receiver.path, range: context.range });
+  recordOperation(context, { kind, path: receiver.path, range: context.range });
   return kind === 'read' && member !== 'readlines' ? text : data;
 };
 
@@ -201,7 +201,7 @@ const openFile = (args: readonly Value[], context: CallContext): Value => {
     return failInspection('Unsupported file open mode.');
   }
   const target = valueString(args[0]);
-  context.operations.push({ kind, path: target, range: context.range });
+  recordOperation(context, { kind, path: target, range: context.range });
   return { kind: 'file', path: target };
 };
 
@@ -248,7 +248,8 @@ const bunMethod = (
 ): Value | null => {
   if (fn.receiver.kind === 'image') {
     if (fn.name === 'write' && args.length === 1) {
-      context.operations.push(
+      recordOperation(
+        context,
         { kind: 'read', path: fn.receiver.path, range: context.range },
         { kind: 'write', path: valueString(args[0]), range: context.range },
       );
@@ -266,11 +267,11 @@ const bunMethod = (
     }
     if (fn.name === 'write' && args.length === 1) {
       requireData(args);
-      context.operations.push({ kind: 'write', path: fn.receiver.path, range: context.range });
+      recordOperation(context, { kind: 'write', path: fn.receiver.path, range: context.range });
       return data;
     }
     if (fn.name === 'unlink' && args.length === 0) {
-      context.operations.push({ kind: 'delete', path: fn.receiver.path, range: context.range });
+      recordOperation(context, { kind: 'delete', path: fn.receiver.path, range: context.range });
       return data;
     }
     if (
@@ -279,7 +280,7 @@ const bunMethod = (
     ) {
       return failInspection('Unsupported Bun file read.');
     }
-    context.operations.push({ kind: 'read', path: fn.receiver.path, range: context.range });
+    recordOperation(context, { kind: 'read', path: fn.receiver.path, range: context.range });
     return fn.name === 'text' ? text : data;
   }
   return null;
@@ -356,20 +357,9 @@ const resolveCall = (fn: Value, input: CallArguments, context: CallContext): Val
   if (printed !== null) {
     return printed;
   }
-  if (fn.kind === 'symbol' && PROCESS.has(fn.name) && input.keywords.has('cwd')) {
-    const cwd = valueString(input.keywords.get('cwd'));
-    const keywords = new Map(input.keywords);
-    keywords.delete('cwd');
-    const args = normalizeCallArguments(fn, { ...input, keywords });
-    context.operations.push({
-      kind: 'process',
-      argv: processArguments(fn.name, args),
-      cwd,
-      range: context.range,
-    });
-    return fn.name === 'subprocess.check_output'
-      ? text
-      : { kind: 'builtin', name: 'process-result' };
+  const process = processCall(fn, input, context);
+  if (process !== null) {
+    return process;
   }
   const args = normalizeCallArguments(fn, input);
   if (fn.kind === 'method') {
@@ -379,6 +369,10 @@ const resolveCall = (fn: Value, input: CallArguments, context: CallContext): Val
     return failInspection('Dynamic call target.');
   }
   const { name } = fn;
+  const directory = directoryCall(name, args, context);
+  if (directory !== null) {
+    return directory;
+  }
   const builtin = builtinCall(name, args);
   if (builtin !== null) {
     return builtin;
@@ -397,7 +391,7 @@ const resolveCall = (fn: Value, input: CallArguments, context: CallContext): Val
       return failInspection('JSON output needs inert data and a known file handle.');
     }
     requireData([value]);
-    context.operations.push({ kind: 'write', path: file.path, range: context.range });
+    recordOperation(context, { kind: 'write', path: file.path, range: context.range });
     return unknown;
   }
   const pure = dataCall(name, args);
@@ -411,7 +405,7 @@ const effectCall = (name: string, args: readonly Value[], context: CallContext):
   if (name === 'require') {
     const target = valueString(args[0]);
     if (args.length === 1 && /^(?:\.{1,2}\/|\/).*\.json$/u.test(target)) {
-      context.operations.push({ kind: 'json-module', path: target, range: context.range });
+      recordOperation(context, { kind: 'json-module', path: target, range: context.range });
       return data;
     }
     return symbol(moduleName(target, context.language));
@@ -433,7 +427,7 @@ const effectCall = (name: string, args: readonly Value[], context: CallContext):
       return failInspection('Bun.write requires a path and inert content.');
     }
     requireData(args.slice(1));
-    context.operations.push({ kind: 'write', path: valueString(args[0]), range: context.range });
+    recordOperation(context, { kind: 'write', path: valueString(args[0]), range: context.range });
     return data;
   }
   if (name === 'process.exit' || name === 'sys.exit') {
@@ -441,11 +435,7 @@ const effectCall = (name: string, args: readonly Value[], context: CallContext):
     return data;
   }
   if (name === 'Bun.spawnSync') {
-    context.operations.push({
-      kind: 'process',
-      argv: processArguments('subprocess.run', args),
-      range: context.range,
-    });
+    recordProcess(context, processArguments('subprocess.run', args));
     return {
       kind: 'object',
       entries: new Map([
@@ -461,13 +451,6 @@ const effectCall = (name: string, args: readonly Value[], context: CallContext):
   const kind = FILE_OPERATIONS.get(name);
   if (kind !== undefined) {
     return fileOperation(name, kind, args, context);
-  } else if (PROCESS.has(name)) {
-    context.operations.push({
-      kind: 'process',
-      argv: processArguments(name, args),
-      range: context.range,
-    });
-    return name === 'subprocess.check_output' ? text : { kind: 'builtin', name: 'process-result' };
   }
   return failInspection(`Call ${JSON.stringify(name)} has uninspected effects.`);
 };
@@ -503,7 +486,7 @@ const fileOperation = (
   if (kind === 'write') {
     requireData(args.slice(1, 2));
   }
-  context.operations.push({ kind, path: target, range: context.range });
+  recordOperation(context, { kind, path: target, range: context.range });
   if (kind === 'read') {
     const [, encoding] = args;
     return name.startsWith('Deno.') || encoding?.kind === 'string' || encoding?.kind === 'object'
@@ -513,7 +496,7 @@ const fileOperation = (
   return data;
 };
 
-const transferCommand = (name: string): string =>
+const transferCommand = (name: string): 'mv' | 'cp' =>
   [
     'fs.rename',
     'fs.renameSync',
@@ -531,12 +514,12 @@ const transferCall = (name: string, args: readonly Value[], context: CallContext
     ['fs.readdirSync', 'fs.statSync', 'fs.lstatSync', 'fs.existsSync', 'os.listdir'].includes(name)
   ) {
     requireData(args.slice(1));
-    context.operations.push({ kind: 'read', path: valueString(args[0]), range: context.range });
+    recordOperation(context, { kind: 'read', path: valueString(args[0]), range: context.range });
     return data;
   }
   if (name === 'fs.mkdirSync') {
     requireData(args.slice(1));
-    context.operations.push({ kind: 'write', path: valueString(args[0]), range: context.range });
+    recordOperation(context, { kind: 'write', path: valueString(args[0]), range: context.range });
     return data;
   }
   const copy = [
@@ -575,18 +558,52 @@ const transferCall = (name: string, args: readonly Value[], context: CallContext
     'Deno.symlinkSync',
     'os.symlink',
   ].includes(name);
-  context.operations.push({
-    kind: 'process',
-    argv: [
-      link ? 'ln' : transferCommand(name),
-      ...(link ? ['-s'] : []),
-      '--',
-      valueString(args[0]),
-      valueString(args[1]),
-    ],
+  recordOperation(context, {
+    kind: 'transfer',
+    command: link ? 'ln' : transferCommand(name),
+    sources: [valueString(args[0])],
+    destination: valueString(args[1]),
     range: context.range,
   });
   return data;
+};
+
+const processCall = (fn: Value, input: CallArguments, context: CallContext): Value | null => {
+  if (fn.kind !== 'symbol' || !PROCESS.has(fn.name)) {
+    return null;
+  }
+  const keywords = new Map(input.keywords);
+  let { cwd } = context;
+  if (keywords.has('cwd')) {
+    const target = valueString(keywords.get('cwd'));
+    cwd = resolveShellPath(target, cwd);
+    keywords.delete('cwd');
+  }
+  const args = normalizeCallArguments(fn, { ...input, keywords });
+  recordProcess({ ...context, cwd }, processArguments(fn.name, args));
+  return fn.name === 'subprocess.check_output' ? text : { kind: 'builtin', name: 'process-result' };
+};
+
+const directoryCall = (
+  name: string,
+  args: readonly Value[],
+  context: CallContext,
+): Value | null => {
+  if (['process.chdir', 'os.chdir'].includes(name)) {
+    if (context.repeated || args.length !== 1) {
+      return failInspection('Repeated or computed working-directory changes require inspection.');
+    }
+    const target = valueString(args[0]);
+    context.changeCwd(resolveShellPath(target, context.cwd));
+    return data;
+  }
+  if (['process.cwd', 'os.getcwd'].includes(name)) {
+    if (args.length > 0) {
+      return failInspection('Unexpected working-directory arguments.');
+    }
+    return context.cwd === null ? unknown : textValue(context.cwd);
+  }
+  return null;
 };
 
 export { resolveCall };

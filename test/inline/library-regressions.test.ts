@@ -3,8 +3,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } from 'node
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { decideBash } from '../src/dispatch';
-import { analyzeCode } from '../src/lib/code/analyze';
+import { decideBash } from '../../src/dispatch';
+import { analyzeCode } from '../../src/lib/code/analyze';
 
 const python = (source: string): string => `python3 - <<'PY'\n${source}\nPY`;
 

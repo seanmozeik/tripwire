@@ -2,9 +2,11 @@ import { statSync } from 'node:fs';
 import path from 'node:path';
 
 import type { ShellInvocation } from '../lib/bash';
+import { resolveShellPath } from '../lib/bash/cwd';
 import { deny, merge, type Decision } from '../lib/decision';
 import { pathProtect } from './path-protect';
 import { readProtect } from './read-protect';
+import { checkShellWritePath } from './shell-write';
 
 const transferOperands = (command: ShellInvocation): string[] | null => {
   let options = true;
@@ -45,18 +47,32 @@ const fileTransfer = (command: ShellInvocation): Decision => {
       'File transfer operands or options are not inspected. Use literal local source and destination paths with simple options.',
     );
   }
-  if (command.cwd === null && operands.some((operand) => !path.isAbsolute(operand))) {
+  return transferDecision(command.head, operands.slice(0, -1), operands.at(-1), command.cwd);
+};
+
+const transferDecision = (
+  command: string,
+  sources: readonly string[],
+  destination: string | undefined,
+  cwd: string | null,
+): Decision => {
+  const operands = destination === undefined ? sources : [...sources, destination];
+  if (cwd === null && operands.some((operand) => !path.isAbsolute(operand))) {
     return deny(
       'redirect-dynamic-target',
       'File transfer working directory is unresolved. Use absolute paths.',
     );
   }
-  const destination = operands.at(-1);
   if (destination === undefined) {
     return merge([]);
   }
-  const cwd = command.cwd ?? process.cwd();
-  const target = path.resolve(cwd, destination);
+  const target = resolveShellPath(destination, cwd);
+  if (target === null) {
+    return deny(
+      'redirect-dynamic-target',
+      'File transfer destination is unresolved. Use an absolute path.',
+    );
+  }
   let directory = destination.endsWith('/');
   try {
     directory ||= statSync(target).isDirectory();
@@ -64,10 +80,16 @@ const fileTransfer = (command: ShellInvocation): Decision => {
     /* New destination. */
   }
   const decisions: Decision[] = [pathProtect({ file_path: target, content: '' })];
-  for (const source of operands.slice(0, -1)) {
-    const input = path.resolve(cwd, source);
+  for (const source of sources) {
+    const input = resolveShellPath(source, cwd);
+    if (input === null) {
+      return deny(
+        'redirect-dynamic-target',
+        'File transfer source is unresolved. Use an absolute path.',
+      );
+    }
     decisions.push(readProtect({ file_path: input }));
-    if (command.head === 'mv') {
+    if (command === 'mv') {
       decisions.push(pathProtect({ file_path: input, content: '' }));
     }
     if (directory) {
@@ -76,7 +98,8 @@ const fileTransfer = (command: ShellInvocation): Decision => {
       );
     }
   }
-  return merge(decisions);
+  const protectedTarget = checkShellWritePath(target);
+  return merge(protectedTarget === null ? decisions : [...decisions, protectedTarget]);
 };
 
-export { fileTransfer };
+export { fileTransfer, transferDecision };
