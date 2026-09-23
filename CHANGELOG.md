@@ -11,10 +11,12 @@ This file records notable project changes. The format follows [Keep a Changelog]
 - Inspect inline functions as values. Arrow functions, function declarations, `def`, `lambda`, plain classes, and callbacks passed to builtins are analyzed with their real arguments and lexical scope, and callbacks that can run many times are treated like loops.
 - Support ordinary inline data code: comprehensions, tuple and rest bindings, `try`/`except`/`finally`, `while`, `throw`/`raise`, walrus assignments, template and f-strings, `null`, `new Date()`, regex literals, and per-function contracts for common standard-library modules. Importing a module does not authorize its members.
 - Bind trailing interpreter arguments to `sys.argv` and `process.argv`.
-- Unwrap `mise exec`, `direnv exec`, `dotenv`, `op run`, `doppler run`, `infisical run`, `aws-vault exec`, `nix develop`, `nix-shell`, `devbox`, `pixi`, `pdm`, `hatch`, `conda run`, `fnm`, `asdf`, `rbenv`, `pyenv`, `volta`, `caffeinate`, `corepack`, `uvx`, `busybox`, and `toybox`. Every other rule checks the inner command. Wrappers that load project environments mark inline startup as unverified.
+- Unwrap `mise exec`, `direnv exec`, `dotenv`, `op run`, `doppler run`, `infisical run`, `aws-vault exec`, `nix develop`, `nix-shell`, `devbox`, `pixi`, `pdm`, `hatch`, `conda run`, `fnm`, `asdf`, `rbenv`, `pyenv`, `volta`, `caffeinate`, `corepack`, `uvx`, `busybox`, and `toybox`. Every other rule checks the inner command. Wrappers that load project environments mark inline startup as unverified unless mise configuration can be checked statically.
 
 ### Changed
 
+- Inspect safe `mise exec` and `mise x` inline interpreters using static TOML, dotenv, profile, parent/global/system config, and backend checks. Never execute mise, templates, or plugins during inspection; reject unverified startup effects.
+- Supply real items to builtin callbacks and comprehensions over precise lists of at most 128 items, carrying reducer accumulators and preserving mutation safeguards.
 - Track the working directory through literal `cd`, `pushd`, `popd`, subshells, and wrappers, and apply it to every path rule. An unknown directory blocks relative operations and is carried into forwarded commands.
 - Expand `~` from a tracked `HOME`. A dynamic or unset `HOME` fails closed.
 - Route inline rename, copy, move, and symlink calls through the shell transfer policy, so they get the same decision as `mv`, `cp`, and `ln`.
@@ -22,6 +24,8 @@ This file records notable project changes. The format follows [Keep a Changelog]
 
 ### Fixed
 
+- Report inline syntax errors with language, line, column, and a bounded excerpt. Explain literal `\n` in single shell quotes and identify unexpected failures as internal inspector errors.
+- Isolate tests from the developer's home, launch directory, temporary-directory contents, and executable overrides. Replace elapsed-time assertions with inspection-budget outcomes.
 - Protect directory destinations for `mv`, `cp`, `ln`, `rsync`, and `install`. `mv x ~/.ssh` and `cp x ~/.ssh/` were allowed.
 - Block tool wrappers that previously hid the inner command, such as `mise x -- rm -rf /`.
 - Stop checking forwarded commands against the hook directory after an unknown `cd`.
