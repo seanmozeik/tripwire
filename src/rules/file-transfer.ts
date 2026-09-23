@@ -6,29 +6,47 @@ import { deny, merge, type Decision } from '../lib/decision';
 import { pathProtect } from './path-protect';
 import { readProtect } from './read-protect';
 
-const fileTransfer = (command: ShellInvocation): Decision => {
-  const words = command.words.slice(1);
+const transferOperands = (command: ShellInvocation): string[] | null => {
   let options = true;
+  let optionValue = false;
   const operands: string[] = [];
-  for (const word of words) {
-    if (word.kind !== 'literal') {
-      return deny(
-        'redirect-dynamic-target',
-        'File transfer operands are unresolved. Use literal source and destination paths.',
-      );
+  for (const word of command.words.slice(1)) {
+    if (word.kind !== 'literal' && !(word.kind === 'trusted-temp-path' && word.quoted)) {
+      return null;
     }
-    if (options && word.value === '--') {
+    if (optionValue) {
+      optionValue = false;
+    } else if (options && word.value === '--') {
       options = false;
     } else if (options && word.value.startsWith('-')) {
-      if (!/^-[RrpfinsvLHP]+$/u.test(word.value)) {
-        return deny(
-          'redirect-dynamic-target',
-          'File transfer options are not inspected. Use simple source and destination operands.',
-        );
+      if (command.head === 'install' && ['-m', '-o', '-g'].includes(word.value)) {
+        optionValue = true;
+      } else {
+        const flags = command.head === 'rsync' ? /^-[avzRrptlHn]+$/u : /^-[RrpfinsvLHP]+$/u;
+        if (!flags.test(word.value)) {
+          return null;
+        }
       }
     } else {
+      if (word.source.startsWith('~')) {
+        return null;
+      }
       operands.push(word.value);
     }
+  }
+  return optionValue ? null : operands;
+};
+
+const fileTransfer = (command: ShellInvocation): Decision => {
+  const operands = transferOperands(command);
+  if (
+    operands === null ||
+    (command.head === 'rsync' && operands.some((operand) => operand.includes(':')))
+  ) {
+    return deny(
+      'redirect-dynamic-target',
+      'File transfer operands or options are not inspected. Use literal local source and destination paths with simple options.',
+    );
   }
   if (command.cwd === null && operands.some((operand) => !path.isAbsolute(operand))) {
     return deny(
@@ -42,9 +60,9 @@ const fileTransfer = (command: ShellInvocation): Decision => {
   }
   const cwd = command.cwd ?? process.cwd();
   const target = path.resolve(cwd, destination);
-  let directory = false;
+  let directory = destination.endsWith('/');
   try {
-    directory = statSync(target).isDirectory();
+    directory ||= statSync(target).isDirectory();
   } catch {
     /* New destination. */
   }

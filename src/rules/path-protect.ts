@@ -25,7 +25,7 @@ const protections: readonly ProtectedPathSpec[] = [
     message: '.dev.vars holds Cloudflare/Wrangler secrets. Do not modify.',
   },
   {
-    pattern: /(?<prefix>^|\/)\.ssh\//u,
+    pattern: /(?<prefix>^|\/)\.ssh(?:\/|$)/u,
     rule: 'ssh-dir',
     message: 'Never write into ~/.ssh/. Refuse.',
   },

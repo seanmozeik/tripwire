@@ -136,10 +136,25 @@ const commandIsShadowed = (command: StaticCommand, environment: Environment): bo
   command.command.name?.value.includes('/') === false &&
   (environment.aliases.has(command.head) || environment.functions.has(command.head));
 
+const generatedCwd = (parsed: StaticCommand, environment: Environment): string | null => {
+  if (
+    parsed.command.name?.value === 'pwd' &&
+    parsed.args.length === 0 &&
+    parsed.command.redirects.length === 0
+  ) {
+    return environment.cwd?.replace(/\n+$/u, '') ?? null;
+  }
+  return null;
+};
+
 const staticGeneratedValue = (word: Word, environment: Environment): string | null => {
   const parsed = staticCommandOf(soleCommandExpansion(word));
   if (parsed === null || commandIsShadowed(parsed, environment)) {
     return null;
+  }
+  const cwd = generatedCwd(parsed, environment);
+  if (cwd !== null) {
+    return cwd;
   }
   if (parsed.head === 'cat' && parsed.args.length === 0 && parsed.command.redirects.length === 1) {
     const [redirect] = parsed.command.redirects;

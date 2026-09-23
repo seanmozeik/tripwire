@@ -425,10 +425,17 @@ bunTest.describe('rollout shell corpus', () => {
     bunTest
       .expect(
         shellDecision(
-          'repository=$(pwd); git -C "$repository" remote set-url origin https://example.invalid',
+          'repository=$(find /tmp -type d -print -quit); git -C "$repository" remote set-url origin https://example.invalid',
         ).kind,
       )
       .toBe('deny');
+    bunTest
+      .expect(
+        shellDecision(
+          'repository=$(pwd); git -C "$repository" remote set-url origin https://example.invalid',
+        ).kind,
+      )
+      .toBe('ask');
     bunTest.expect(shellDecision('git checkout-index --all').kind).toBe('ask');
     bunTest.expect(shellDecision('git checkout-index --force --all').kind).toBe('deny');
     bunTest.expect(shellDecision('git remote prune origin').kind).toBe('ask');

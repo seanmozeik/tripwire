@@ -97,3 +97,85 @@ bunTest.test('resolved paths use the shared filesystem target classification', (
     rmSync(cwd, { recursive: true, force: true });
   }
 });
+
+bunTest.test.each(['mv', 'cp', 'ln', 'ln -s', 'rsync -a', 'install', 'install -m 600'])(
+  '%s checks directory destinations and effective child paths',
+  (command) => {
+    const cwd = mkdtempSync(path.join(tmpdir(), 'example-directory-transfer-'));
+    try {
+      mkdirSync(path.join(cwd, '.ssh'));
+      mkdirSync(path.join(cwd, '.aws'));
+      mkdirSync(path.join(cwd, 'ordinary'));
+      symlinkSync('.ssh', path.join(cwd, 'alias'));
+      for (const suffix of ['', '/']) {
+        for (const destination of ['.ssh', 'alias', '~/.ssh']) {
+          bunTest
+            .expect(inspect(`${command} /tmp/example-source ${destination}${suffix}`, cwd))
+            .toBe('deny');
+        }
+        bunTest.expect(inspect(`${command} credentials .aws${suffix}`, cwd)).toBe('deny');
+        bunTest.expect(inspect(`${command} example.txt ordinary${suffix}`, cwd)).toBe('allow');
+      }
+      // The slash itself declares a directory even before it exists.
+      bunTest.expect(inspect(`${command} credentials absent/.aws/`, cwd)).toBe('deny');
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  },
+);
+
+bunTest.test.each(transfers)(
+  'protected directory parity for %s via %s: %s',
+  (shell, runner, template) => {
+    const cwd = mkdtempSync(path.join(tmpdir(), 'example-inline-directory-'));
+    try {
+      mkdirSync(path.join(cwd, '.ssh'));
+      mkdirSync(path.join(cwd, '.aws'));
+      mkdirSync(path.join(cwd, 'ordinary'));
+      symlinkSync('.ssh', path.join(cwd, 'alias'));
+      for (const suffix of ['', '/']) {
+        for (const target of ['.ssh', 'alias', 'ordinary']) {
+          const destination = `${target}${suffix}`;
+          const code = template
+            .replaceAll('SOURCE', '"example.txt"')
+            .replaceAll('TARGET', JSON.stringify(destination));
+          const expected = target === 'ordinary' ? 'allow' : 'deny';
+          bunTest.expect(inspect(`${shell} example.txt ${destination}`, cwd)).toBe(expected);
+          bunTest.expect(inspect(`${runner} ${quote(code)}`, cwd)).toBe(expected);
+        }
+        const code = template
+          .replaceAll('SOURCE', '"credentials"')
+          .replaceAll('TARGET', JSON.stringify(`.aws${suffix}`));
+        bunTest.expect(inspect(`${runner} ${quote(code)}`, cwd)).toBe('deny');
+      }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  },
+);
+
+bunTest.test('pwd transfer provenance requires a known cwd and an unshadowed builtin', () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), 'example-pwd-transfer-'));
+  try {
+    bunTest
+      .expect(inspect('src=$(pwd); dst=$(mktemp -d); rsync -- "$src" "$dst"', cwd))
+      .toBe('allow');
+    for (const prefix of [
+      'pwd() { echo /example/.ssh; };',
+      'alias pwd="echo /example/.ssh";',
+      'cd "$UNKNOWN";',
+    ]) {
+      bunTest
+        .expect(inspect(`${prefix} src=$(pwd); dst=$(mktemp -d); rsync -- "$src" "$dst"`, cwd))
+        .toBe('deny');
+    }
+    bunTest.expect(inspect('src=$(pwd); rsync -- "$src" .ssh/', cwd)).toBe('deny');
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+bunTest.test('home reassignment cannot redirect a transfer into an unchecked directory', () => {
+  bunTest.expect(inspect('HOME=/example/.ssh; cp example.txt ~/record', '/tmp')).toBe('deny');
+  bunTest.expect(inspect('HOME="$UNKNOWN"; cp example.txt ~/record', '/tmp')).toBe('deny');
+});

@@ -5,7 +5,7 @@ interface CodeFixture {
   readonly allowed: boolean;
 }
 const quote = (source: string): string => `'${source.replaceAll("'", String.raw`'\''`)}'`;
-const protectedPath = '/tripwire-policy-fixture/protected';
+const protectedPath = '/tripwire-policy-fixture/.ssh';
 
 const pythonDestructive = [
   `import shutil; shutil.rmtree("${protectedPath}")`,
@@ -19,7 +19,7 @@ const pythonDestructive = [
   'open(".env", "w")',
   'open(".env", "w").write("secret")',
   'from pathlib import Path; Path(".env").write_text("secret")',
-  `import os; os.rename("/tmp/source", "${protectedPath}/.env")`,
+  `import os; os.rename("/tmp/source", "${protectedPath}")`,
   `import subprocess; subprocess.run(["rm", "-rf", "${protectedPath}"])`,
   'import subprocess; subprocess.run(["git", "reset", "--hard"])',
   `import subprocess; subprocess.run("rm -rf ${protectedPath}", shell=True)`,
@@ -47,7 +47,7 @@ const javascriptDestructive = [
   `require("fs").truncateSync("${protectedPath}", 0)`,
   'require("fs").writeFileSync(".env", "secret")',
   'require("fs").writeFileSync(".env", "")',
-  `require("fs").renameSync("/tmp/source", "${protectedPath}/.env")`,
+  `require("fs").renameSync("/tmp/source", "${protectedPath}")`,
   `require("child_process").execFileSync("rm", ["-rf", "${protectedPath}"])`,
   'require("child_process").spawnSync("git", ["reset", "--hard"])',
   `require("child_process").execSync("rm -rf ${protectedPath}")`,

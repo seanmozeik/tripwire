@@ -23,7 +23,7 @@ const PROTECTED_TARGET_RE: readonly ProtectedPathSpec[] = [
   },
   {
     rule: 'redirect-ssh',
-    pattern: /(?<prefix>^|\/)\.ssh\//u,
+    pattern: /(?<prefix>^|\/)\.ssh(?:\/|$)/u,
     message: 'Refusing to write into ~/.ssh/ via shell.',
   },
   {
@@ -90,7 +90,7 @@ const bashRedirect = (program: ShellProgram): Decision => {
         }
       }
     }
-    if (['cp', 'mv', 'ln'].includes(seg.head)) {
+    if (['cp', 'mv', 'ln', 'rsync', 'install'].includes(seg.head)) {
       const decision = fileTransfer(seg);
       if (decision.kind !== 'allow') {
         return decision;
