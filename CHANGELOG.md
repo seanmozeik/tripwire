@@ -4,6 +4,31 @@ This file records notable project changes. The format follows [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-23
+
+### Added
+
+- Inspect inline functions as values. Arrow functions, function declarations, `def`, `lambda`, plain classes, and callbacks passed to builtins are analyzed with their real arguments and lexical scope, and callbacks that can run many times are treated like loops.
+- Support ordinary inline data code: comprehensions, tuple and rest bindings, `try`/`except`/`finally`, `while`, `throw`/`raise`, walrus assignments, template and f-strings, `null`, `new Date()`, regex literals, and per-function contracts for common standard-library modules. Importing a module does not authorize its members.
+- Bind trailing interpreter arguments to `sys.argv` and `process.argv`.
+- Unwrap `mise exec`, `direnv exec`, `dotenv`, `op run`, `doppler run`, `infisical run`, `aws-vault exec`, `nix develop`, `nix-shell`, `devbox`, `pixi`, `pdm`, `hatch`, `conda run`, `fnm`, `asdf`, `rbenv`, `pyenv`, `volta`, `caffeinate`, `corepack`, `uvx`, `busybox`, and `toybox`. Every other rule checks the inner command. Wrappers that load project environments mark inline startup as unverified.
+
+### Changed
+
+- Track the working directory through literal `cd`, `pushd`, `popd`, subshells, and wrappers, and apply it to every path rule. An unknown directory blocks relative operations and is carried into forwarded commands.
+- Expand `~` from a tracked `HOME`. A dynamic or unset `HOME` fails closed.
+- Route inline rename, copy, move, and symlink calls through the shell transfer policy, so they get the same decision as `mv`, `cp`, and `ln`.
+- Limit inline evaluation by CPU time, and bound shell glob expansion: recursive patterns and relative patterns in an unknown directory are not expanded.
+
+### Fixed
+
+- Protect directory destinations for `mv`, `cp`, `ln`, `rsync`, and `install`. `mv x ~/.ssh` and `cp x ~/.ssh/` were allowed.
+- Block tool wrappers that previously hid the inner command, such as `mise x -- rm -rf /`.
+- Stop checking forwarded commands against the hook directory after an unknown `cd`.
+- Keep redirect targets when `xargs` forwards to a package runner.
+- Allow read-only `git branch` forms with a computed `-C`.
+- Classify relative deletions after `cd` by their resolved location.
+
 ## [0.10.0] - 2026-09-15
 
 ### Changed
