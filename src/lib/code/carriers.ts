@@ -8,7 +8,12 @@ import { uvInvocation, UV_ENVIRONMENT_GUIDANCE } from './uv';
 type CarrierInvocation = Pick<ShellInvocation, 'head' | 'words' | 'tokens' | 'redirects'>;
 
 type CodeInput =
-  | { readonly kind: 'source'; readonly language: CodeLanguage; readonly source: string }
+  | {
+      readonly kind: 'source';
+      readonly language: CodeLanguage;
+      readonly source: string;
+      readonly argv?: readonly (string | null)[];
+    }
   | { readonly kind: 'command'; readonly command: string; readonly requiresContext: boolean }
   | { readonly kind: 'blocked'; readonly reason: string }
   | { readonly kind: 'irrelevant' };
@@ -29,7 +34,34 @@ const interpreterLanguage = (head: string): CodeLanguage | null => {
   return null;
 };
 
+const argumentValues = (words: readonly ShellWord[]): readonly (string | null)[] | null => {
+  if (
+    words.some(
+      (word) =>
+        word.kind !== 'literal' &&
+        !(
+          word.quoted &&
+          (word.kind === 'trusted-temp-path' ||
+            /^\$(?:[a-zA-Z_][a-zA-Z0-9_]*|\{[a-zA-Z_][a-zA-Z0-9_]*\})$/u.test(word.value))
+        ),
+    )
+  ) {
+    return null;
+  }
+  return words.map((word) => (word.kind === 'literal' ? word.value : null));
+};
+
 const standardInput = (invocation: CarrierInvocation, language: CodeLanguage): CodeInput => {
+  const entry = invocation.words.findIndex((word) =>
+    ['-', '/dev/stdin', '/dev/fd/0'].includes(word.value),
+  );
+  const trailing = argumentValues(entry === -1 ? [] : invocation.words.slice(entry + 1));
+  if (trailing === null) {
+    return blocked(
+      'Interpreter argument expansion has an unresolved argument count. Quote scalar arguments and avoid array or unquoted expansions.',
+    );
+  }
+  const argv = language === 'python' ? ['-', ...trailing] : [null, '-', ...trailing];
   const inputs = invocation.redirects.filter((redirect) =>
     ['<<', '<<<', '<', '<&'].includes(redirect.op),
   );
@@ -44,10 +76,10 @@ const standardInput = (invocation: CarrierInvocation, language: CodeLanguage): C
     if (!input.heredoc.quoted && /[$`\\]/u.test(input.heredoc.content)) {
       return blocked('Unquoted interpreter heredoc can change during shell expansion.');
     }
-    return { kind: 'source', language, source: input.heredoc.content };
+    return { kind: 'source', language, source: input.heredoc.content, argv };
   }
   if (input?.op === '<<<' && input.target.kind === 'literal') {
-    return { kind: 'source', language, source: input.target.value };
+    return { kind: 'source', language, source: input.target.value, argv };
   }
   return blocked('Interpreter input bytes are not available for inspection.');
 };
@@ -119,13 +151,33 @@ const sourceInput = (
     return blocked('Inline source has unverified interpreter startup options.');
   }
   const source = invocation.words[index + (prefix === '' ? 2 : 1)];
-  if (source?.kind !== 'literal' || invocation.words.length !== index + (prefix === '' ? 3 : 2)) {
+  if (source?.kind !== 'literal') {
     return blocked('Interpreter source or trailing arguments are not fully inspected.');
+  }
+  const trailing = invocation.words.slice(index + (prefix === '' ? 3 : 2));
+  if (
+    language !== 'python' &&
+    trailing[0]?.value !== '--' &&
+    trailing.some((word) => word.kind !== 'literal' || word.value.startsWith('-'))
+  ) {
+    return blocked(
+      'Trailing interpreter options can change startup. Put literal program arguments after --.',
+    );
+  }
+  if (language !== 'python' && trailing[0]?.value === '--') {
+    trailing.shift();
+  }
+  const argv = argumentValues(trailing);
+  if (argv === null) {
+    return blocked(
+      'Interpreter argument expansion has an unresolved argument count. Quote scalar arguments and avoid array or unquoted expansions.',
+    );
   }
   return {
     kind: 'source',
     language,
     source: prefix === '' ? source.value : source.value.slice(prefix.length),
+    argv: [language === 'python' ? '-c' : null, ...argv],
   };
 };
 

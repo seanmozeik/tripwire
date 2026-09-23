@@ -1,9 +1,66 @@
 import type { SyntaxNode } from '@lezer/common';
 
 import { requireData } from './data';
-import { children, failInspection } from './syntax';
+import { children, failInspection, stringLiteral } from './syntax';
 import type { Value } from './types';
 
+interface ObjectContext {
+  readonly evaluate: (node: SyntaxNode) => Value;
+  readonly text: (node: SyntaxNode) => string;
+  readonly entries: Map<string, Value>;
+}
+const computedProperty = (fields: readonly SyntaxNode[], context: ObjectContext): boolean => {
+  const [, key, close, separator, value] = fields;
+  if (
+    key === undefined ||
+    close?.name !== ']' ||
+    separator?.name !== ':' ||
+    value === undefined ||
+    fields.length !== 5
+  ) {
+    return failInspection('Incomplete computed property.');
+  }
+  const computed = context.evaluate(key);
+  requireData([computed]);
+  const item = context.evaluate(value);
+  if (computed.kind === 'string' || computed.kind === 'number') {
+    context.entries.set(String(computed.value), item);
+    return false;
+  }
+  requireData([item]);
+  return true;
+};
+const objectProperty = (property: SyntaxNode, context: ObjectContext): boolean => {
+  const fields = children(property);
+  const [key, separator, value] = fields;
+  if (key?.name === 'Spread' && separator !== undefined && fields.length === 2) {
+    requireData([context.evaluate(separator)]);
+    return true;
+  }
+  if (key?.name === '[') {
+    return computedProperty(fields, context);
+  }
+  if (fields.length === 1 && key?.name === 'PropertyDefinition') {
+    context.entries.set(context.text(key), context.evaluate(key));
+    return false;
+  }
+  if (
+    property.name !== 'Property' ||
+    key === undefined ||
+    !['PropertyDefinition', 'String', 'Number'].includes(key.name) ||
+    separator?.name !== ':' ||
+    value === undefined ||
+    fields.length !== 3
+  ) {
+    return failInspection('Accessors and executable object properties require inspection.');
+  }
+  const name = key.name === 'String' ? stringLiteral(context.text(key)) : context.text(key);
+  if (name === '__proto__') {
+    return failInspection('Prototype mutation requires inspection.');
+  }
+  context.entries.set(name, context.evaluate(value));
+  return false;
+};
 const objectValue = (
   node: SyntaxNode,
   evaluate: (node: SyntaxNode) => Value,
@@ -12,24 +69,8 @@ const objectValue = (
   const entries = new Map<string, Value>();
   let spread = false;
   for (const property of children(node).filter((part) => !['{', '}', ','].includes(part.name))) {
-    const fields = children(property);
-    const [key, separator, value] = fields;
-    if (key?.name === 'Spread' && separator !== undefined && fields.length === 2) {
-      requireData([evaluate(separator)]);
-      spread = true;
-    } else if (fields.length === 1 && key?.name === 'PropertyDefinition') {
-      entries.set(text(key), evaluate(key));
-    } else if (
-      property.name !== 'Property' ||
-      key?.name !== 'PropertyDefinition' ||
-      separator?.name !== ':' ||
-      value === undefined ||
-      fields.length !== 3
-    ) {
-      return failInspection('Computed properties, accessors, and object spread are not inspected.');
-    } else {
-      entries.set(text(key), evaluate(value));
-    }
+    const opaque = objectProperty(property, { evaluate, text, entries });
+    spread ||= opaque;
   }
   if (spread) {
     requireData([...entries.values()]);
@@ -56,7 +97,7 @@ const dictionaryValue = (node: SyntaxNode, evaluate: (node: SyntaxNode) => Value
 };
 
 const formatValue = (node: SyntaxNode, evaluate: (node: SyntaxNode) => Value): Value => {
-  for (const replacement of children(node)) {
+  for (const replacement of children(node).filter((part) => part.name !== 'Escape')) {
     if (replacement.name !== 'FormatReplacement') {
       return failInspection('Unsupported formatted string component.');
     }

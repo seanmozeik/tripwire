@@ -1,4 +1,4 @@
-import { lstatSync, realpathSync } from 'node:fs';
+import { lstatSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { isSafePathTarget, type ShellProgram } from '../lib/bash';
@@ -93,9 +93,6 @@ const safeDeletion = (target: string, policy: CodePolicy): boolean => {
   if (target === '' || target.includes('\0')) {
     return false;
   }
-  if (!isSafePathTarget(target, policy.safePaths.relative, policy.safePaths.absolute)) {
-    return false;
-  }
   const resolved = canonicalPath(path.resolve(policy.cwd, target));
   const base = canonicalPath(policy.cwd);
   if (
@@ -108,13 +105,33 @@ const safeDeletion = (target: string, policy: CodePolicy): boolean => {
   }
   // Classify the real target in the same absolute/relative scope as the submitted path.
   const actual = path.isAbsolute(target) ? resolved : path.relative(base, resolved);
-  return isSafePathTarget(actual, policy.safePaths.relative, policy.safePaths.absolute);
+  const relativeScope =
+    !path.isAbsolute(target) && isSafePathTarget(target, policy.safePaths.relative, []);
+  return relativeScope
+    ? isSafePathTarget(actual, policy.safePaths.relative, [])
+    : isSafePathTarget(resolved, [], policy.safePaths.absolute);
 };
 
 const quoteArgument = (argument: string): string =>
   `'${argument.replaceAll("'", String.raw`'\''`)}'`;
 
-const operationDecision = (operation: CodeOperation, policy: CodePolicy): Decision => {
+const operationDecision = (operation: CodeOperation, originalPolicy: CodePolicy): Decision => {
+  const policy = {
+    ...originalPolicy,
+    cwd:
+      operation.cwd === undefined
+        ? originalPolicy.cwd
+        : path.resolve(originalPolicy.cwd, operation.cwd),
+  };
+  if (operation.cwd !== undefined && policy.cwd !== originalPolicy.cwd) {
+    try {
+      if (!statSync(policy.cwd).isDirectory()) {
+        return codeDeny('The operation has an unresolved working directory.');
+      }
+    } catch {
+      return codeDeny('The operation has an unresolved working directory.');
+    }
+  }
   if (operation.kind === 'process') {
     return policy.inspectCommand(operation.argv.map(quoteArgument).join(' '), policy.cwd);
   }
@@ -143,8 +160,13 @@ const operationDecision = (operation: CodeOperation, policy: CodePolicy): Decisi
     : pathProtect({ file_path: target, content: '' });
 };
 
-const inspectCode = (language: CodeLanguage, source: string, policy: CodePolicy): Decision => {
-  const report = analyzeCode(language, source);
+const inspectCode = (
+  language: CodeLanguage,
+  source: string,
+  policy: CodePolicy,
+  argv?: readonly (string | null)[],
+): Decision => {
+  const report = analyzeCode(language, source, argv, policy.cwd);
   if (report.gap !== null) {
     return codeDeny(report.gap);
   }
@@ -171,7 +193,7 @@ const embeddedCode = (program: ShellProgram, policy: CodePolicy): Decision => {
           'Interpreter startup, working directory, or remote filesystem state is not verified.',
         );
       }
-      const report = analyzeCode(input.language, input.source);
+      const report = analyzeCode(input.language, input.source, input.argv, localPolicy.cwd);
       if (
         invocation.cwd === null &&
         report.operations.some(
@@ -180,7 +202,7 @@ const embeddedCode = (program: ShellProgram, policy: CodePolicy): Decision => {
       ) {
         return codeDeny('An operation depends on an unresolved working directory.');
       }
-      decisions.push(inspectCode(input.language, input.source, localPolicy));
+      decisions.push(inspectCode(input.language, input.source, localPolicy, input.argv));
     }
   }
   return decisions.length === 0 ? allow('embedded-code') : merge(decisions);

@@ -21,7 +21,17 @@ const isData = (value: Value): boolean => {
       } else if (current.kind === 'object') {
         pending.push(...current.entries.values());
       } else if (
-        !new Set(['string', 'number', 'text', 'counter', 'data', 'builtin']).has(current.kind)
+        !new Set([
+          'string',
+          'number',
+          'text',
+          'counter',
+          'data',
+          'builtin',
+          'path',
+          'opaque-path',
+          'environment',
+        ]).has(current.kind)
       ) {
         return false;
       }
@@ -48,9 +58,10 @@ const replaceText = (args: readonly Value[], language: CodeLanguage): Value => {
     !(
       before.kind === 'string' ||
       before.kind === 'text' ||
+      before.kind === 'data' ||
       (language !== 'python' && before.kind === 'builtin' && before.name === 'RegExp')
     ) ||
-    !['string', 'text'].includes(after.kind)
+    !['string', 'text', 'data'].includes(after.kind)
   ) {
     return failInspection(
       'Text replacement needs two strings and an optional Python integer count.',
@@ -110,6 +121,13 @@ const textMethod = (
         'endsWith',
         'includes',
         'find',
+        'rfind',
+        'partition',
+        'rpartition',
+        'finditer',
+        'start',
+        'end',
+        'span',
         'index',
         'indexOf',
         'match',
@@ -133,6 +151,9 @@ const dataMethod = (
   language: CodeLanguage,
 ): Value => {
   requireData(args);
+  if (language !== 'python' && name === 'includes' && isData(receiver)) {
+    return data;
+  }
   if (language !== 'python' && name === 'join' && isData(receiver)) {
     return text;
   }
@@ -148,9 +169,12 @@ const dataMethod = (
   }
   if (
     language === 'python' &&
-    ['get', 'keys', 'values', 'items', 'count', 'index'].includes(name) &&
+    ['get', 'keys', 'values', 'items', 'count', 'index', 'setdefault'].includes(name) &&
     isData(receiver)
   ) {
+    if (name === 'setdefault' && receiver.kind === 'object') {
+      receiver.opaque = true;
+    }
     return data;
   }
   return failInspection(`Unsupported data method: ${name}.`);
@@ -219,7 +243,14 @@ const dataCall = (name: string, args: readonly Value[]): Value | null => {
     requireData(args);
     return data;
   }
-  if (['sys.stdout.write', 'sys.stderr.write'].includes(name)) {
+  if (
+    [
+      'sys.stdout.write',
+      'sys.stderr.write',
+      'process.stdout.write',
+      'process.stderr.write',
+    ].includes(name)
+  ) {
     requireData(args);
     return data;
   }

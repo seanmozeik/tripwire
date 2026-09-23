@@ -13,15 +13,47 @@ const pythonModuleBinding = (
   return { qualified, bound: from === null ? (qualified.split('.')[0] ?? qualified) : qualified };
 };
 
-const pythonImport = (
+const dottedImport = (
   parts: readonly SyntaxNode[],
+  start: number,
+  initial: string,
+  text: (node: SyntaxNode) => string,
+): { name: string; index: number } => {
+  let name = initial;
+  let index = start;
+  while (parts[index]?.name === '.') {
+    const next = parts[index + 1];
+    if (next?.name !== 'VariableName') {
+      return failInspection('Missing dotted module member.');
+    }
+    name += `.${text(next)}`;
+    index += 2;
+  }
+  return { name, index };
+};
+
+const pythonImport = (
+  input: readonly SyntaxNode[],
   text: (node: SyntaxNode) => string,
 ): ReadonlyMap<string, Value> => {
+  const parts = input.filter((part) => !['(', ')'].includes(part.name));
   const [first, moduleNode] = parts;
   if (moduleNode === undefined) {
     return failInspection('Missing Python import.');
   }
-  const from = first?.name === 'from' ? moduleName(text(moduleNode), 'python') : null;
+  const from =
+    first?.name === 'from'
+      ? moduleName(
+          parts
+            .slice(
+              1,
+              parts.findIndex((part) => part.name === 'import'),
+            )
+            .map((part) => text(part))
+            .join(''),
+          'python',
+        )
+      : null;
   const bindings = new Map<string, Value>();
   let index = from === null ? 1 : parts.findIndex((part) => part.name === 'import') + 1;
   while (index < parts.length) {
@@ -29,9 +61,13 @@ const pythonImport = (
     if (imported?.name !== 'VariableName' && imported?.name !== 'MemberExpression') {
       return failInspection('Unsupported Python import list.');
     }
-    const binding = pythonModuleBinding(text(imported), from);
+    let importedName = text(imported);
     index += 1;
-    let alias = text(imported).split('.')[0] ?? '';
+    const dotted = dottedImport(parts, index, importedName, text);
+    importedName = dotted.name;
+    ({ index } = dotted);
+    const binding = pythonModuleBinding(importedName, from);
+    let alias = importedName.split('.')[0] ?? '';
     let { bound } = binding;
     if (parts[index]?.name === 'as') {
       const name = parts[index + 1];

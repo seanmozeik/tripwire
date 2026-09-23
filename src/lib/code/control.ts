@@ -50,6 +50,7 @@ const forgetLoopWrites = (node: SyntaxNode, context: ControlContext): void => {
       'WithStatement',
       'UpdateStatement',
       'AssignmentExpression',
+      'NamedExpression',
       'UpdateExpression',
     ].includes(node.name)
   ) {
@@ -123,7 +124,10 @@ const iterate = (
   let values: readonly Value[];
   if (iterable.kind === 'list' && iterable.opaque !== true) {
     values = iterable.items;
-  } else if (['data', 'text', 'list', 'object'].includes(iterable.kind)) {
+  } else if (
+    ['data', 'text', 'string', 'list', 'object', 'file', 'builtin'].includes(iterable.kind) ||
+    (iterable.kind === 'symbol' && iterable.name === 'sys.stdin')
+  ) {
     values = [data];
   } else {
     return failInspection('Iteration needs bounded literals or inert JSON data.');
@@ -167,7 +171,7 @@ const inspectLoop = (node: SyntaxNode, context: ControlContext): void => {
       fields.length !== 6 ||
       !['const', 'let'].includes(declaration?.name ?? '') ||
       operator?.name !== 'of' ||
-      block?.name !== 'Block'
+      block === undefined
     ) {
       return failInspection('Unsupported JavaScript iteration form.');
     }
@@ -192,9 +196,15 @@ const inspectLoop = (node: SyntaxNode, context: ControlContext): void => {
     parts[index + 1],
     context,
     () => {
-      for (const target of parts.slice(1, index).filter((part) => part.name === 'VariableName')) {
-        if (index > 2) {
-          context.bindings.set(context.text(target), data);
+      const targets = parts.slice(1, index).filter((part) => part.name === 'VariableName');
+      if (targets.length > 1) {
+        const last = targets.at(-1);
+        const row = last === undefined ? data : context.bindings.get(context.text(last));
+        for (const [position, target] of targets.entries()) {
+          context.bindings.set(
+            context.text(target),
+            row?.kind === 'list' && row.opaque !== true ? (row.items[position] ?? data) : data,
+          );
         }
       }
       context.statement(body);

@@ -19,7 +19,7 @@ const indexedValue = (value: Value, key: Value): Value => {
   if (value.kind === 'text' || value.kind === 'string') {
     return text;
   }
-  if (value.kind === 'data' || value.kind === 'counter') {
+  if (value.kind === 'data' || value.kind === 'counter' || value.kind === 'environment') {
     return data;
   }
   if (value.kind === 'list' && key.kind === 'number') {
@@ -33,9 +33,23 @@ const indexedValue = (value: Value, key: Value): Value => {
   return failInspection('Computed property access is not inspected.');
 };
 
-const namedMember = (value: Value, member: string, language: CodeLanguage): Value => {
-  if (member.startsWith('_') || member === 'constructor' || member === 'prototype') {
-    return failInspection('Runtime reflection is not inspected.');
+const instanceMember = (value: Value, member: string): Value | null => {
+  if (value.kind === 'opaque-path') {
+    return { kind: 'method', receiver: value, name: member };
+  }
+  if (value.kind === 'instance') {
+    if (value.htmlParser === true && ['feed', 'close'].includes(member)) {
+      return {
+        kind: 'bound-method',
+        fn: { kind: 'symbol', name: 'html-parser.feed' },
+        receiver: value,
+      };
+    }
+    const method = value.methods.get(member);
+    return (
+      value.entries.get(member) ??
+      (method === undefined ? data : { kind: 'bound-method', fn: method, receiver: value })
+    );
   }
   if (value.kind === 'path' && member === 'parent') {
     return { kind: 'path', path: path.posix.dirname(value.path) };
@@ -47,8 +61,25 @@ const namedMember = (value: Value, member: string, language: CodeLanguage): Valu
       value: { name: parsed.base, suffix: parsed.ext, stem: parsed.name }[member] ?? parsed.name,
     };
   }
+  return null;
+};
+
+const namedMember = (value: Value, member: string, language: CodeLanguage): Value => {
+  if (value.kind === 'builtin' && value.name === 'python-type' && member === '__name__') {
+    return text;
+  }
+  if (member.startsWith('_') || member === 'constructor' || member === 'prototype') {
+    return failInspection('Runtime reflection is not inspected.');
+  }
+  const special = instanceMember(value, member);
+  if (special !== null) {
+    return special;
+  }
   if (value.kind === 'symbol') {
     const name = `${value.name}.${member}`;
+    if (['os.environ', 'process.env'].includes(name)) {
+      return { kind: 'environment' };
+    }
     return dataProperties.has(name) ? data : symbol(name);
   }
   if (value.kind === 'builtin') {
@@ -59,7 +90,8 @@ const namedMember = (value: Value, member: string, language: CodeLanguage): Valu
     value.kind === 'file' ||
     value.kind === 'archive' ||
     value.kind === 'hash' ||
-    value.kind === 'bun-file'
+    value.kind === 'bun-file' ||
+    value.kind === 'image'
   ) {
     return { kind: 'method', receiver: value, name: member };
   }
@@ -67,6 +99,9 @@ const namedMember = (value: Value, member: string, language: CodeLanguage): Valu
 };
 
 const dataMember = (value: Value, member: string, language: CodeLanguage): Value => {
+  if (value.kind === 'environment') {
+    return data;
+  }
   if (member === 'length' && isData(value)) {
     return data;
   }
@@ -93,6 +128,8 @@ const dataMember = (value: Value, member: string, language: CodeLanguage): Value
         'toLowerCase',
         'slice',
         'includes',
+        'startsWith',
+        'endsWith',
         'join',
         'split',
         'trim',

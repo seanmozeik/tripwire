@@ -21,6 +21,9 @@ const valueString = (value: Value | undefined): string => {
   return failInspection('An operation has an unresolved path or argument.');
 };
 const PYTHON_MODULES = new Set([
+  'plistlib',
+  'asyncio',
+  'inspect',
   'collections',
   'datetime',
   'time',
@@ -32,6 +35,7 @@ const PYTHON_MODULES = new Set([
   'urllib',
   'urllib.parse',
   'html',
+  'html.parser',
   'random',
   'string',
   'itertools',
@@ -53,8 +57,17 @@ const PYTHON_MODULES = new Set([
   'glob',
   'hashlib',
 ]);
-const JS_MODULES = new Set(['fs', 'fs/promises', 'path', 'child_process', 'crypto']);
+const JS_MODULES = new Set(['fs', 'fs/promises', 'path', 'child_process', 'crypto', 'util', 'os']);
 const PYTHON_GLOBALS = [
+  'isinstance',
+  'iter',
+  'next',
+  'reversed',
+  'oct',
+  'hex',
+  'Exception',
+  'ValueError',
+  'TypeError',
   'print',
   'dict',
   'set',
@@ -82,6 +95,10 @@ const PYTHON_GLOBALS = [
   'all',
 ];
 const JS_GLOBALS = [
+  'Error',
+  'TypeError',
+  'setInterval',
+  'setTimeout',
   'console',
   'require',
   'JSON',

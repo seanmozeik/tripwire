@@ -14,7 +14,7 @@ bunTest.describe('adversarial review regressions (policy-only)', () => {
     python('import os\nos.unlink(os.path.join("/tmp", "/protected"))'),
     python('from pathlib import Path\n(Path("/tmp") / "/protected").unlink()'),
     python('import fs'),
-    javascript('require("os")'),
+    javascript('require("os").setPriority(1, 10)'),
     javascript('require("fs").readFileSync("/protected", {flag:"w"})'),
     javascript('require("fs").readFileSync("/protected", {flag:512})'),
     javascript('const {rmSync: del} = require("fs"); del("/protected")'),
@@ -26,7 +26,7 @@ bunTest.describe('adversarial review regressions (policy-only)', () => {
     python('import os\nos.chdir("/protected")\nos.unlink("dist/a")'),
     `cd /protected; ${python('import os\nos.unlink("dist/a")')}`,
     `cd /protected; ${javascript('require("fs").rmSync("dist/a")')}`,
-    'python3 -c "print(1)" extra-argument',
+    "python3 -c 'import os,sys; os.remove(sys.argv[1])' /protected",
     'node -e "console.log(1)" --require ./uninspected.js',
     'python3 - <<< "$CODE"',
     'python3 - <<PY\nprint("$(uninspected)")\nPY',
@@ -82,7 +82,9 @@ bunTest.describe('adversarial review regressions (policy-only)', () => {
     bunTest.expect(report.gap).toBeNull();
     bunTest
       .expect(report.operations)
-      .toEqual([{ kind: 'delete', path: '/protected', range: { start: 37, end: source.length } }]);
+      .toEqual([
+        { kind: 'delete', path: '/protected', cwd: '.', range: { start: 37, end: source.length } },
+      ]);
   });
 
   bunTest.test('symlink escape blocks and leaves the sentinel unchanged', () => {

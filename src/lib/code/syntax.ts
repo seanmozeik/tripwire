@@ -1,3 +1,5 @@
+import { cpuUsage } from 'node:process';
+
 import type { SyntaxNode } from '@lezer/common';
 import { parser as javascript } from '@lezer/javascript';
 import { parser as python } from '@lezer/python';
@@ -35,10 +37,15 @@ const parseCode = (language: CodeLanguage, source: string): SyntaxNode => {
   }
   const parser = parsers[language];
   const pending = parser.startParse(source);
-  const deadline = performance.now() + 40;
+  // Charge parser work, not time spent descheduled on a busy host.
+  const started = cpuUsage();
+  const overBudget = (): boolean => {
+    const elapsed = cpuUsage(started);
+    return elapsed.user + elapsed.system > 40_000;
+  };
   let tree = pending.advance();
   while (tree === null) {
-    if (performance.now() > deadline) {
+    if (overBudget()) {
       throw new CodeInspectionError('Code exceeds the parsing time budget.');
     }
     tree = pending.advance();
@@ -51,7 +58,7 @@ const parseCode = (language: CodeLanguage, source: string): SyntaxNode => {
       break;
     }
     count += 1;
-    if (count > MAX_NODES || item.depth > MAX_DEPTH || performance.now() > deadline) {
+    if (count > MAX_NODES || item.depth > MAX_DEPTH || overBudget()) {
       throw new CodeInspectionError('Code exceeds the tree inspection budget.');
     }
     if (item.node.type.isError) {

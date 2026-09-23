@@ -5,11 +5,38 @@ import type { Value } from './types';
 
 type Invoke = (fn: Value, args: readonly Value[]) => Value;
 
+const replacementCallback = (
+  fn: Extract<Value, { kind: 'method' }>,
+  input: CallArguments,
+  invoke: Invoke,
+): Value | null => {
+  if (
+    ['replace', 'replaceAll', 'sub', 'subn'].includes(fn.name) &&
+    input.positional.some((value) => value.kind === 'closure')
+  ) {
+    requireData([fn.receiver]);
+    const index = ['sub', 'subn'].includes(fn.name) ? 0 : 1;
+    const callback = input.positional[index];
+    requireData(input.positional.filter((_, position) => position !== index));
+    requireData([...input.keywords.values()]);
+    if (callback?.kind !== 'closure') {
+      return failInspection('Unresolved replacement callback.');
+    }
+    requireData([invoke(callback, [data])]);
+    return fn.name === 'subn' ? data : text;
+  }
+  return null;
+};
+
 const methodCallback = (
   fn: Extract<Value, { kind: 'method' }>,
   input: CallArguments,
   invoke: Invoke,
 ): Value | null => {
+  const replacement = replacementCallback(fn, input, invoke);
+  if (replacement !== null) {
+    return replacement;
+  }
   if (!['map', 'filter', 'forEach', 'reduce', 'sort'].includes(fn.name)) {
     return null;
   }
@@ -41,8 +68,27 @@ const methodCallback = (
   return data;
 };
 
+const scheduledCallback = (name: string, input: CallArguments, invoke: Invoke): Value | null => {
+  const args = input.positional;
+  if (['process.once', 'process.on', 'setInterval', 'setTimeout', 'asyncio.run'].includes(name)) {
+    const index = name.startsWith('process.') ? 1 : 0;
+    const callback = args[index];
+    requireData(args.filter((_, position) => position !== index));
+    if (callback?.kind !== 'closure' || input.keywords.size > 0) {
+      return failInspection('Scheduling requires an inspected closure.');
+    }
+    requireData([invoke(callback, [])]);
+    return data;
+  }
+  return null;
+};
+
 const namedCallback = (name: string, input: CallArguments, invoke: Invoke): Value | null => {
   const args = input.positional;
+  const scheduled = scheduledCallback(name, input, invoke);
+  if (scheduled !== null) {
+    return scheduled;
+  }
   if (name === 'sorted' && input.keywords.has('key')) {
     const callback = input.keywords.get('key');
     requireData(args);
@@ -74,9 +120,27 @@ const namedCallback = (name: string, input: CallArguments, invoke: Invoke): Valu
   return null;
 };
 
+const groupBy = (input: CallArguments, invoke: Invoke): Value => {
+  const args = input.positional;
+  const [items, callback] = args;
+  if (
+    args.length !== 2 ||
+    input.keywords.size > 0 ||
+    items === undefined ||
+    callback === undefined
+  ) {
+    return failInspection('Grouping requires inspected data and a callback.');
+  }
+  requireData([items, invoke(callback, [data, data])]);
+  return data;
+};
+
 const callbackCall = (fn: Value, input: CallArguments, invoke: Invoke): Value | null => {
   if (fn.kind === 'method') {
     return methodCallback(fn, input, invoke);
+  }
+  if (fn.kind === 'symbol' && fn.name === 'Map.groupBy') {
+    return groupBy(input, invoke);
   }
   return fn.kind === 'symbol' ? namedCallback(fn.name, input, invoke) : null;
 };

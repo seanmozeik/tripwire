@@ -12,6 +12,14 @@ interface CallSignature {
   readonly defaults?: Readonly<Record<string, Value>>;
   readonly options?: Readonly<Record<string, (value: Value) => void>>;
 }
+const addKeywords = (keywords: Map<string, Value>, entries: ReadonlyMap<string, Value>): void => {
+  for (const [name, item] of entries) {
+    if (keywords.has(name)) {
+      return failInspection('Duplicate expanded keyword.');
+    }
+    keywords.set(name, item);
+  }
+};
 const callArguments = (
   parts: readonly SyntaxNode[],
   evaluate: (node: SyntaxNode) => Value,
@@ -24,7 +32,21 @@ const callArguments = (
     if (part === undefined) {
       return failInspection('Missing call argument.');
     }
-    if (parts[index + 1]?.name === 'AssignOp') {
+    if (['*', 'Spread', '**'].includes(part.name)) {
+      const next = parts[index + 1];
+      if (next === undefined) {
+        return failInspection('Missing expanded argument.');
+      }
+      const value = evaluate(next);
+      if (part.name === '**' && value.kind === 'object' && value.opaque !== true) {
+        addKeywords(keywords, value.entries);
+      } else if (part.name !== '**' && value.kind === 'list' && value.opaque !== true) {
+        positional.push(...value.items);
+      } else {
+        return failInspection('Expanded arguments must be statically bounded.');
+      }
+      index += 1;
+    } else if (parts[index + 1]?.name === 'AssignOp') {
       const value = parts[index + 2];
       const name = source.slice(part.from, part.to);
       if (keywords.has(name) || value === undefined) {

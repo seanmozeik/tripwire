@@ -1,6 +1,7 @@
 import path from 'node:path';
 
 import {
+  DYNAMIC_VALUE,
   isSafePathTarget,
   safeScopesSummary,
   type ShellInvocation,
@@ -21,19 +22,25 @@ const safeTarget = (
   relative: readonly string[],
   absolute: readonly string[],
 ): boolean => {
-  if (!path.isAbsolute(target) && seg.cwd === null) {
+  if (
+    seg.words.some(
+      (word) => word.value === target && ['dynamic', 'background-pid'].includes(word.kind),
+    )
+  ) {
     return false;
   }
-  if (!isSafePathTarget(target, relative, absolute)) {
+  if (target === '' || target.includes('\0') || target.includes(DYNAMIC_VALUE)) {
+    return false;
+  }
+  if (!path.isAbsolute(target) && seg.cwd === null) {
     return false;
   }
   const cwd = seg.cwd ?? process.cwd();
   const actual = resolveWritePath(path.resolve(cwd, target));
-  return isSafePathTarget(
-    path.isAbsolute(target) ? actual : path.relative(resolveWritePath(cwd), actual),
-    relative,
-    absolute,
-  );
+  if (!path.isAbsolute(target) && isSafePathTarget(target, relative, [])) {
+    return isSafePathTarget(path.relative(resolveWritePath(cwd), actual), relative, []);
+  }
+  return isSafePathTarget(actual, [], absolute);
 };
 
 const analyzeRm = (seg: ShellInvocation, config: SafePathsConfig): readonly string[] => {

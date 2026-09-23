@@ -1,8 +1,16 @@
 import { data, requireData, text } from './data';
+import { failInspection } from './syntax';
+import { transpiler, transpile } from './transpiler';
 import type { Value } from './types';
 
 // Each entry is a callable contract. Import permission never authorizes a module's members.
 const pureMembers = {
+  plistlib: ['loads', 'dumps'],
+  util: ['isDeepStrictEqual'],
+  'Bun.TOML': ['parse'],
+  inspect: ['cleandoc'],
+  os: ['getcwd', 'tmpdir', 'homedir', 'platform', 'arch'],
+  path: ['dirname', 'basename', 'extname'],
   math: [
     'ceil',
     'floor',
@@ -137,7 +145,6 @@ const pureMembers = {
   Date: ['now', 'parse', 'UTC'],
   Buffer: ['from', 'alloc', 'byteLength', 'concat', 'isBuffer'],
   process: ['cwd'],
-  os: ['getcwd'],
 };
 const pureCalls = new Set(
   Object.entries(pureMembers).flatMap(([module, members]) =>
@@ -162,9 +169,80 @@ const conversions = new Set([
   'repr',
   'type',
   'SystemExit',
+  'Error',
+  'TypeError',
+  'Exception',
+  'ValueError',
+  'iter',
+  'next',
+  'reversed',
+  'oct',
+  'hex',
 ]);
 
+const introspectionCall = (name: string, args: readonly Value[]): Value | null => {
+  if (name === 'pathlib.Path.home' || name === 'pathlib.Path.cwd') {
+    if (args.length !== 0) {
+      return failInspection('Unexpected path constructor arguments.');
+    }
+    return { kind: 'opaque-path' };
+  }
+  if (name === 'importlib.util.find_spec') {
+    const [module] = args;
+    if (
+      args.length !== 1 ||
+      module?.kind !== 'string' ||
+      !/^[a-zA-Z][a-zA-Z0-9_]*$/u.test(module.value)
+    ) {
+      return failInspection(
+        'Dotted or runtime module discovery can execute parent-package imports.',
+      );
+    }
+    return data;
+  }
+  if (name === 'isinstance') {
+    const [value, target] = args;
+    if (
+      args.length !== 2 ||
+      value === undefined ||
+      target?.kind !== 'symbol' ||
+      !['dict', 'list', 'str', 'int', 'float', 'tuple', 'set', 'bool'].includes(target.name)
+    ) {
+      return null;
+    }
+    requireData([value]);
+    return data;
+  }
+  return null;
+};
+
 const builtinCall = (name: string, args: readonly Value[]): Value | null => {
+  if (name === 'Bun.Transpiler') {
+    return transpiler(args);
+  }
+  const inspected = introspectionCall(name, args);
+  if (inspected !== null) {
+    return inspected;
+  }
+  if (name === 'type') {
+    requireData(args);
+    return { kind: 'builtin', name: 'python-type' };
+  }
+  if (name === 're.compile') {
+    requireData(args);
+    return { kind: 'builtin', name: 'python-regex' };
+  }
+  if (name === 'difflib.SequenceMatcher') {
+    requireData(args);
+    return { kind: 'builtin', name: 'sequence-matcher' };
+  }
+  if (name === 'json.JSONDecoder' && args.length === 0) {
+    return { kind: 'builtin', name: 'json-decoder' };
+  }
+  if (name === 'require.resolve') {
+    requireData(args);
+    return text;
+  }
   if (constructors.has(name) || (name.startsWith('datetime.') && pureCalls.has(name))) {
     requireData(args);
     return name === 'Array' ? data : { kind: 'builtin', name: name.split('.')[0] ?? name };
@@ -181,6 +259,18 @@ const builtinCall = (name: string, args: readonly Value[]): Value | null => {
 };
 
 const builtinMethods: Readonly<Record<string, ReadonlySet<string>>> = {
+  'python-regex': new Set([
+    'finditer',
+    'findall',
+    'search',
+    'match',
+    'fullmatch',
+    'split',
+    'sub',
+    'subn',
+  ]),
+  'sequence-matcher': new Set(['get_opcodes', 'get_matching_blocks', 'ratio', 'quick_ratio']),
+  'json-decoder': new Set(['raw_decode', 'decode']),
   Date: new Set([
     'toISOString',
     'toJSON',
@@ -199,6 +289,9 @@ const builtinMethods: Readonly<Record<string, ReadonlySet<string>>> = {
   datetime: new Set(['isoformat', 'strftime', 'timestamp', 'date', 'time', 'total_seconds']),
 };
 const builtinMethod = (receiver: string, name: string, args: readonly Value[]): Value | null => {
+  if (receiver === 'transpiler') {
+    return transpile(name, args);
+  }
   if (['Map', 'Set'].includes(receiver) && ['set', 'add', 'delete', 'clear'].includes(name)) {
     requireData(args);
     return { kind: 'builtin', name: receiver };
@@ -211,6 +304,9 @@ const builtinMethod = (receiver: string, name: string, args: readonly Value[]): 
 };
 
 const builtinProperty = (receiver: string, member: string): Value | null => {
+  if (receiver === 'process-result' && ['stdout', 'stderr', 'returncode'].includes(member)) {
+    return member === 'returncode' ? data : text;
+  }
   if (['Map', 'Set'].includes(receiver) && member === 'size') {
     return data;
   }
@@ -272,7 +368,6 @@ const builtinProperty = (receiver: string, member: string): Value | null => {
 };
 
 const dataProperties = new Set([
-  'process.env',
   'process.argv',
   'process.platform',
   'process.version',

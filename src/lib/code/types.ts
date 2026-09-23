@@ -9,13 +9,14 @@ interface CodeRange {
   readonly end: number;
 }
 
-type CodeOperation =
+type CodeOperation = (
   | {
       readonly kind: 'read' | 'write' | 'delete' | 'truncate' | 'json-module';
       readonly path: string;
       readonly range: CodeRange;
     }
-  | { readonly kind: 'process'; readonly argv: readonly string[]; readonly range: CodeRange };
+  | { readonly kind: 'process'; readonly argv: readonly string[]; readonly range: CodeRange }
+) & { readonly cwd?: string };
 
 interface CodeReport {
   readonly operations: readonly CodeOperation[];
@@ -26,9 +27,24 @@ interface CodeReport {
 interface ClosureParameter {
   readonly name: string;
   readonly fallback?: Value;
+  readonly pattern?: SyntaxNode;
+  readonly keywordOnly?: boolean;
+  readonly rest?: 'positional' | 'keywords';
 }
 
 type Value =
+  | {
+      readonly kind: 'class';
+      readonly htmlParser?: boolean;
+      readonly methods: ReadonlyMap<string, Value>;
+    }
+  | {
+      readonly kind: 'instance';
+      readonly htmlParser?: boolean;
+      readonly methods: ReadonlyMap<string, Value>;
+      readonly entries: Map<string, Value>;
+    }
+  | { readonly kind: 'bound-method'; readonly fn: Value; readonly receiver: Value }
   | { readonly kind: 'builtin'; readonly name: string }
   | {
       readonly kind: 'closure';
@@ -37,6 +53,9 @@ type Value =
       readonly body: SyntaxNode;
       readonly expression: boolean;
     }
+  | { readonly kind: 'environment' }
+  | { readonly kind: 'opaque-path' }
+  | { readonly kind: 'image'; readonly path: string }
   | { readonly kind: 'counter' }
   | { readonly kind: 'hash' }
   | { readonly kind: 'bun-file'; readonly path: string }

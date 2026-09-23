@@ -6,6 +6,7 @@ import { normalizeCallArguments } from './call-signatures';
 import { callbackCall } from './callbacks';
 import { data, dataCall, dataMethod, isData, requireData, text } from './data';
 import { validateReadOptions, validateWriteOptions } from './file-options';
+import { resolvePathCall } from './path-resolution';
 import { pythonLibraryCall } from './python-library';
 import { failInspection } from './syntax';
 import type { CodeLanguage, CodeOperation, CodeRange, Value } from './types';
@@ -58,6 +59,7 @@ const PROCESS = new Set([
 interface CallContext {
   readonly callback: (fn: Value, args: readonly Value[]) => Value;
   readonly language: CodeLanguage;
+  readonly cwd?: string;
   readonly range: CodeRange;
   readonly operations: CodeOperation[];
 }
@@ -90,25 +92,21 @@ const pathEffect = (
 ): Value | null => {
   if (receiver.kind === 'path' && ['rename', 'replace', 'symlink_to'].includes(member)) {
     const target = valueString(args[0]);
-    context.operations.push(
-      {
-        kind: member === 'symlink_to' ? 'read' : 'delete',
-        path: receiver.path,
-        range: context.range,
-      },
-      {
-        kind: 'write',
-        path: member === 'symlink_to' ? receiver.path : target,
-        range: context.range,
-      },
-    );
-    if (member !== 'symlink_to') {
-      context.operations.push({ kind: 'delete', path: target, range: context.range });
+    if (args.length !== 1) {
+      return failInspection('File transfer options require inspection.');
     }
-    if (member === 'symlink_to') {
-      context.operations.push({ kind: 'read', path: target, range: context.range });
-    }
+    context.operations.push({
+      kind: 'process',
+      argv:
+        member === 'symlink_to'
+          ? ['ln', '-s', '--', target, receiver.path]
+          : ['mv', '--', receiver.path, target],
+      range: context.range,
+    });
     return { kind: 'path', path: target };
+  }
+  if (receiver.kind === 'path' && ['resolve', 'readlink'].includes(member)) {
+    return resolvePathCall(receiver.path, member, args, context);
   }
   if (receiver.kind === 'path' && member === 'with_name') {
     return {
@@ -243,21 +241,69 @@ const collectionMethod = (
   return null;
 };
 
+const bunMethod = (
+  fn: Extract<Value, { kind: 'method' }>,
+  args: readonly Value[],
+  context: CallContext,
+): Value | null => {
+  if (fn.receiver.kind === 'image') {
+    if (fn.name === 'write' && args.length === 1) {
+      context.operations.push(
+        { kind: 'read', path: fn.receiver.path, range: context.range },
+        { kind: 'write', path: valueString(args[0]), range: context.range },
+      );
+      return data;
+    }
+    if (['avif', 'webp', 'png', 'jpeg', 'resize', 'rotate'].includes(fn.name)) {
+      requireData(args);
+      return fn.receiver;
+    }
+    return failInspection('Uninspected image operation.');
+  }
+  if (fn.receiver.kind === 'bun-file') {
+    if (fn.name === 'image' && args.length === 0) {
+      return { kind: 'image', path: fn.receiver.path };
+    }
+    if (fn.name === 'write' && args.length === 1) {
+      requireData(args);
+      context.operations.push({ kind: 'write', path: fn.receiver.path, range: context.range });
+      return data;
+    }
+    if (fn.name === 'unlink' && args.length === 0) {
+      context.operations.push({ kind: 'delete', path: fn.receiver.path, range: context.range });
+      return data;
+    }
+    if (
+      !['json', 'text', 'arrayBuffer', 'bytes', 'exists', 'stat'].includes(fn.name) ||
+      args.length !== 0
+    ) {
+      return failInspection('Unsupported Bun file read.');
+    }
+    context.operations.push({ kind: 'read', path: fn.receiver.path, range: context.range });
+    return fn.name === 'text' ? text : data;
+  }
+  return null;
+};
+
 const methodCall = (
   fn: Extract<Value, { kind: 'method' }>,
   args: readonly Value[],
   context: CallContext,
 ): Value => {
+  if (fn.receiver.kind === 'opaque-path') {
+    requireData(args);
+    if (['resolve', 'readlink', 'with_name', 'with_suffix'].includes(fn.name)) {
+      return fn.receiver;
+    }
+    return failInspection('Filesystem-derived paths cannot authorize file operations.');
+  }
   const extra = collectionMethod(fn, args);
   if (extra !== null) {
     return extra;
   }
-  if (fn.receiver.kind === 'bun-file') {
-    if (!['json', 'text', 'arrayBuffer', 'bytes'].includes(fn.name) || args.length !== 0) {
-      return failInspection('Unsupported Bun file read.');
-    }
-    context.operations.push({ kind: 'read', path: fn.receiver.path, range: context.range });
-    return fn.name === 'text' ? text : data;
+  const bun = bunMethod(fn, args, context);
+  if (bun !== null) {
+    return bun;
   }
   if (fn.receiver.kind === 'hash') {
     requireData(args);
@@ -309,6 +355,21 @@ const resolveCall = (fn: Value, input: CallArguments, context: CallContext): Val
   const printed = printCall(fn, input);
   if (printed !== null) {
     return printed;
+  }
+  if (fn.kind === 'symbol' && PROCESS.has(fn.name) && input.keywords.has('cwd')) {
+    const cwd = valueString(input.keywords.get('cwd'));
+    const keywords = new Map(input.keywords);
+    keywords.delete('cwd');
+    const args = normalizeCallArguments(fn, { ...input, keywords });
+    context.operations.push({
+      kind: 'process',
+      argv: processArguments(fn.name, args),
+      cwd,
+      range: context.range,
+    });
+    return fn.name === 'subprocess.check_output'
+      ? text
+      : { kind: 'builtin', name: 'process-result' };
   }
   const args = normalizeCallArguments(fn, input);
   if (fn.kind === 'method') {
@@ -367,6 +428,33 @@ const effectCall = (name: string, args: readonly Value[], context: CallContext):
   if (name === 'open') {
     return openFile(args, context);
   }
+  if (name === 'Bun.write') {
+    if (args.length !== 2) {
+      return failInspection('Bun.write requires a path and inert content.');
+    }
+    requireData(args.slice(1));
+    context.operations.push({ kind: 'write', path: valueString(args[0]), range: context.range });
+    return data;
+  }
+  if (name === 'process.exit' || name === 'sys.exit') {
+    requireData(args);
+    return data;
+  }
+  if (name === 'Bun.spawnSync') {
+    context.operations.push({
+      kind: 'process',
+      argv: processArguments('subprocess.run', args),
+      range: context.range,
+    });
+    return {
+      kind: 'object',
+      entries: new Map([
+        ['stdout', text],
+        ['stderr', text],
+        ['exitCode', data],
+      ]),
+    };
+  }
   if (name === 'Bun.file') {
     return bunFile(args);
   }
@@ -379,7 +467,7 @@ const effectCall = (name: string, args: readonly Value[], context: CallContext):
       argv: processArguments(name, args),
       range: context.range,
     });
-    return name === 'subprocess.check_output' ? text : data;
+    return name === 'subprocess.check_output' ? text : { kind: 'builtin', name: 'process-result' };
   }
   return failInspection(`Call ${JSON.stringify(name)} has uninspected effects.`);
 };
@@ -403,6 +491,14 @@ const fileOperation = (
   if (kind === 'write') {
     validateWriteOptions(name, args);
   }
+  if (
+    kind === 'read' &&
+    args[0]?.kind === 'number' &&
+    args[0].value === 0 &&
+    name.startsWith('fs.readFile')
+  ) {
+    return args[1]?.kind === 'string' ? text : data;
+  }
   const target = valueString(args[0]);
   if (kind === 'write') {
     requireData(args.slice(1, 2));
@@ -417,8 +513,23 @@ const fileOperation = (
   return data;
 };
 
+const transferCommand = (name: string): string =>
+  [
+    'fs.rename',
+    'fs.renameSync',
+    'Deno.rename',
+    'Deno.renameSync',
+    'os.rename',
+    'os.replace',
+    'shutil.move',
+  ].includes(name)
+    ? 'mv'
+    : 'cp';
+
 const transferCall = (name: string, args: readonly Value[], context: CallContext): Value | null => {
-  if (['fs.readdirSync', 'fs.statSync', 'fs.lstatSync', 'os.listdir'].includes(name)) {
+  if (
+    ['fs.readdirSync', 'fs.statSync', 'fs.lstatSync', 'fs.existsSync', 'os.listdir'].includes(name)
+  ) {
     requireData(args.slice(1));
     context.operations.push({ kind: 'read', path: valueString(args[0]), range: context.range });
     return data;
@@ -429,6 +540,12 @@ const transferCall = (name: string, args: readonly Value[], context: CallContext
     return data;
   }
   const copy = [
+    'fs.copyFile',
+    'fs.symlink',
+    'Deno.copyFile',
+    'Deno.copyFileSync',
+    'Deno.symlink',
+    'Deno.symlinkSync',
     'fs.copyFileSync',
     'shutil.copy',
     'shutil.copy2',
@@ -436,23 +553,39 @@ const transferCall = (name: string, args: readonly Value[], context: CallContext
     'fs.symlinkSync',
     'os.symlink',
   ].includes(name);
-  const move = ['fs.renameSync', 'os.rename', 'os.replace', 'shutil.move'].includes(name);
+  const move = [
+    'fs.rename',
+    'fs.renameSync',
+    'Deno.rename',
+    'Deno.renameSync',
+    'os.rename',
+    'os.replace',
+    'shutil.move',
+  ].includes(name);
   if (!copy && !move) {
     return null;
   }
   if (args.length !== 2) {
     return failInspection('File transfer options require inspection.');
   }
-  context.operations.push(
-    { kind: 'read', path: valueString(args[0]), range: context.range },
-    { kind: 'write', path: valueString(args[1]), range: context.range },
-  );
-  if (move) {
-    context.operations.push(
-      { kind: 'delete', path: valueString(args[0]), range: context.range },
-      { kind: 'delete', path: valueString(args[1]), range: context.range },
-    );
-  }
+  const link = [
+    'fs.symlink',
+    'fs.symlinkSync',
+    'Deno.symlink',
+    'Deno.symlinkSync',
+    'os.symlink',
+  ].includes(name);
+  context.operations.push({
+    kind: 'process',
+    argv: [
+      link ? 'ln' : transferCommand(name),
+      ...(link ? ['-s'] : []),
+      '--',
+      valueString(args[0]),
+      valueString(args[1]),
+    ],
+    range: context.range,
+  });
   return data;
 };
 

@@ -2,6 +2,7 @@ import path from 'node:path';
 
 import type { ShellProgram, ShellWord } from '../lib/bash';
 import { type Decision, allow, deny } from '../lib/decision';
+import { fileTransfer } from './file-transfer';
 import { classifyProtectedPath, type ProtectedPathSpec } from './path-protect';
 
 // Block writes (via shell redirect, tee, cp, mv) that target sensitive
@@ -89,13 +90,16 @@ const bashRedirect = (program: ShellProgram): Decision => {
         }
       }
     }
-    if (seg.head === 'cp' || seg.head === 'mv') {
-      // The destination is the last positional arg.
+    if (['cp', 'mv', 'ln'].includes(seg.head)) {
+      const decision = fileTransfer(seg);
+      if (decision.kind !== 'allow') {
+        return decision;
+      }
       const destination = argumentWords.at(-1);
       if (destination !== undefined) {
-        const decision = checkWord(destination, seg.cwd);
-        if (decision !== null) {
-          return decision;
+        const protectedTarget = checkWord(destination, seg.cwd);
+        if (protectedTarget !== null) {
+          return protectedTarget;
         }
       }
     }

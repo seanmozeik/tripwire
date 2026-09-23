@@ -104,37 +104,21 @@ const transfers: readonly [CodeLanguage, string, readonly CodeOperation['kind'][
   [
     'python',
     'from pathlib import Path\nPath("/tmp/example-a").rename("/tmp/example-b")',
-    ['delete', 'write', 'delete'],
+    ['process'],
   ],
   [
     'python',
     'from pathlib import Path\nPath("/tmp/example-a").replace("/tmp/example-b")',
-    ['delete', 'write', 'delete'],
+    ['process'],
   ],
-  [
-    'python',
-    'from pathlib import Path\nPath("example-a").symlink_to("example-b")',
-    ['read', 'write', 'read'],
-  ],
-  [
-    'python',
-    'import os\nos.rename("/tmp/example-a","/tmp/example-b")',
-    ['read', 'write', 'delete', 'delete'],
-  ],
-  ['python', 'import shutil\nshutil.copy("example-a","example-b")', ['read', 'write']],
-  [
-    'python',
-    'import shutil\nshutil.move("/tmp/example-a","/tmp/example-b")',
-    ['read', 'write', 'delete', 'delete'],
-  ],
-  [
-    'javascript',
-    'require("fs").renameSync("/tmp/example-a","/tmp/example-b")',
-    ['read', 'write', 'delete', 'delete'],
-  ],
-  ['javascript', 'require("fs").copyFileSync("example-a","example-b")', ['read', 'write']],
+  ['python', 'from pathlib import Path\nPath("example-a").symlink_to("example-b")', ['process']],
+  ['python', 'import os\nos.rename("/tmp/example-a","/tmp/example-b")', ['process']],
+  ['python', 'import shutil\nshutil.copy("example-a","example-b")', ['process']],
+  ['python', 'import shutil\nshutil.move("/tmp/example-a","/tmp/example-b")', ['process']],
+  ['javascript', 'require("fs").renameSync("/tmp/example-a","/tmp/example-b")', ['process']],
+  ['javascript', 'require("fs").copyFileSync("example-a","example-b")', ['process']],
   ['javascript', 'require("fs").mkdirSync("example")', ['write']],
-  ['javascript', 'require("fs").symlinkSync("example-a","example-b")', ['read', 'write']],
+  ['javascript', 'require("fs").symlinkSync("example-a","example-b")', ['process']],
 ];
 bunTest.test.each(transfers)('extracts %s file effects: %s', (language, source, kinds) => {
   const report = analyzeCode(language, source);

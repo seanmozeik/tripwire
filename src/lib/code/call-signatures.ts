@@ -10,6 +10,7 @@ const inert = (value: Value): void => {
 };
 const signatures: Readonly<Record<string, CallSignature>> = {
   ...pythonSignatures,
+  'difflib.SequenceMatcher': { parameters: ['isjunk', 'a', 'b'], options: { autojunk: inert } },
   ...zipSignatures,
   open: { parameters: ['file', 'mode'], options: { encoding: validateCodec } },
   'json.dump': { parameters: ['obj', 'fp'], options: { indent: inert } },
@@ -38,6 +39,7 @@ const signatures: Readonly<Record<string, CallSignature>> = {
   sorted: { parameters: ['iterable'], options: { reverse: inert } },
 };
 const pathSignatures: Readonly<Record<string, CallSignature>> = {
+  resolve: { parameters: [], options: { strict: inert } },
   unlink: { parameters: [], options: { missing_ok: inert } },
   symlink_to: { parameters: ['target'], options: { target_is_directory: inert } },
   read_text: { parameters: [], options: { encoding: validateCodec } },
@@ -69,7 +71,28 @@ const signatureFor = (fn: Value): CallSignature | undefined => {
     return { parameters: ['keepends'] };
   }
   if (['string', 'text'].includes(fn.receiver.kind) && ['decode', 'encode'].includes(fn.name)) {
-    return { parameters: ['encoding'] };
+    return {
+      parameters: ['encoding'],
+      options: {
+        errors: (value) => {
+          if (
+            value.kind !== 'string' ||
+            ![
+              'strict',
+              'ignore',
+              'replace',
+              'backslashreplace',
+              'surrogateescape',
+              'surrogatepass',
+              'xmlcharrefreplace',
+              'namereplace',
+            ].includes(value.value)
+          ) {
+            throw new Error('Uninspected codec error handler.');
+          }
+        },
+      },
+    };
   }
   return undefined;
 };
