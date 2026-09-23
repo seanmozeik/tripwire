@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import {
   isSafePathTarget,
   safeScopesSummary,
@@ -6,11 +8,33 @@ import {
 } from '../lib/bash';
 import type { SafePathsConfig } from '../lib/config';
 import { type Decision, allow, deny } from '../lib/decision';
+import { resolveWritePath } from './path-protect';
 
 interface Issue {
   readonly kind: 'rm' | 'find -delete';
   readonly targets: readonly string[];
 }
+
+const safeTarget = (
+  target: string,
+  seg: ShellInvocation,
+  relative: readonly string[],
+  absolute: readonly string[],
+): boolean => {
+  if (!path.isAbsolute(target) && seg.cwd === null) {
+    return false;
+  }
+  if (!isSafePathTarget(target, relative, absolute)) {
+    return false;
+  }
+  const cwd = seg.cwd ?? process.cwd();
+  const actual = resolveWritePath(path.resolve(cwd, target));
+  return isSafePathTarget(
+    path.isAbsolute(target) ? actual : path.relative(resolveWritePath(cwd), actual),
+    relative,
+    absolute,
+  );
+};
 
 const analyzeRm = (seg: ShellInvocation, config: SafePathsConfig): readonly string[] => {
   // `rm -- foo` ends flag parsing. Treat -- as flag-like and stop after it.
@@ -25,7 +49,7 @@ const analyzeRm = (seg: ShellInvocation, config: SafePathsConfig): readonly stri
   }
   const extraRelative = config.relative ?? [];
   const extraAbsolute = config.absolute ?? [];
-  return targets.filter((t) => !isSafePathTarget(t, extraRelative, extraAbsolute));
+  return targets.filter((t) => !safeTarget(t, seg, extraRelative, extraAbsolute));
 };
 
 const analyzeFindDelete = (
@@ -45,7 +69,7 @@ const analyzeFindDelete = (
   const checked = paths.length === 0 ? ['.'] : paths;
   const extraRelative = config.relative ?? [];
   const extraAbsolute = config.absolute ?? [];
-  return checked.filter((p) => !isSafePathTarget(p, extraRelative, extraAbsolute));
+  return checked.filter((p) => !safeTarget(p, seg, extraRelative, extraAbsolute));
 };
 
 const bashScopedRm = (program: ShellProgram, config: SafePathsConfig): Decision => {

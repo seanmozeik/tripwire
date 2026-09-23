@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import type { ShellProgram, ShellWord } from '../lib/bash';
 import { type Decision, allow, deny } from '../lib/decision';
 import { classifyProtectedPath, type ProtectedPathSpec } from './path-protect';
@@ -45,21 +47,23 @@ const PROTECTED_TARGET_RE: readonly ProtectedPathSpec[] = [
   },
 ];
 
-const checkPath = (path: string): Decision | null => {
-  const protection = classifyProtectedPath(path, 'write', PROTECTED_TARGET_RE);
+const checkPath = (target: string): Decision | null => {
+  const protection = classifyProtectedPath(target, 'write', PROTECTED_TARGET_RE);
   if (protection !== null) {
     return deny(protection.rule, protection.message);
   }
   return null;
 };
 
-const checkWord = (word: ShellWord): Decision | null =>
-  word.kind === 'dynamic' || word.kind === 'background-pid'
+const checkWord = (word: ShellWord, cwd: string | null | undefined): Decision | null =>
+  word.kind === 'dynamic' ||
+  word.kind === 'background-pid' ||
+  (cwd === null && !path.isAbsolute(word.value))
     ? deny(
         'redirect-dynamic-target',
         'Tripwire cannot prove that this computed write target avoids protected files.',
       )
-    : checkPath(word.value);
+    : checkPath(path.resolve(cwd ?? process.cwd(), word.value));
 
 const bashRedirect = (program: ShellProgram): Decision => {
   for (const redirect of program.redirects) {
@@ -69,7 +73,7 @@ const bashRedirect = (program: ShellProgram): Decision => {
       redirect.op === '&>' ||
       redirect.op === '&>>'
     ) {
-      const decision = checkWord(redirect.target);
+      const decision = checkWord(redirect.target, redirect.cwd);
       if (decision !== null) {
         return decision;
       }
@@ -79,7 +83,7 @@ const bashRedirect = (program: ShellProgram): Decision => {
     const argumentWords = seg.words.slice(1).filter((word) => !word.value.startsWith('-'));
     if (seg.head === 'tee') {
       for (const word of argumentWords) {
-        const decision = checkWord(word);
+        const decision = checkWord(word, seg.cwd);
         if (decision !== null) {
           return decision;
         }
@@ -89,7 +93,7 @@ const bashRedirect = (program: ShellProgram): Decision => {
       // The destination is the last positional arg.
       const destination = argumentWords.at(-1);
       if (destination !== undefined) {
-        const decision = checkWord(destination);
+        const decision = checkWord(destination, seg.cwd);
         if (decision !== null) {
           return decision;
         }

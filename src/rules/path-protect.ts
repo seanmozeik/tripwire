@@ -128,4 +128,4 @@ const pathProtect = (input: EditInput | WriteInput): Decision => {
 };
 
 export type { PathAccess, ProtectedPathSpec };
-export { classifyProtectedPath, pathProtect };
+export { classifyProtectedPath, pathProtect, resolveWritePath };

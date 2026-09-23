@@ -1,5 +1,9 @@
+import { homedir } from 'node:os';
+import path from 'node:path';
+
 import type { ShellInvocation, ShellProgram } from '../lib/bash';
 import { type Decision, allow, deny } from '../lib/decision';
+import { resolveWritePath } from './path-protect';
 
 // Block tar/zip/unzip extractions that would write into / or $HOME
 // (`tar -xf foo.tar.gz -C /` style explosions).
@@ -23,8 +27,12 @@ const findChangeDir = (seg: ShellInvocation): string | null => {
   return null;
 };
 
-const isUnsafeExtractDest = (dest: string): boolean => {
-  return dest === '/' || /^(?<home>~|\$HOME|\$\{HOME\})$/u.test(dest);
+const isUnsafeExtractDest = (dest: string, cwd: string | null | undefined): boolean => {
+  if (cwd === null && !path.isAbsolute(dest)) {
+    return true;
+  }
+  const resolved = resolveWritePath(path.resolve(cwd ?? process.cwd(), dest));
+  return resolved === '/' || resolved === homedir() || /^(?<home>~|\$HOME|\$\{HOME\})$/u.test(dest);
 };
 
 const unzipDestination = (seg: ShellInvocation): string | undefined => {
@@ -43,7 +51,7 @@ const bashTarExplosion = (program: ShellProgram): Decision => {
           /^[a-zA-Z]+$/u.test(legacyOptionWord) &&
           legacyOptionWord.includes('x'));
       const dest = extracting ? findChangeDir(seg) : null;
-      if (dest !== null && isUnsafeExtractDest(dest)) {
+      if (dest !== null && isUnsafeExtractDest(dest, seg.cwd)) {
         return deny(
           'tar-extract-to-root',
           `tar -x with -C ${dest} can overwrite arbitrary system files. Refuse — extract to a contained directory (e.g. ./tmp/extract) and inspect before moving anything elsewhere.`,
@@ -55,7 +63,7 @@ const bashTarExplosion = (program: ShellProgram): Decision => {
   for (const seg of program.invocations) {
     if (seg.head === 'unzip') {
       const dest = unzipDestination(seg);
-      if (dest !== undefined && isUnsafeExtractDest(dest)) {
+      if (dest !== undefined && isUnsafeExtractDest(dest, seg.cwd)) {
         return deny(
           'unzip-to-root',
           `unzip -d ${dest} can overwrite arbitrary system files. Refuse — extract to a contained directory.`,

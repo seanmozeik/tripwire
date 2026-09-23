@@ -15,7 +15,7 @@ import { readProtect } from './read-protect';
 interface CodePolicy {
   readonly safePaths: SafePathsConfig;
   readonly cwd: string;
-  readonly inspectCommand: (command: string) => Decision;
+  readonly inspectCommand: (command: string, cwd?: string) => Decision;
   readonly remoteHeads: ReadonlySet<string>;
 }
 
@@ -35,10 +35,7 @@ const uncertainContext = (program: ShellProgram, policy: CodePolicy): boolean =>
     return true;
   }
   return program.invocations.some((command) => {
-    if (
-      ['cd', 'pushd', 'popd', 'chroot'].includes(command.head) ||
-      policy.remoteHeads.has(command.head)
-    ) {
+    if (['chroot'].includes(command.head) || policy.remoteHeads.has(command.head)) {
       return true;
     }
     if (
@@ -119,7 +116,7 @@ const quoteArgument = (argument: string): string =>
 
 const operationDecision = (operation: CodeOperation, policy: CodePolicy): Decision => {
   if (operation.kind === 'process') {
-    return policy.inspectCommand(operation.argv.map(quoteArgument).join(' '));
+    return policy.inspectCommand(operation.argv.map(quoteArgument).join(' '), policy.cwd);
   }
   const target = path.resolve(policy.cwd, operation.path);
   if (operation.kind === 'json-module') {
@@ -158,6 +155,7 @@ const embeddedCode = (program: ShellProgram, policy: CodePolicy): Decision => {
   const decisions: Decision[] = [];
   for (const invocation of program.invocations) {
     const input = interpreterInput(invocation);
+    const localPolicy = { ...policy, cwd: invocation.cwd ?? policy.cwd };
     if (input.kind === 'blocked') {
       decisions.push(applyShellBypass(program, codeDeny(input.reason)));
     }
@@ -165,15 +163,24 @@ const embeddedCode = (program: ShellProgram, policy: CodePolicy): Decision => {
       if (uncertainContext(program, policy) && input.requiresContext) {
         return codeDeny('The forwarded command has an unverified execution context.');
       }
-      decisions.push(policy.inspectCommand(input.command));
+      decisions.push(policy.inspectCommand(input.command, localPolicy.cwd));
     }
     if (input.kind === 'source') {
-      if (uncertainContext(program, policy)) {
+      if (uncertainContext(program, policy) || invocation.unverifiedStartup === true) {
         return codeDeny(
           'Interpreter startup, working directory, or remote filesystem state is not verified.',
         );
       }
-      decisions.push(inspectCode(input.language, input.source, policy));
+      const report = analyzeCode(input.language, input.source);
+      if (
+        invocation.cwd === null &&
+        report.operations.some(
+          (operation) => operation.kind === 'process' || !path.isAbsolute(operation.path),
+        )
+      ) {
+        return codeDeny('An operation depends on an unresolved working directory.');
+      }
+      decisions.push(inspectCode(input.language, input.source, localPolicy));
     }
   }
   return decisions.length === 0 ? allow('embedded-code') : merge(decisions);

@@ -268,8 +268,15 @@ const codePolicy = (config: ResolvedConfig, cwd: string | undefined, depth = 0):
     ...config.shell.executionCarrierAliases.map((alias) => alias.command[0] ?? ''),
   ]),
   cwd: cwd ?? process.cwd(),
-  inspectCommand: (command) =>
-    runRulesSync(collectBashRules(command, config, cwd === undefined ? {} : { cwd }, depth + 1)),
+  inspectCommand: (command, commandCwd = cwd) =>
+    runRulesSync(
+      collectBashRules(
+        command,
+        config,
+        commandCwd === undefined ? {} : { cwd: commandCwd },
+        depth + 1,
+      ),
+    ),
 });
 
 const collectExecutableToolRules = (

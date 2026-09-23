@@ -34,6 +34,7 @@ const SHELL_WRAPPER_HEADS: ReadonlySet<string> = new Set([
 
 const HEAD_RENAMING_HEADS: ReadonlySet<string> = new Set([
   'command',
+  'builtin',
   'exec',
   'env',
   'time',

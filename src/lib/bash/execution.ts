@@ -4,6 +4,7 @@ import { ExecutionCarriers } from './carriers';
 import type { ExecutionContext, ExecutionHost } from './execution-types';
 import { PipelineInputInspector } from './pipeline-inputs';
 import { rangeOf } from './static-command';
+import { inspectToolWrapper } from './tool-wrappers';
 import type { ExecutionCarrierAlias, ShellInvocation, ShellWord } from './types';
 import { DYNAMIC_VALUE, type Environment } from './values';
 import {
@@ -80,6 +81,7 @@ class ExecutionInspector {
   ): void {
     if (
       invocation.head === 'eval' ||
+      inspectToolWrapper(invocation, environment, context, this.#host) ||
       this.#carriers.inspect(invocation, environment, context) ||
       this.#inspectShellWrapper(invocation, environment, context, inlineShellSource) ||
       this.#inspectCommandTextWrapper(invocation, environment, context)
