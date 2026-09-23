@@ -227,3 +227,33 @@ bunTest.test('separate mise commands do not change a bare interpreter context', 
     )
     .toBe('deny');
 });
+
+bunTest.test.each([
+  '[tasks.example]\nrun="{{ exec(command=\'echo fictional\') }}"',
+  String.raw`[tasks.example]
+run="\u007b\u007b exec(command='echo fictional') }}"`,
+])('task templates cannot execute while config loads: %s', (config) => {
+  write('project/mise.toml', '[tasks.example]\nrun="echo fictional"');
+  bunTest.expect(inspect()).toBe('allow');
+  write('project/mise.toml', config);
+  bunTest.expect(inspect()).toBe('deny');
+});
+
+bunTest.test('early profile lists are bounded', () => {
+  write('project/.miserc.toml', 'env=["example"]');
+  bunTest.expect(inspect()).toBe('allow');
+  write(
+    'project/.miserc.toml',
+    `env=${JSON.stringify(Array.from({ length: 17 }, (_, index) => `example${index}`))}`,
+  );
+  bunTest.expect(inspect()).toBe('deny');
+});
+
+bunTest.test('default filenames cannot be mistaken for override filename lists', () => {
+  process.env['MISE_DEFAULT_CONFIG_FILENAME'] = 'fictional.toml';
+  write('project/fictional.toml', '[tools]\npython="3.13"');
+  bunTest.expect(inspect()).toBe('allow');
+  process.env['MISE_DEFAULT_CONFIG_FILENAME'] = 'fictional.toml:other.toml';
+  write('project/fictional.toml:other.toml', '[env]\nNODE_OPTIONS="--require fictional"');
+  bunTest.expect(inspect()).toBe('deny');
+});

@@ -92,6 +92,25 @@ const toolsTable = (value: unknown, tools: Set<string>): boolean =>
     return true;
   });
 
+const templateFree = (value: unknown, depth = 0): boolean => {
+  if (depth > 64) {
+    return false;
+  }
+  if (typeof value === 'string') {
+    return !/\{[{%#]/u.test(value);
+  }
+  if (Array.isArray(value)) {
+    return value.every((item: unknown) => templateFree(item, depth + 1));
+  }
+  if (typeof value === 'object' && value !== null) {
+    return Object.entries(value).every(
+      ([name, item]: [string, unknown]) =>
+        templateFree(name, depth + 1) && templateFree(item, depth + 1),
+    );
+  }
+  return true;
+};
+
 const configSafe = (
   filename: string,
   tools: Set<string>,
@@ -113,6 +132,9 @@ const configSafe = (
     });
   }
   const config: unknown = Bun.TOML.parse(source);
+  if (!templateFree(config)) {
+    return false;
+  }
   return Object.entries(record(config)).every(([name, setting]) => {
     switch (name) {
       case 'env': {
@@ -124,10 +146,8 @@ const configSafe = (
       case 'min_version': {
         return version(setting);
       }
-      // Tasks are not executed by mise exec. Do not render their templates.
-      case 'tasks':
-      case 'task_templates':
-      case 'task_config': {
+      // Plain tasks are inert; templates were rejected throughout the decoded tree.
+      case 'tasks': {
         return true;
       }
       default: {

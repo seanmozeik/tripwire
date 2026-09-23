@@ -91,6 +91,9 @@ const misercProfiles = (filename: string, profiles: string[]): void => {
         throw new TypeError('Uninspectable mise environment.');
       }
       profiles.push(...profilesFrom(profile));
+      if (profiles.length > 16) {
+        throw new Error('Mise profile count exceeds inspection limit.');
+      }
     }
   }
 };
@@ -169,6 +172,11 @@ const localFiles = (
   env: Record<string, string | undefined>,
   profiles: readonly string[],
 ): { readonly toml: string[]; readonly versions: string[]; readonly fragments: boolean } => {
+  for (const name of ['MISE_DEFAULT_CONFIG_FILENAME', 'MISE_DEFAULT_TOOL_VERSIONS_FILENAME']) {
+    if (env[name]?.includes(path.delimiter) === true) {
+      throw new Error('A default mise filename must be one literal path.');
+    }
+  }
   const defaults = new Set(localNames([]));
   const override = env['MISE_OVERRIDE_CONFIG_FILENAMES'];
   const versionsOverride = env['MISE_OVERRIDE_TOOL_VERSIONS_FILENAMES'];
