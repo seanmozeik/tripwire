@@ -1069,12 +1069,12 @@ class CodeAnalyzer {
     }
   }
 
-  #callback(fn: Value, args: readonly Value[]): Value {
+  #callback(fn: Value, args: readonly Value[], repeated = true): Value {
     if (fn.kind === 'closure') {
       return this.#invokeClosure(
         fn,
         { positional: args.slice(0, fn.parameters.length), keywords: new Map() },
-        true,
+        repeated || this.#iterations > 0,
       );
     }
     return this.#resolve(fn, { positional: args, keywords: new Map() }, { start: 0, end: 0 });
@@ -1162,7 +1162,7 @@ class CodeAnalyzer {
     const before = this.#bindings;
     this.#bindings = this.#scopes.create(before);
     try {
-      return this.#repeat(node, () => {
+      const visit = (): Value => {
         for (const item of values.length === 0 ? [data] : values) {
           this.#comprehensionItem(parts, forIndex, inIndex, item);
           if (iterable.kind === 'list' && iterable.opaque === true) {
@@ -1170,7 +1170,10 @@ class CodeAnalyzer {
           }
         }
         return data;
-      });
+      };
+      return iterable.kind === 'list' && iterable.opaque !== true
+        ? visit()
+        : this.#repeat(node, visit);
     } finally {
       this.#scopes.release(this.#bindings);
       this.#bindings = before;
@@ -1179,7 +1182,7 @@ class CodeAnalyzer {
 
   #resolve(fn: Value, args: CallArguments, range: { start: number; end: number }): Value {
     return resolveCall(fn, args, {
-      callback: (callback, values) => this.#callback(callback, values),
+      callback: (callback, values, repeated) => this.#callback(callback, values, repeated),
       language: this.#language,
       cwd: this.#cwd,
       changeCwd: (cwd) => {
@@ -1243,14 +1246,18 @@ const analyzeCode = (
   argv?: readonly (string | null)[],
   cwd?: string | null,
 ): CodeReport => {
-  const analyzer = new CodeAnalyzer(source, language, argv, cwd);
+  let analyzer: CodeAnalyzer | undefined;
   try {
+    analyzer = new CodeAnalyzer(source, language, argv, cwd);
     analyzer.inspect(parseCode(language, source));
     return { operations: analyzer.operations, gap: null };
   } catch (cause) {
     return {
-      operations: analyzer.operations,
-      gap: cause instanceof CodeInspectionError ? cause.message : 'The code inspector failed.',
+      operations: analyzer?.operations ?? [],
+      gap:
+        cause instanceof CodeInspectionError
+          ? cause.message
+          : 'Internal code inspector error; inline source could not be inspected.',
     };
   }
 };

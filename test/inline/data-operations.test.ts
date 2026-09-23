@@ -68,7 +68,7 @@ const attacks: readonly [CodeLanguage, string][] = [
   ['javascript', 'const x={}; x["constructor"]'],
   [
     'javascript',
-    'const fs=require("fs"); let p="/tmp/example"; [1,2].forEach(x=>{fs.rmSync(p); p="/"})',
+    'const fs=require("fs"); let p="/tmp/example"; JSON.parse("[]").forEach(x=>{fs.rmSync(p); p="/"})',
   ],
   [
     'javascript',

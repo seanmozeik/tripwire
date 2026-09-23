@@ -83,6 +83,8 @@ const PYTHON_GLOBALS = [
   'open',
   'sum',
   'sorted',
+  'map',
+  'filter',
   'list',
   'bool',
   'min',

@@ -59,7 +59,7 @@ const PROCESS = new Set([
 ]);
 
 interface CallContext extends OperationContext {
-  readonly callback: (fn: Value, args: readonly Value[]) => Value;
+  readonly callback: (fn: Value, args: readonly Value[], repeated?: boolean) => Value;
   readonly language: CodeLanguage;
   readonly changeCwd: (cwd: string | null) => void;
   readonly repeated: boolean;
@@ -349,7 +349,7 @@ const printCall = (fn: Value, input: CallArguments): Value | null => {
 };
 
 const resolveCall = (fn: Value, input: CallArguments, context: CallContext): Value => {
-  const callback = callbackCall(fn, input, context.callback);
+  const callback = callbackCall(fn, input, context.callback, context.language);
   if (callback !== null) {
     return callback;
   }

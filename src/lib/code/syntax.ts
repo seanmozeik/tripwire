@@ -6,11 +6,7 @@ import { parser as python } from '@lezer/python';
 
 import type { CodeLanguage } from './types';
 
-const parsers = {
-  python: python.configure({ strict: true }),
-  javascript: javascript.configure({ strict: true }),
-  typescript: javascript.configure({ dialect: 'ts', strict: true }),
-};
+const parsers = { python, javascript, typescript: javascript.configure({ dialect: 'ts' }) };
 const MAX_SOURCE = 65_536;
 const MAX_NODES = 12_000;
 const MAX_DEPTH = 80;
@@ -29,6 +25,19 @@ const children = (node: SyntaxNode): SyntaxNode[] => {
     result.push(child);
   }
   return result;
+};
+
+const syntaxError = (language: CodeLanguage, source: string, offset: number): never => {
+  const preceding = source.slice(0, offset);
+  const line = preceding.split('\n').length;
+  const column = offset - preceding.lastIndexOf('\n');
+  const excerpt = source.slice(Math.max(0, offset - 16), offset + 32);
+  const literalNewline = excerpt.includes(String.raw`\n`)
+    ? String.raw` In single shell quotes, \n is two characters, not a newline; use a heredoc.`
+    : '';
+  return failInspection(
+    `${language} syntax error at line ${line}, column ${column}: ${JSON.stringify(excerpt)}.${literalNewline}`,
+  );
 };
 
 const parseCode = (language: CodeLanguage, source: string): SyntaxNode => {
@@ -62,9 +71,9 @@ const parseCode = (language: CodeLanguage, source: string): SyntaxNode => {
       throw new CodeInspectionError('Code exceeds the tree inspection budget.');
     }
     if (item.node.type.isError) {
-      throw new CodeInspectionError('Code contains invalid or incomplete syntax.');
+      syntaxError(language, source, item.node.from);
     }
-    for (const node of children(item.node)) {
+    for (const node of children(item.node).toReversed()) {
       stack.push({ node, depth: item.depth + 1 });
     }
   }
