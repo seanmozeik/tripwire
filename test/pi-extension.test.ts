@@ -319,12 +319,19 @@ bunTest.describe('Tripwire Pi extension', () => {
 
   bunTest.test('evaluates canonical private batches with one merged response', () => {
     const run = (input: unknown) => {
-      const child = Bun.spawnSync([process.execPath, 'src/dispatch.ts', '--tripwire-hook'], {
-        env: { ...process.env, HOME: root },
-        stdin: new TextEncoder().encode(JSON.stringify(input)),
-        stderr: 'pipe',
-        stdout: 'pipe',
-      });
+      const child = Bun.spawnSync(
+        [
+          process.execPath,
+          new URL('../src/dispatch.ts', import.meta.url).pathname,
+          '--tripwire-hook',
+        ],
+        {
+          env: { ...process.env, HOME: root },
+          stdin: new TextEncoder().encode(JSON.stringify(input)),
+          stderr: 'pipe',
+          stdout: 'pipe',
+        },
+      );
       bunTest.expect(child.exitCode).toBe(0);
       return parseJsonRecord(child.stdout.toString());
     };
@@ -345,12 +352,19 @@ bunTest.describe('Tripwire Pi extension', () => {
 
   bunTest.test('rejects empty, mixed-phase, and mixed-host private batches', () => {
     const run = (input: unknown) => {
-      const child = Bun.spawnSync([process.execPath, 'src/dispatch.ts', '--tripwire-hook'], {
-        env: { ...process.env, HOME: root },
-        stdin: new TextEncoder().encode(JSON.stringify(input)),
-        stderr: 'pipe',
-        stdout: 'pipe',
-      });
+      const child = Bun.spawnSync(
+        [
+          process.execPath,
+          new URL('../src/dispatch.ts', import.meta.url).pathname,
+          '--tripwire-hook',
+        ],
+        {
+          env: { ...process.env, HOME: root },
+          stdin: new TextEncoder().encode(JSON.stringify(input)),
+          stderr: 'pipe',
+          stdout: 'pipe',
+        },
+      );
       bunTest.expect(child.exitCode).toBe(0);
       return child.stdout.toString();
     };
@@ -372,12 +386,19 @@ bunTest.describe('Tripwire Pi extension', () => {
   });
 
   bunTest.test('keeps the native failure response for invalid single-event JSON', () => {
-    const child = Bun.spawnSync([process.execPath, 'src/dispatch.ts', '--tripwire-hook'], {
-      env: { ...process.env, HOME: root },
-      stdin: new TextEncoder().encode('{invalid'),
-      stderr: 'pipe',
-      stdout: 'pipe',
-    });
+    const child = Bun.spawnSync(
+      [
+        process.execPath,
+        new URL('../src/dispatch.ts', import.meta.url).pathname,
+        '--tripwire-hook',
+      ],
+      {
+        env: { ...process.env, HOME: root },
+        stdin: new TextEncoder().encode('{invalid'),
+        stderr: 'pipe',
+        stdout: 'pipe',
+      },
+    );
 
     bunTest.expect(child.exitCode).toBe(0);
     bunTest.expect(child.stdout.toString()).toBe('{"continue": true}\n');

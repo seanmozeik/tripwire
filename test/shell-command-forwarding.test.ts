@@ -13,7 +13,11 @@ bunTest.test.each([
   '',
 ])('computed Git directory with branch read %s', (args) => {
   bunTest
-    .expect(decideBash(`for d in /tmp/example-*; do git -C $d branch ${args}; done`).kind)
+    .expect(
+      decideBash(
+        `for d in /nonexistent-tripwire-fixture/example-*; do git -C $d branch ${args}; done`,
+      ).kind,
+    )
     .toBe('allow');
 });
 bunTest.test.each([

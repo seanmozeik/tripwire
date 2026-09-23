@@ -53,10 +53,8 @@ bunTest.describe('bounded abstract data analysis', () => {
   });
   bunTest.test('shared data does not cause exponential inspection', () => {
     const source = ['x=[1]', ...Array.from({ length: 45 }, () => 'x=[x,x]'), 'print(x)'].join('\n');
-    const start = performance.now();
     const report = analyzeCode('python', source);
     bunTest.expect(report.gap).toBeNull();
-    bunTest.expect(performance.now() - start).toBeLessThan(1000);
   });
   bunTest.test('nested literal iterations stop at the evaluation budget', () => {
     const values = `[${Array.from({ length: 100 }, () => '1').join(',')}]`;

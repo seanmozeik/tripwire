@@ -22,13 +22,16 @@ bunTest.test.each([
   try {
     const payload = hookInputs({ toolName, input, toolCallId: 'code-fixture' }, 'PreToolUse', home);
     // This runs Tripwire only; payload code is JSON data on stdin.
-    const result = Bun.spawnSync([process.execPath, 'src/main.ts', '--tripwire-hook'], {
-      env: { ...process.env, HOME: home },
-      stdin: new TextEncoder().encode(JSON.stringify(payload)),
-      stdout: 'pipe',
-      stderr: 'pipe',
-      timeout: 10_000,
-    });
+    const result = Bun.spawnSync(
+      [process.execPath, new URL('../src/main.ts', import.meta.url).pathname, '--tripwire-hook'],
+      {
+        env: { ...process.env, HOME: home },
+        stdin: new TextEncoder().encode(JSON.stringify(payload)),
+        stdout: 'pipe',
+        stderr: 'pipe',
+        timeout: 10_000,
+      },
+    );
     bunTest.expect(result.exitCode).toBe(0);
     bunTest
       .expect(

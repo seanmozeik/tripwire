@@ -71,7 +71,7 @@ bunTest.beforeAll(async () => {
     [
       process.execPath,
       'build',
-      path.join(process.cwd(), 'src/pi-extension.ts'),
+      new URL('../src/pi-extension.ts', import.meta.url).pathname,
       '--target',
       'node',
       '--minify',

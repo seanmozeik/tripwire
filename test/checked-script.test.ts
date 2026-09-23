@@ -7,12 +7,20 @@ import path from 'node:path';
 const fixture = (name: string): string => path.join(import.meta.dirname, 'fixtures', name);
 
 const run = (arguments_: readonly string[], home: string) =>
-  Bun.spawnSync([process.execPath, 'src/main.ts', 'run-script', ...arguments_], {
-    cwd: path.join(import.meta.dirname, '..'),
-    env: { ...process.env, HOME: home },
-    stderr: 'pipe',
-    stdout: 'pipe',
-  });
+  Bun.spawnSync(
+    [
+      process.execPath,
+      new URL('../src/main.ts', import.meta.url).pathname,
+      'run-script',
+      ...arguments_,
+    ],
+    {
+      cwd: path.join(import.meta.dirname, '..'),
+      env: { ...process.env, HOME: home },
+      stderr: 'pipe',
+      stdout: 'pipe',
+    },
+  );
 
 bunTest.describe('run-script', () => {
   let home = '';

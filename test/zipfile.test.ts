@@ -1,4 +1,7 @@
 import * as bunTest from 'bun:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 import { decideBash } from '../src/dispatch';
 
@@ -37,10 +40,18 @@ bunTest.describe('Python archive and text operations', () => {
   });
 
   bunTest.test('reads local JSON as data and retains protected-path checks', () => {
-    bunTest
-      .expect(decideBash('node -e \'console.log(require("./package.json").version)\'').kind)
-      .toBe('allow');
-    bunTest.expect(decideBash('node -e \'require("./secrets.json")\'').kind).toBe('deny');
-    bunTest.expect(decideBash('node -e \'require("./uninspected.js")\'').kind).toBe('deny');
+    const cwd = mkdtempSync(path.join(tmpdir(), 'fictional-json-'));
+    try {
+      writeFileSync(path.join(cwd, 'package.json'), '{"version":"0.0.0-fictional"}');
+      for (const [source, expected] of [
+        ['console.log(require("./package.json").version)', 'allow'],
+        ['require("./secrets.json")', 'deny'],
+        ['require("./uninspected.js")', 'deny'],
+      ] as const) {
+        bunTest.expect(decideBash(`node -e '${source}'`, {}, { cwd }).kind).toBe(expected);
+      }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 });

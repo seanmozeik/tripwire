@@ -277,12 +277,15 @@ bunTest.describe('dispatcher on broken config', () => {
       tool_name: 'Bash',
       tool_input: { command: 'echo hi' },
     };
-    const proc = Bun.spawnSync([process.execPath, 'src/dispatch.ts'], {
-      env: { ...process.env, HOME: home },
-      stdin: new TextEncoder().encode(JSON.stringify(event)),
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
+    const proc = Bun.spawnSync(
+      [process.execPath, new URL('../src/dispatch.ts', import.meta.url).pathname],
+      {
+        env: { ...process.env, HOME: home },
+        stdin: new TextEncoder().encode(JSON.stringify(event)),
+        stdout: 'pipe',
+        stderr: 'pipe',
+      },
+    );
     const out = parseJsonRecord(proc.stdout.toString());
     const hookOutput = recordField(out, 'hookSpecificOutput');
     bunTest.expect(hookOutput?.['permissionDecision']).toBe('deny');
@@ -302,12 +305,15 @@ bunTest.describe('dispatcher on broken config', () => {
       );
 
       const run = (event: HookEvent) => {
-        const proc = Bun.spawnSync([process.execPath, 'src/dispatch.ts'], {
-          env: { ...process.env, HOME: home, PATH: path.join(home, 'empty-path') },
-          stdin: new TextEncoder().encode(JSON.stringify(event)),
-          stdout: 'pipe',
-          stderr: 'pipe',
-        });
+        const proc = Bun.spawnSync(
+          [process.execPath, new URL('../src/dispatch.ts', import.meta.url).pathname],
+          {
+            env: { ...process.env, HOME: home, PATH: path.join(home, 'empty-path') },
+            stdin: new TextEncoder().encode(JSON.stringify(event)),
+            stdout: 'pipe',
+            stderr: 'pipe',
+          },
+        );
         bunTest.expect(proc.exitCode).toBe(0);
         return parseJsonRecord(proc.stdout.toString());
       };

@@ -9,7 +9,12 @@ import { parseJsonRecord, recordArrayField, recordField } from './support/json';
 
 const runCursorDispatch = (eventName: string, input: unknown): unknown => {
   const processResult = Bun.spawnSync(
-    [process.execPath, 'src/dispatch.ts', '--cursor-event', eventName],
+    [
+      process.execPath,
+      new URL('../src/dispatch.ts', import.meta.url).pathname,
+      '--cursor-event',
+      eventName,
+    ],
     { stdin: new TextEncoder().encode(JSON.stringify(input)), stdout: 'pipe', stderr: 'pipe' },
   );
   bunTest.expect(processResult.exitCode).toBe(0);

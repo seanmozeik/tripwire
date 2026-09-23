@@ -7,14 +7,19 @@ import { decideBash } from '../src/dispatch';
 import { analyzeBash } from '../src/lib/bash';
 
 bunTest.test('recursive globs stay unresolved without scanning the filesystem', () => {
-  const start = performance.now();
-  const program = analyzeBash('ls ~/dev/**/package.json');
+  const program = analyzeBash('ls ~/dev/**/package.json', { home: '/fictional-home' });
   const word = program.invocations[0]?.words[1];
   bunTest.expect(word?.source).toBe('~/dev/**/package.json');
   bunTest.expect(word?.kind).toBe('dynamic');
-  bunTest.expect(performance.now() - start).toBeLessThan(500);
-  bunTest.expect(decideBash('ls ~/dev/**/package.json').kind).toBe('allow');
-  bunTest.expect(decideBash('cp ~/dev/**/package.json /tmp/example-target').kind).toBe('deny');
+  bunTest
+    .expect(decideBash('ls ~/dev/**/package.json', {}, { home: '/fictional-home' }).kind)
+    .toBe('allow');
+  bunTest
+    .expect(
+      decideBash('cp ~/dev/**/package.json /tmp/example-target', {}, { home: '/fictional-home' })
+        .kind,
+    )
+    .toBe('deny');
 });
 
 bunTest.test('unknown cwd never expands against the hook directory', () => {

@@ -5,6 +5,9 @@
 // Fast and inspect the raw Decision (not the JSON-encoded hook output).
 
 import * as bunTest from 'bun:test';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 import { decide } from '../src';
 import { analyzeBash, safeScopesSummary } from '../src/lib/bash';
@@ -94,11 +97,10 @@ const allRules = (cmd: string) => {
 const configDecision = (command: string, config: Config) => decide(bashEvent(command), config);
 
 const runDispatch = (event: HookEvent): unknown => {
-  const proc = Bun.spawnSync([process.execPath, 'src/dispatch.ts'], {
-    stdin: new TextEncoder().encode(JSON.stringify(event)),
-    stdout: 'pipe',
-    stderr: 'pipe',
-  });
+  const proc = Bun.spawnSync(
+    [process.execPath, new URL('../src/dispatch.ts', import.meta.url).pathname],
+    { stdin: new TextEncoder().encode(JSON.stringify(event)), stdout: 'pipe', stderr: 'pipe' },
+  );
   bunTest.expect(proc.exitCode).toBe(0);
   return JSON.parse(proc.stdout.toString()) as unknown;
 };
@@ -424,7 +426,13 @@ bunTest.describe('bash-scoped-rm', () => {
   });
   bunTest.test('fd-prefixed redirect does not become an rm target', () => {
     // The file descriptor in `2>&1` is not an rm target.
-    bunTest.expect(allRules('rm -rf /tmp/foo-* 2>&1').rm.kind).toBe('allow');
+    const root = mkdtempSync(path.join(tmpdir(), 'redirect-glob-'));
+    try {
+      writeFileSync(path.join(root, 'foo-example'), 'fictional');
+      bunTest.expect(allRules(`rm -rf ${root}/foo-* 2>&1`).rm.kind).toBe('allow');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
     bunTest.expect(allRules('rm -rf /tmp/foo 2>/dev/null').rm.kind).toBe('allow');
     bunTest.expect(allRules('rm -rf /tmp/foo 1>&2').rm.kind).toBe('allow');
     bunTest.expect(allRules('rm -rf /tmp/foo 2>>log').rm.kind).toBe('allow');

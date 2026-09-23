@@ -48,18 +48,21 @@ bunTest.describe('rule isolation', () => {
   bunTest.test('the production hook emits valid JSON after a deny', async () => {
     const home = await mkdtemp(path.join(tmpdir(), 'tripwire-runtime-'));
     try {
-      const proc = Bun.spawnSync([process.execPath, 'src/dispatch.ts'], {
-        env: { ...process.env, HOME: home },
-        stdin: new TextEncoder().encode(
-          JSON.stringify({
-            hook_event_name: 'PreToolUse',
-            tool_name: 'powershell',
-            tool_input: { command: 'Get-ChildItem' },
-          }),
-        ),
-        stdout: 'pipe',
-        stderr: 'pipe',
-      });
+      const proc = Bun.spawnSync(
+        [process.execPath, new URL('../src/dispatch.ts', import.meta.url).pathname],
+        {
+          env: { ...process.env, HOME: home },
+          stdin: new TextEncoder().encode(
+            JSON.stringify({
+              hook_event_name: 'PreToolUse',
+              tool_name: 'powershell',
+              tool_input: { command: 'Get-ChildItem' },
+            }),
+          ),
+          stdout: 'pipe',
+          stderr: 'pipe',
+        },
+      );
 
       bunTest.expect(proc.exitCode).toBe(0);
       bunTest.expect(() => JSON.parse(proc.stdout.toString()) as unknown).not.toThrow();

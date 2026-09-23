@@ -1,6 +1,6 @@
 import * as bunTest from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { decide } from '../src/dispatch';
@@ -13,6 +13,8 @@ bunTest.test('tracked cwd reaches inline code, redirects, copies, and deletion',
   try {
     mkdirSync(safe);
     mkdirSync(path.join(root, '~'));
+    const home = path.join(root, 'fictional-home');
+    mkdirSync(home);
     mkdirSync(protectedDirectory);
     writeFileSync(path.join(protectedDirectory, '.env'), 'example');
     symlinkSync('.env', path.join(protectedDirectory, 'output'));
@@ -59,7 +61,7 @@ bunTest.test('tracked cwd reaches inline code, redirects, copies, and deletion',
     bunTest.expect(inspect('mise -C protected exec -- tee output')).toBe('deny');
     const directories = analyzeBash(
       "cd '~'; printf literal; cd ~; printf home; cd ~/..; printf parent",
-      { cwd: root },
+      { cwd: root, home },
     );
     bunTest
       .expect(
@@ -67,7 +69,7 @@ bunTest.test('tracked cwd reaches inline code, redirects, copies, and deletion',
           .filter((invocation) => invocation.head === 'printf')
           .map((invocation) => invocation.cwd),
       )
-      .toEqual([path.join(root, '~'), homedir(), path.dirname(homedir())]);
+      .toEqual([path.join(root, '~'), home, path.dirname(home)]);
     bunTest
       .expect(inspect('pushd ordinary; pushd ../protected; pushd; echo example > output'))
       .toBe('allow');
