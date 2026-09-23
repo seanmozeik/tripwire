@@ -22,6 +22,23 @@ const valueString = (value: Value | undefined): string => {
 };
 const PYTHON_MODULES = new Set([
   'collections',
+  'datetime',
+  'time',
+  'platform',
+  'statistics',
+  'textwrap',
+  'shlex',
+  'base64',
+  'urllib',
+  'urllib.parse',
+  'html',
+  'random',
+  'string',
+  'itertools',
+  'functools',
+  'uuid',
+  'importlib',
+  'importlib.util',
   'os',
   'os.path',
   'shutil',
@@ -36,9 +53,18 @@ const PYTHON_MODULES = new Set([
   'glob',
   'hashlib',
 ]);
-const JS_MODULES = new Set(['fs', 'fs/promises', 'path', 'child_process']);
+const JS_MODULES = new Set(['fs', 'fs/promises', 'path', 'child_process', 'crypto']);
 const PYTHON_GLOBALS = [
   'print',
+  'dict',
+  'set',
+  'tuple',
+  'enumerate',
+  'zip',
+  'range',
+  'repr',
+  'type',
+  'SystemExit',
   'len',
   'str',
   'int',
@@ -55,7 +81,31 @@ const PYTHON_GLOBALS = [
   'any',
   'all',
 ];
-const JS_GLOBALS = ['console', 'require', 'JSON', 'Deno', 'Bun'];
+const JS_GLOBALS = [
+  'console',
+  'require',
+  'JSON',
+  'Deno',
+  'Bun',
+  'Math',
+  'Number',
+  'String',
+  'Boolean',
+  'Object',
+  'Array',
+  'Date',
+  'Set',
+  'Map',
+  'RegExp',
+  'URL',
+  'URLSearchParams',
+  'Buffer',
+  'process',
+  'parseInt',
+  'parseFloat',
+  'isNaN',
+  'isFinite',
+];
 
 const initialBindings = (language: CodeLanguage): Map<string, Value> =>
   new Map(

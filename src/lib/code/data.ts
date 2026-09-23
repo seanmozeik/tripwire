@@ -1,7 +1,6 @@
 import { validateCodec } from './codecs';
 import { failInspection } from './syntax';
 import type { CodeLanguage, Value } from './types';
-import { unknown } from './values';
 
 // Inert data has no user-defined coercions or callables. Unknown bytes cannot
 // authorize a path, a process argument, or a callable.
@@ -17,35 +16,14 @@ const isData = (value: Value): boolean => {
       if (seen.size > 12_000) {
         return failInspection('Data exceeds the value inspection budget.');
       }
-      switch (current.kind) {
-        case 'string':
-        case 'number':
-        case 'text':
-        case 'counter':
-        case 'data': {
-          break;
-        }
-        case 'list': {
-          pending.push(...current.items);
-          break;
-        }
-        case 'object': {
-          pending.push(...current.entries.values());
-          break;
-        }
-        case 'file':
-        case 'bun-file':
-        case 'hash':
-        case 'archive':
-        case 'path':
-        case 'method':
-        case 'symbol':
-        case 'unknown': {
-          return false;
-        }
-        default: {
-          return false;
-        }
+      if (current.kind === 'list') {
+        pending.push(...current.items);
+      } else if (current.kind === 'object') {
+        pending.push(...current.entries.values());
+      } else if (
+        !new Set(['string', 'number', 'text', 'counter', 'data', 'builtin']).has(current.kind)
+      ) {
+        return false;
       }
     }
   }
@@ -67,7 +45,11 @@ const replaceText = (args: readonly Value[], language: CodeLanguage): Value => {
     (!validCount && args.length !== 2) ||
     before === undefined ||
     after === undefined ||
-    !['string', 'text'].includes(before.kind) ||
+    !(
+      before.kind === 'string' ||
+      before.kind === 'text' ||
+      (language !== 'python' && before.kind === 'builtin' && before.name === 'RegExp')
+    ) ||
     !['string', 'text'].includes(after.kind)
   ) {
     return failInspection(
@@ -77,20 +59,13 @@ const replaceText = (args: readonly Value[], language: CodeLanguage): Value => {
   return text;
 };
 
-const dataMethod = (
+const textMethod = (
   receiver: Value,
   name: string,
   args: readonly Value[],
   language: CodeLanguage,
-): Value => {
-  requireData(args);
-  if (language === 'python' && receiver.kind === 'counter' && name === 'most_common') {
-    if (args.length > 1) {
-      return failInspection('Counter.most_common accepts at most one data argument.');
-    }
-    return data;
-  }
-  if (receiver.kind === 'string' || receiver.kind === 'text') {
+): Value | null => {
+  if (receiver.kind === 'string' || receiver.kind === 'text' || receiver.kind === 'data') {
     if (name === 'join' && args.length === 1) {
       return text;
     }
@@ -109,6 +84,8 @@ const dataMethod = (
     if (
       [
         'strip',
+        'rstrip',
+        'lstrip',
         'trim',
         'lower',
         'upper',
@@ -116,6 +93,9 @@ const dataMethod = (
         'toUpperCase',
         'slice',
         'substring',
+        'toFixed',
+        'toPrecision',
+        'toString',
       ].includes(name)
     ) {
       return text;
@@ -132,10 +112,39 @@ const dataMethod = (
         'find',
         'index',
         'indexOf',
+        'match',
+        'search',
+        'test',
+        'group',
+        'groups',
+        'groupdict',
       ].includes(name)
     ) {
       return data;
     }
+  }
+  return null;
+};
+
+const dataMethod = (
+  receiver: Value,
+  name: string,
+  args: readonly Value[],
+  language: CodeLanguage,
+): Value => {
+  requireData(args);
+  if (language !== 'python' && name === 'join' && isData(receiver)) {
+    return text;
+  }
+  if (language === 'python' && receiver.kind === 'counter' && name === 'most_common') {
+    if (args.length > 1) {
+      return failInspection('Counter.most_common accepts at most one data argument.');
+    }
+    return data;
+  }
+  const result = textMethod(receiver, name, args, language);
+  if (result !== null) {
+    return result;
   }
   if (
     language === 'python' &&
@@ -160,14 +169,15 @@ const jsonLoad = (args: readonly Value[]): Value => {
 const regexSubstitution = (args: readonly Value[]): Value => {
   const [pattern, replacement, input] = args;
   if (
-    args.length !== 3 ||
+    args.length < 3 ||
+    args.length > 5 ||
     pattern?.kind !== 'string' ||
     replacement?.kind !== 'string' ||
     input === undefined
   ) {
     return failInspection('Regex substitution needs literal pattern/replacement and one input.');
   }
-  requireData([input]);
+  requireData([input, ...args.slice(3)]);
   return text;
 };
 
@@ -180,7 +190,7 @@ const dataCall = (name: string, args: readonly Value[]): Value | null => {
   }
   if (['json.loads', 'JSON.parse', 'json.dumps', 'JSON.stringify', 'str'].includes(name)) {
     requireData(args);
-    if (args.length !== 1) {
+    if (args.length < 1 || args.length > (name === 'JSON.stringify' ? 3 : 1)) {
       return failInspection('JSON callbacks and serialization options require review.');
     }
     return ['json.loads', 'JSON.parse'].includes(name) ? data : text;
@@ -207,7 +217,11 @@ const dataCall = (name: string, args: readonly Value[]): Value | null => {
   }
   if (['print', 'console.log', 'console.info', 'console.warn', 'console.error'].includes(name)) {
     requireData(args);
-    return unknown;
+    return data;
+  }
+  if (['sys.stdout.write', 'sys.stderr.write'].includes(name)) {
+    requireData(args);
+    return data;
   }
   if (name === 'sys.stdin.read') {
     requireData(args);

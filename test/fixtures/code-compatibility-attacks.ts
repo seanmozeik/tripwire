@@ -13,7 +13,7 @@ const compatibilityAttacks: readonly string[] = [
   'python3 - <<\'PY\'\nimport json,os\nfn=print\na=print\nb=print\nfor row in json.loads("[]"):\n fn("/protected")\n fn=a\n a=b\n b=os.unlink\nPY',
   'python3 - <<\'PY\'\nimport os\nfn=print\nfor row in [1,2]:\n fn("/protected")\n fn=os.unlink\nPY',
   'node -e \'const fs=require("fs"); const p=".env"; fs.writeFileSync(p, fs.readFileSync(p,"utf8").replace("all contents", "$`"));\'',
-  'python3 -c \'from pathlib import Path; import re; p=Path("README.md"); p.write_text(re.sub(".*", lambda m: "", p.read_text()))\'',
+  'python3 -c \'from pathlib import Path; import re; p=Path("README.md"); p.write_text(re.sub(".*", lambda m: p.unlink(), p.read_text()))\'',
   'python3 -c \'import json; print(json.loads("{}", object_hook=eval))\'',
   'node -e \'JSON.parse("{}", () => require("fs").rmSync("/protected"))\'',
   "python3 -c 'import sys; sys.modules.clear()'",

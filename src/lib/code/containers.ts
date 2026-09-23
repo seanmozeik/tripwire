@@ -10,10 +10,16 @@ const objectValue = (
   text: (node: SyntaxNode) => string,
 ): Value => {
   const entries = new Map<string, Value>();
+  let spread = false;
   for (const property of children(node).filter((part) => !['{', '}', ','].includes(part.name))) {
     const fields = children(property);
     const [key, separator, value] = fields;
-    if (
+    if (key?.name === 'Spread' && separator !== undefined && fields.length === 2) {
+      requireData([evaluate(separator)]);
+      spread = true;
+    } else if (fields.length === 1 && key?.name === 'PropertyDefinition') {
+      entries.set(text(key), evaluate(key));
+    } else if (
       property.name !== 'Property' ||
       key?.name !== 'PropertyDefinition' ||
       separator?.name !== ':' ||
@@ -21,8 +27,13 @@ const objectValue = (
       fields.length !== 3
     ) {
       return failInspection('Computed properties, accessors, and object spread are not inspected.');
+    } else {
+      entries.set(text(key), evaluate(value));
     }
-    entries.set(text(key), evaluate(value));
+  }
+  if (spread) {
+    requireData([...entries.values()]);
+    return { kind: 'data' };
   }
   return { kind: 'object', entries };
 };
@@ -50,10 +61,22 @@ const formatValue = (node: SyntaxNode, evaluate: (node: SyntaxNode) => Value): V
       return failInspection('Unsupported formatted string component.');
     }
     const fields = children(replacement).filter((part) => !['{', '}'].includes(part.name));
-    if (fields.length !== 1 || fields[0] === undefined) {
+    if (fields[0] === undefined) {
       return failInspection('Format conversions and specifications require review.');
     }
     requireData([evaluate(fields[0])]);
+    for (const spec of fields.slice(1)) {
+      if (spec.name !== 'FormatSpec' && spec.name !== 'FormatConversion') {
+        return failInspection('Unsupported format specifier.');
+      }
+      for (const nested of children(spec).filter((part) => part.name === 'FormatReplacement')) {
+        for (const expression of children(nested).filter(
+          (part) => !['{', '}'].includes(part.name),
+        )) {
+          requireData([evaluate(expression)]);
+        }
+      }
+    }
   }
   return { kind: 'text' };
 };
