@@ -66,8 +66,8 @@ class CodeAnalyzer {
   constructor(
     source: string,
     language: CodeLanguage,
-    argv: readonly (string | null)[] = [],
-    cwd: string | null = process.cwd(),
+    argv: readonly (string | null)[],
+    cwd: string | null,
   ) {
     this.#argv = {
       kind: 'list',
@@ -1243,8 +1243,8 @@ class CodeAnalyzer {
 const analyzeCode = (
   language: CodeLanguage,
   source: string,
-  argv?: readonly (string | null)[],
-  cwd?: string | null,
+  argv: readonly (string | null)[],
+  cwd: string | null,
 ): CodeReport => {
   let analyzer: CodeAnalyzer | undefined;
   try {

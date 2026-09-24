@@ -58,7 +58,7 @@ for (const [language, sources] of [
   ['python', python],
 ] satisfies readonly [CodeLanguage, readonly string[]][]) {
   bunTest.test.each(sources)(`${language} ordinary code: %s`, (source) => {
-    bunTest.expect(analyzeCode(language, source).gap).toBeNull();
+    bunTest.expect(analyzeCode(language, source, [], '/tripwire-policy-fixture').gap).toBeNull();
   });
 }
 const attacks: readonly [CodeLanguage, string][] = [
@@ -90,12 +90,14 @@ const attacks: readonly [CodeLanguage, string][] = [
   ['python', 'def f(x: eval("example")):\n return x'],
 ];
 bunTest.test.each(attacks)('keeps dangerous %s opaque: %s', (language, source) => {
-  bunTest.expect(analyzeCode(language, source).gap).not.toBeNull();
+  bunTest.expect(analyzeCode(language, source, [], '/tripwire-policy-fixture').gap).not.toBeNull();
 });
 bunTest.test('closure calls extract actual file effects', () => {
   const report = analyzeCode(
     'python',
     'from pathlib import Path\ndef remove(p):\n Path(p).unlink()\nremove("/")',
+    [],
+    '/tripwire-policy-fixture',
   );
   bunTest.expect(report.gap).toBeNull();
   bunTest.expect(report.operations.map((operation) => operation.kind)).toEqual(['delete']);

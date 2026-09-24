@@ -14,17 +14,25 @@ bunTest.test.each([
   'RuntimeError',
 ])('builtin exception %s is recognized in handlers and raises', (exception) => {
   const source = `try:\n print(1)\nexcept ${exception} as error:\n print(type(error).__name__)`;
-  bunTest.expect(analyzeCode('python', source).gap).toBeNull();
+  bunTest.expect(analyzeCode('python', source, [], '/tripwire-policy-fixture').gap).toBeNull();
   bunTest
     .expect(
       decideBash(
         `python3 -c ${quote(source.replace('print(type(error).__name__)', 'open(".env","w").write("example")'))}`,
+        {},
+        { cwd: '/tripwire-policy-fixture' },
       ).kind,
     )
     .toBe('deny');
   if (!exception.startsWith('(')) {
-    bunTest.expect(analyzeCode('python', `raise ${exception}`).gap).toBeNull();
-    bunTest.expect(analyzeCode('python', `raise ${exception}("example")`).gap).toBeNull();
+    bunTest
+      .expect(analyzeCode('python', `raise ${exception}`, [], '/tripwire-policy-fixture').gap)
+      .toBeNull();
+    bunTest
+      .expect(
+        analyzeCode('python', `raise ${exception}("example")`, [], '/tripwire-policy-fixture').gap,
+      )
+      .toBeNull();
   }
 });
 
@@ -35,16 +43,29 @@ bunTest.test(
       .expect(
         decideBash(
           `python3 -c ${quote('import os\ndef KeyError():\n os.remove("/")\ntry:\n print(1)\nexcept KeyError():\n print(2)')}`,
+          {},
+          { cwd: '/tripwire-policy-fixture' },
         ).kind,
       )
       .toBe('deny');
     bunTest
       .expect(
-        decideBash(`python3 -c ${quote('raise OSError(open(".env","w").write("example"))')}`).kind,
+        decideBash(
+          `python3 -c ${quote('raise OSError(open(".env","w").write("example"))')}`,
+          {},
+          { cwd: '/tripwire-policy-fixture' },
+        ).kind,
       )
       .toBe('deny');
     bunTest
-      .expect(analyzeCode('python', 'try:\n print(1)\nexcept UnknownException:\n print(2)').gap)
+      .expect(
+        analyzeCode(
+          'python',
+          'try:\n print(1)\nexcept UnknownException:\n print(2)',
+          [],
+          '/tripwire-policy-fixture',
+        ).gap,
+      )
       .not.toBeNull();
   },
 );
@@ -91,11 +112,13 @@ bunTest.test.each([
   'import re\nfor match in re.compile("x").finditer("example"):\n print(match.start())',
   'import difflib\nfor tag,i,j,k,l in difflib.SequenceMatcher(None,[1],[2]).get_opcodes():\n print(tag,i,j,k,l)',
 ])('iterates non-string builtin results: %s', (source) => {
-  bunTest.expect(analyzeCode('python', source).gap).toBeNull();
+  bunTest.expect(analyzeCode('python', source, [], '/tripwire-policy-fixture').gap).toBeNull();
   bunTest
     .expect(
       decideBash(
         `python3 -c ${quote(source.replace(/print\([^\n]+\)/u, 'open(".env","w").write("example")'))}`,
+        {},
+        { cwd: '/tripwire-policy-fixture' },
       ).kind,
     )
     .toBe('deny');
@@ -107,18 +130,26 @@ bunTest.test.each([
   'typeof\nMissingFeature',
   'let n=0; ++/*comment*/n; --n; console.log(n)',
 ])('unary operators use parsed tokens: %s', (source) => {
-  bunTest.expect(analyzeCode('javascript', source).gap).toBeNull();
+  bunTest.expect(analyzeCode('javascript', source, [], '/tripwire-policy-fixture').gap).toBeNull();
 });
 
 bunTest.test('typeof inspects computed operands and update invalidates a literal target', () => {
   bunTest
-    .expect(decideBash(`node -e ${quote('typeof(require("fs").unlinkSync("/"))')}`).kind)
+    .expect(
+      decideBash(
+        `node -e ${quote('typeof(require("fs").unlinkSync("/"))')}`,
+        {},
+        { cwd: '/tripwire-policy-fixture' },
+      ).kind,
+    )
     .toBe('deny');
   bunTest
     .expect(
       analyzeCode(
         'javascript',
         'let target="/tmp/example"; ++target; require("fs").unlinkSync(target)',
+        [],
+        '/tripwire-policy-fixture',
       ).gap,
     )
     .not.toBeNull();

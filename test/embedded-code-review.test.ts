@@ -58,7 +58,7 @@ bunTest.describe('adversarial review regressions (policy-only)', () => {
     'command /usr/bin/python3 -c \'import os; os.unlink("/protected")\'',
     'python3.14t -c \'import os; os.unlink("/protected")\'',
   ])('blocks %s', (command) => {
-    bunTest.expect(decideBash(command).kind).toBe('deny');
+    bunTest.expect(decideBash(command, {}, { cwd: '/tripwire-policy-fixture' }).kind).toBe('deny');
   });
 
   bunTest.test.each([
@@ -73,12 +73,12 @@ bunTest.describe('adversarial review regressions (policy-only)', () => {
     'node --eval=\'console.log("safe")\'',
     'python3 -c\'print("safe")\'',
   ])('allows %s', (command) => {
-    bunTest.expect(decideBash(command).kind).toBe('allow');
+    bunTest.expect(decideBash(command, {}, { cwd: '/tripwire-policy-fixture' }).kind).toBe('allow');
   });
 
   bunTest.test('resolved JS aliases retain the deletion and source range', () => {
     const source = 'const {rmSync: del} = require("fs"); del("/protected")';
-    const report = analyzeCode('javascript', source);
+    const report = analyzeCode('javascript', source, [], '/tripwire-policy-fixture');
     bunTest.expect(report.gap).toBeNull();
     bunTest
       .expect(report.operations)
@@ -86,7 +86,7 @@ bunTest.describe('adversarial review regressions (policy-only)', () => {
         {
           kind: 'delete',
           path: '/protected',
-          cwd: process.cwd(),
+          cwd: '/tripwire-policy-fixture',
           range: { start: 37, end: source.length },
         },
       ]);
@@ -116,8 +116,12 @@ bunTest.describe('adversarial review regressions (policy-only)', () => {
     (tool_name) => {
       bunTest
         .expect(
-          decide({ hook_event_name: 'PreToolUse', tool_name, tool_input: { code: 'print(1)' } })
-            .kind,
+          decide({
+            cwd: '/tripwire-policy-fixture',
+            hook_event_name: 'PreToolUse',
+            tool_name,
+            tool_input: { code: 'print(1)' },
+          }).kind,
         )
         .toBe('deny');
     },

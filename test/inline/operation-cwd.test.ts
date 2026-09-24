@@ -9,9 +9,11 @@ const quote = (source: string): string => `'${source.replaceAll("'", String.raw`
 bunTest.test.each(['rm -rf build', 'uv run --no-sync rm -rf build', 'bunx --bun rm -rf build'])(
   'unknown cwd reaches forwarded deletion: %s',
   (command) => {
-    bunTest.expect(decideBash(`cd $X && ${command}`).kind).toBe('deny');
+    bunTest
+      .expect(decideBash(`cd $X && ${command}`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
+      .toBe('deny');
     bunTest.expect(decideBash(command, {}, { cwd: null }).kind).toBe('deny');
-    bunTest.expect(decideBash(command).kind).toBe('allow');
+    bunTest.expect(decideBash(command, {}, { cwd: '/tripwire-policy-fixture' }).kind).toBe('allow');
   },
 );
 
@@ -34,7 +36,11 @@ bunTest.test(
     bunTest.expect(nested.gap).toBeNull();
     bunTest.expect(nested.operations[0]?.cwd).toBe('/tmp');
     bunTest
-      .expect(nested.operations.every((operation) => path.isAbsolute(operation.cwd)))
+      .expect(
+        nested.operations.every(
+          (operation) => operation.cwd !== null && path.isAbsolute(operation.cwd),
+        ),
+      )
       .toBe(true);
   },
 );
@@ -79,21 +85,88 @@ bunTest.test.each([
 
 bunTest.test('subprocess cwd reaches deletion policy', () => {
   const source = 'import subprocess; subprocess.run(["rm","example.txt"],cwd="/tmp",check=True)';
-  bunTest.expect(decideBash(`python3 -c ${quote(source)}`).kind).toBe('allow');
-  bunTest.expect(decideBash(`python3 -c ${quote(source.replace('/tmp', '/'))}`).kind).toBe('deny');
+  bunTest
+    .expect(decideBash(`python3 -c ${quote(source)}`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
+    .toBe('allow');
+  bunTest
+    .expect(
+      decideBash(
+        `python3 -c ${quote(source.replace('/tmp', '/'))}`,
+        {},
+        { cwd: '/tripwire-policy-fixture' },
+      ).kind,
+    )
+    .toBe('deny');
 });
 bunTest.test.each([
   ['python3 -c', 'import os; os.chdir("/tmp"); os.remove("example.txt")'],
   ['node -e', 'process.chdir("/tmp"); require("fs").unlinkSync("example.txt")'],
 ])('inline cwd changes preserve deletion policy for %s', (runner, source) => {
-  bunTest.expect(decideBash(`${runner} ${quote(source)}`).kind).toBe('allow');
-  bunTest.expect(decideBash(`${runner} ${quote(source.replace('/tmp', '/'))}`).kind).toBe('deny');
   bunTest
-    .expect(decideBash(`${runner} ${quote(source.replace('/tmp', '/missing-example-cwd'))}`).kind)
+    .expect(decideBash(`${runner} ${quote(source)}`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
+    .toBe('allow');
+  bunTest
+    .expect(
+      decideBash(
+        `${runner} ${quote(source.replace('/tmp', '/'))}`,
+        {},
+        { cwd: '/tripwire-policy-fixture' },
+      ).kind,
+    )
+    .toBe('deny');
+  bunTest
+    .expect(
+      decideBash(
+        `${runner} ${quote(source.replace('/tmp', '/missing-example-cwd'))}`,
+        {},
+        { cwd: '/tripwire-policy-fixture' },
+      ).kind,
+    )
     .toBe('deny');
 });
 bunTest.test('branching cwd cannot authorize a later relative delete', () => {
   const source =
     'import os,json\nos.chdir("/tmp")\nif json.loads("true"): os.chdir("/")\nos.remove("example.txt")';
-  bunTest.expect(decideBash(`python3 -c ${quote(source)}`).kind).toBe('deny');
+  bunTest
+    .expect(decideBash(`python3 -c ${quote(source)}`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
+    .toBe('deny');
 });
+
+bunTest.test('absolute operations preserve null cwd and keep their policy decisions', () => {
+  const source =
+    'import shutil,os\nopen("/tmp/fictional-input").read()\nopen("/tmp/fictional-output","w").write("x")\nshutil.copyfile("/tmp/fictional-input","/tmp/fictional-copy")\nos.remove("/tmp/fictional-old")';
+  const report = analyzeCode('python', source, [], null);
+  bunTest.expect(report.gap).toBeNull();
+  bunTest
+    .expect([...new Set(report.operations.map((operation) => operation.kind))])
+    .toEqual(['read', 'write', 'transfer', 'delete']);
+  bunTest.expect(report.operations.every((operation) => operation.cwd === null)).toBe(true);
+  bunTest.expect(decideBash(`python3 -c ${quote(source)}`, {}, { cwd: null }).kind).toBe('allow');
+  bunTest
+    .expect(decideBash(`python3 -c ${quote('import os; os.remove("/")')}`, {}, { cwd: null }).kind)
+    .toBe('deny');
+  bunTest
+    .expect(
+      decideBash(`python3 -c ${quote('open("/fictional/.ssh/id_rsa","w")')}`, {}, { cwd: null })
+        .kind,
+    )
+    .toBe('deny');
+});
+
+bunTest.test(
+  'path resolution sees earlier absolute mutations with null cwd after directory recovery',
+  () => {
+    const source =
+      'import os\nfrom pathlib import Path\nos.remove("/tmp/fictional-target")\nos.chdir("/tmp")\nPath("fictional-target").resolve()';
+    const report = analyzeCode('python', source, [], null);
+    bunTest.expect(report.operations[0]?.cwd).toBeNull();
+    bunTest.expect(report.gap).toContain('Earlier filesystem effects');
+    const unrelated = analyzeCode(
+      'python',
+      source.replace('Path("fictional-target")', 'Path("fictional-other")'),
+      [],
+      null,
+    );
+    bunTest.expect(unrelated.gap).toBeNull();
+  },
+);

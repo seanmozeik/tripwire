@@ -121,21 +121,27 @@ const canonicalPath = (target: string): string | null => {
 };
 
 const safeDeletion = (target: string, policy: CodePolicy): boolean => {
-  if (policy.cwd === null || target === '' || target.includes('\0')) {
+  if ((policy.cwd === null && !path.isAbsolute(target)) || target === '' || target.includes('\0')) {
     return false;
   }
-  const resolved = canonicalPath(path.resolve(policy.cwd, target));
-  const base = canonicalPath(policy.cwd);
+  const resolved = canonicalPath(
+    policy.cwd === null ? path.resolve(target) : path.resolve(policy.cwd, target),
+  );
+  const base = policy.cwd === null ? null : canonicalPath(policy.cwd);
   if (
     resolved === null ||
-    base === null ||
+    (policy.cwd !== null && base === null) ||
     resolved === path.parse(resolved).root ||
     resolved === base
   ) {
     return false;
   }
   // Classify the real target in the same absolute/relative scope as the submitted path.
-  const actual = path.isAbsolute(target) ? resolved : path.relative(base, resolved);
+  if (!path.isAbsolute(target) && base === null) {
+    return false;
+  }
+  const actual =
+    base === null || path.isAbsolute(target) ? resolved : path.relative(base, resolved);
   const relativeScope =
     !path.isAbsolute(target) && isSafePathTarget(target, policy.safePaths.relative, []);
   return relativeScope
@@ -148,7 +154,7 @@ const quoteArgument = (argument: string): string =>
 
 const operationDecision = (operation: CodeOperation, originalPolicy: CodePolicy): Decision => {
   const policy = { ...originalPolicy, cwd: operation.cwd };
-  if (policy.cwd !== originalPolicy.cwd) {
+  if (policy.cwd !== null && policy.cwd !== originalPolicy.cwd) {
     try {
       if (!statSync(policy.cwd).isDirectory()) {
         return codeDeny('The operation has an unresolved working directory.');
@@ -158,6 +164,9 @@ const operationDecision = (operation: CodeOperation, originalPolicy: CodePolicy)
     }
   }
   if (operation.kind === 'process') {
+    if (policy.cwd === null) {
+      return codeDeny('The process has an unresolved working directory.');
+    }
     return policy.inspectCommand(operation.argv.map(quoteArgument).join(' '), policy.cwd);
   }
   if (operation.kind === 'transfer') {
@@ -168,7 +177,11 @@ const operationDecision = (operation: CodeOperation, originalPolicy: CodePolicy)
       operation.cwd,
     );
   }
-  const target = path.resolve(policy.cwd, operation.path);
+  if (policy.cwd === null && !path.isAbsolute(operation.path)) {
+    return codeDeny('The operation has an unresolved working directory.');
+  }
+  const target =
+    policy.cwd === null ? path.resolve(operation.path) : path.resolve(policy.cwd, operation.path);
   if (operation.kind === 'json-module') {
     try {
       const resolved = realpathSync(target);
@@ -199,7 +212,7 @@ const inspectCode = (
   policy: CodePolicy,
   argv?: readonly (string | null)[],
 ): Decision => {
-  const report = analyzeCode(language, source, argv, policy.cwd);
+  const report = analyzeCode(language, source, argv ?? [], policy.cwd);
   if (report.gap !== null) {
     return codeDeny(report.gap);
   }

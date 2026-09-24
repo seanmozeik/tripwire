@@ -74,21 +74,29 @@ const javascriptCases = [
 const quote = (source: string): string => `'${source.replaceAll("'", String.raw`'\''`)}'`;
 
 bunTest.test.each(pythonCases)('Python %s and dangerous twin', (_, source) => {
-  bunTest.expect(decideBash(`python3 -c ${quote(source)}`).kind).toBe('allow');
+  bunTest
+    .expect(decideBash(`python3 -c ${quote(source)}`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
+    .toBe('allow');
   bunTest
     .expect(
       decideBash(
         `python3 -c ${quote(`${source}\nimport os; os.remove("/srv/example/record.txt")`)}`,
+        {},
+        { cwd: '/tripwire-policy-fixture' },
       ).kind,
     )
     .toBe('deny');
 });
 bunTest.test.each(javascriptCases)('JS %s and dangerous twin', (_, source) => {
-  bunTest.expect(decideBash(`bun -e ${quote(source)}`).kind).toBe('allow');
+  bunTest
+    .expect(decideBash(`bun -e ${quote(source)}`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
+    .toBe('allow');
   bunTest
     .expect(
       decideBash(
         `bun -e ${quote(`${source}; require("fs").unlinkSync("/srv/example/record.txt")`)}`,
+        {},
+        { cwd: '/tripwire-policy-fixture' },
       ).kind,
     )
     .toBe('deny');
@@ -96,28 +104,51 @@ bunTest.test.each(javascriptCases)('JS %s and dangerous twin', (_, source) => {
 
 bunTest.test('invalid code stays closed without rejecting complete objects', () => {
   bunTest
-    .expect(analyzeCode('javascript', 'const x={"value": "example"}; console.log(x)').gap)
+    .expect(
+      analyzeCode(
+        'javascript',
+        'const x={"value": "example"}; console.log(x)',
+        [],
+        '/tripwire-policy-fixture',
+      ).gap,
+    )
     .toBeNull();
-  bunTest.expect(analyzeCode('javascript', 'const x={"value": "example').gap).not.toBeNull();
+  bunTest
+    .expect(
+      analyzeCode('javascript', 'const x={"value": "example', [], '/tripwire-policy-fixture').gap,
+    )
+    .not.toBeNull();
 });
 
 bunTest.test('tuple iteration binds each static operand', () => {
   const source =
     'from pathlib import Path\nfor source,target in [("a.txt","b.txt")]:\n Path(source).rename(target)';
-  bunTest.expect(decideBash(`python3 -c ${quote(source)}`).kind).toBe('allow');
   bunTest
-    .expect(decideBash(`python3 -c ${quote(source.replace('b.txt', '.env'))}`).kind)
+    .expect(decideBash(`python3 -c ${quote(source)}`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
+    .toBe('allow');
+  bunTest
+    .expect(
+      decideBash(
+        `python3 -c ${quote(source.replace('b.txt', '.env'))}`,
+        {},
+        { cwd: '/tripwire-policy-fixture' },
+      ).kind,
+    )
     .toBe('deny');
 });
 
 bunTest.test('exception tuples and builtin type names remain inert', () => {
   const source =
     'try:\n print(1)\nexcept (ValueError,TypeError) as error:\n print(type(error).__name__)';
-  bunTest.expect(decideBash(`python3 -c ${quote(source)}`).kind).toBe('allow');
+  bunTest
+    .expect(decideBash(`python3 -c ${quote(source)}`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
+    .toBe('allow');
   bunTest
     .expect(
       decideBash(
         `python3 -c ${quote(source.replace('print(type(error).__name__)', 'open(".env","w").write("example")'))}`,
+        {},
+        { cwd: '/tripwire-policy-fixture' },
       ).kind,
     )
     .toBe('deny');
@@ -126,25 +157,39 @@ bunTest.test('exception tuples and builtin type names remain inert', () => {
 bunTest.test('bounded dictionary comprehensions preserve inspected module names', () => {
   const source =
     'import importlib.util; print({name:importlib.util.find_spec(name) is not None for name in ["example","other"]})';
-  bunTest.expect(decideBash(`python3 -c ${quote(source)}`).kind).toBe('allow');
   bunTest
-    .expect(decideBash(`python3 -c ${quote(source.replace('"other"', '"example.child"'))}`).kind)
+    .expect(decideBash(`python3 -c ${quote(source)}`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
+    .toBe('allow');
+  bunTest
+    .expect(
+      decideBash(
+        `python3 -c ${quote(source.replace('"other"', '"example.child"'))}`,
+        {},
+        { cwd: '/tripwire-policy-fixture' },
+      ).kind,
+    )
     .toBe('deny');
 });
 bunTest.test('walrus in a comprehension cannot conceal outer rebinding', () => {
   const source =
     'import os\np="/tmp/example"\n[(p:="/srv/example/record.txt") for x in [1]]\nos.remove(p)';
-  bunTest.expect(decideBash(`python3 -c ${quote(source)}`).kind).toBe('deny');
+  bunTest
+    .expect(decideBash(`python3 -c ${quote(source)}`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
+    .toBe('deny');
 });
 
 bunTest.test('grouping inspects callbacks over inert directory names', () => {
   const source =
     'const fs=require("node:fs"); const groups=Map.groupBy(fs.readdirSync(".").filter(name=>name.endsWith(".sql")),name=>name.split("_")[0]); console.log([...groups].filter(([,values])=>values.length>1))';
-  bunTest.expect(decideBash(`node -e ${quote(source)}`).kind).toBe('allow');
+  bunTest
+    .expect(decideBash(`node -e ${quote(source)}`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
+    .toBe('allow');
   bunTest
     .expect(
       decideBash(
         `node -e ${quote(source.replace('name.split("_")[0]', 'fs.writeFileSync(".env","example")'))}`,
+        {},
+        { cwd: '/tripwire-policy-fixture' },
       ).kind,
     )
     .toBe('deny');
@@ -152,11 +197,16 @@ bunTest.test('grouping inspects callbacks over inert directory names', () => {
 
 bunTest.test('formatted string escapes preserve expression inspection', () => {
   const source = 'import re\nprint(re.sub("x",lambda m:f"example {m[0]}\\n", "x"))';
-  bunTest.expect(decideBash(`python3 -c ${quote(source)}`).kind).toBe('allow');
+  bunTest
+    .expect(decideBash(`python3 -c ${quote(source)}`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
+    .toBe('allow');
   bunTest
     .expect(
-      decideBash(`python3 -c ${quote(source.replace('m[0]', "open('.env','w').write('example')"))}`)
-        .kind,
+      decideBash(
+        `python3 -c ${quote(source.replace('m[0]', "open('.env','w').write('example')"))}`,
+        {},
+        { cwd: '/tripwire-policy-fixture' },
+      ).kind,
     )
     .toBe('deny');
 });

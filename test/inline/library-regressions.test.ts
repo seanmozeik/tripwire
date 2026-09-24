@@ -41,7 +41,9 @@ bunTest.test.each([
   'import zipfile; z=zipfile.ZipFile("output.zip", "w"); z.writestr(data="hello", zinfo_or_arcname="doc.md")',
   'import zipfile; zipfile.ZipFile("input.zip", compression=zipfile.ZIP_STORED).read(name="doc.md")',
 ])('normalizes ZIP keyword arguments: %s', (source) => {
-  bunTest.expect(decideBash(python(source)).kind).toBe('allow');
+  bunTest
+    .expect(decideBash(python(source), {}, { cwd: '/tripwire-policy-fixture' }).kind)
+    .toBe('allow');
 });
 
 bunTest.test.each([
@@ -52,7 +54,9 @@ bunTest.test.each([
   'import zipfile; zipfile.ZipFile(file="input.zip", unknown=True)',
   'import zipfile,os; zipfile.ZipFile(file="input.zip", mode=os.unlink("/protected"))',
 ])('retains checks after keyword binding: %s', (source) => {
-  bunTest.expect(decideBash(python(source)).kind).toBe('deny');
+  bunTest
+    .expect(decideBash(python(source), {}, { cwd: '/tripwire-policy-fixture' }).kind)
+    .toBe('deny');
 });
 
 bunTest.test.each(['utf_8', 'utf8', 'utf-32', 'utf_32_le', 'latin_1'])(
@@ -64,7 +68,9 @@ bunTest.test.each(['utf_8', 'utf8', 'utf-32', 'utf_32_le', 'latin_1'])(
       `"hello".encode(encoding="${encoding}")`,
       `import zipfile; zipfile.ZipFile("input.zip").read("doc").decode("${encoding}")`,
     ]) {
-      bunTest.expect(decideBash(python(source)).kind).toBe('allow');
+      bunTest
+        .expect(decideBash(python(source), {}, { cwd: '/tripwire-policy-fixture' }).kind)
+        .toBe('allow');
     }
   },
 );
@@ -75,15 +81,24 @@ bunTest.test('custom codecs remain blocked in both call forms', () => {
     '"hello".encode("custom")',
     '"hello".encode(encoding="custom")',
   ]) {
-    bunTest.expect(decideBash(python(source)).kind).toBe('deny');
+    bunTest
+      .expect(decideBash(python(source), {}, { cwd: '/tripwire-policy-fixture' }).kind)
+      .toBe('deny');
   }
 });
 
 bunTest.test('ZIP argument forms produce the same file operations', () => {
-  const positional = analyzeCode('python', 'import zipfile; zipfile.ZipFile("output.zip", "w")');
+  const positional = analyzeCode(
+    'python',
+    'import zipfile; zipfile.ZipFile("output.zip", "w")',
+    [],
+    '/tripwire-policy-fixture',
+  );
   const keyword = analyzeCode(
     'python',
     'import zipfile; zipfile.ZipFile(mode="w", file="output.zip")',
+    [],
+    '/tripwire-policy-fixture',
   );
   bunTest.expect(positional.gap).toBeNull();
   bunTest.expect(keyword.gap).toBeNull();

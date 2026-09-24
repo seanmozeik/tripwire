@@ -71,7 +71,7 @@ const subcommandTokens = (seg: ShellInvocation): string[] => {
 // Parsing logic as the rest of tripwire.
 const matchPattern = (program: ShellProgram, rule: BlockRule): boolean => {
   const { pattern } = rule;
-  const patternProgram = analyzeBash(pattern);
+  const patternProgram = analyzeBash(pattern, { cwd: null });
   if (patternProgram.diagnostics.length > 0 || patternProgram.invocations.length === 0) {
     return false;
   }

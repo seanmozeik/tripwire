@@ -5,7 +5,15 @@ import { analyzeBash } from '../src/lib/bash';
 import type { Config } from '../src/lib/config';
 
 const shellDecision = (command: string, config: Config = {}) =>
-  decide({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command } }, config);
+  decide(
+    {
+      cwd: '/tripwire-policy-fixture',
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Bash',
+      tool_input: { command },
+    },
+    config,
+  );
 
 const tailnetCarrierConfig: Config = {
   shell: {
@@ -76,7 +84,7 @@ const SAFE_ROLLOUT_CASES: readonly { readonly family: string; readonly command: 
 bunTest.describe('rollout shell corpus', () => {
   bunTest.test('accepts inspectable rollout programs', () => {
     for (const fixture of SAFE_ROLLOUT_CASES) {
-      const program = analyzeBash(fixture.command);
+      const program = analyzeBash(fixture.command, { cwd: '/tripwire-policy-fixture' });
       bunTest.expect(program.diagnostics, fixture.family).toEqual([]);
       bunTest.expect(shellDecision(fixture.command).kind, fixture.family).toBe('allow');
     }
@@ -103,7 +111,9 @@ bunTest.describe('rollout shell corpus', () => {
   bunTest.test(
     'exposes secret-reading commands inside supported syntax to the output protection path',
     () => {
-      const program = analyzeBash('if test -f .env; then cat .env; fi');
+      const program = analyzeBash('if test -f .env; then cat .env; fi', {
+        cwd: '/tripwire-policy-fixture',
+      });
 
       bunTest.expect(program.diagnostics).toEqual([]);
       bunTest
@@ -282,7 +292,9 @@ bunTest.describe('rollout shell corpus', () => {
       .toBe('deny');
     bunTest.expect(shellDecision('ssh -F custom.conf build-host git status').kind).toBe('deny');
     bunTest.expect(shellDecision('ssh -Fcustom.conf build-host git status').kind).toBe('deny');
-    const secretRead = analyzeBash("ssh build-host 'cat .env'");
+    const secretRead = analyzeBash("ssh build-host 'cat .env'", {
+      cwd: '/tripwire-policy-fixture',
+    });
     bunTest
       .expect(
         secretRead.invocations.some((invocation) => invocation.tokens.join(' ') === 'cat .env'),
@@ -316,7 +328,7 @@ bunTest.describe('rollout shell corpus', () => {
     const secretSource = base64Shell('cat .env');
     bunTest
       .expect(
-        analyzeBash(secretSource).invocations.some(
+        analyzeBash(secretSource, { cwd: '/tripwire-policy-fixture' }).invocations.some(
           (invocation) => invocation.tokens.join(' ') === 'cat .env',
         ),
       )
@@ -382,7 +394,9 @@ bunTest.describe('rollout shell corpus', () => {
       bunTest.expect(shellDecision(command).kind, command).toBe('deny');
     }
 
-    const inventory = analyzeBash('for file in README.md .env; do cat "$file"; done');
+    const inventory = analyzeBash('for file in README.md .env; do cat "$file"; done', {
+      cwd: '/tripwire-policy-fixture',
+    });
     bunTest
       .expect(
         inventory.invocations.some((invocation) => invocation.tokens.join(' ') === 'cat .env'),

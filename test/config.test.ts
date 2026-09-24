@@ -205,6 +205,7 @@ bunTest.describe('loadConfigResult', () => {
     const config = await Effect.runPromise(loadConfig(configPath));
     const decision = decide(
       {
+        cwd: '/tripwire-policy-fixture',
         hook_event_name: 'PreToolUse',
         tool_name: 'Bash',
         tool_input: { command: 'legacy-example scan' },

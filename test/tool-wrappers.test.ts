@@ -31,26 +31,60 @@ const wrappers = [
   'caffeinate -i',
 ];
 bunTest.test.each(wrappers)('unwraps %s for policy', (wrapper) => {
-  bunTest.expect(decideBash(`${wrapper} rm -rf /`).kind).toBe('deny');
-  bunTest.expect(decideBash(`${wrapper} git reset --hard`).kind).toBe('deny');
-  bunTest.expect(decideBash(`${wrapper} printf example`).kind).toBe('allow');
-  bunTest.expect(decideBash(`${wrapper} python3 -c 'import os; os.remove("/")'`).kind).toBe('deny');
+  bunTest
+    .expect(decideBash(`${wrapper} rm -rf /`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
+    .toBe('deny');
+  bunTest
+    .expect(decideBash(`${wrapper} git reset --hard`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
+    .toBe('deny');
+  bunTest
+    .expect(decideBash(`${wrapper} printf example`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
+    .toBe('allow');
+  bunTest
+    .expect(
+      decideBash(
+        `${wrapper} python3 -c 'import os; os.remove("/")'`,
+        {},
+        { cwd: '/tripwire-policy-fixture' },
+      ).kind,
+    )
+    .toBe('deny');
 });
 bunTest.test('shell text wrapper and unknown flags', () => {
-  bunTest.expect(decideBash('nix-shell --run "rm -rf /"').kind).toBe('deny');
-  bunTest.expect(decideBash('nix-shell --run "printf example"').kind).toBe('allow');
-  bunTest.expect(decideBash('mise exec --unknown -- printf example').kind).toBe('deny');
+  bunTest
+    .expect(decideBash('nix-shell --run "rm -rf /"', {}, { cwd: '/tripwire-policy-fixture' }).kind)
+    .toBe('deny');
+  bunTest
+    .expect(
+      decideBash('nix-shell --run "printf example"', {}, { cwd: '/tripwire-policy-fixture' }).kind,
+    )
+    .toBe('allow');
+  bunTest
+    .expect(
+      decideBash('mise exec --unknown -- printf example', {}, { cwd: '/tripwire-policy-fixture' })
+        .kind,
+    )
+    .toBe('deny');
   bunTest
     .expect(decideBash('mise exec -- python3 -c "print(1)"', {}, { cwd: tmpdir() }).kind)
     .toBe('allow');
-  bunTest.expect(decideBash('caffeinate -i python3 -c "print(1)"').kind).toBe('allow');
+  bunTest
+    .expect(
+      decideBash('caffeinate -i python3 -c "print(1)"', {}, { cwd: '/tripwire-policy-fixture' })
+        .kind,
+    )
+    .toBe('allow');
 });
 
 bunTest.test.each(['nix develop --command', 'caffeinate -dimsu', 'mise -j 4 exec --'])(
   'wrapper metadata recognizes delimiters and flag bundles: %s',
   (wrapper) => {
-    bunTest.expect(decideBash(`${wrapper} printf example`).kind).toBe('allow');
-    bunTest.expect(decideBash(`${wrapper} rm -rf /`).kind).toBe('deny');
+    bunTest
+      .expect(decideBash(`${wrapper} printf example`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
+      .toBe('allow');
+    bunTest
+      .expect(decideBash(`${wrapper} rm -rf /`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
+      .toBe('deny');
   },
 );
 

@@ -7,17 +7,29 @@ import { decideBash } from '../src/dispatch';
 import { analyzeBash } from '../src/lib/bash';
 
 bunTest.test('recursive globs stay unresolved without scanning the filesystem', () => {
-  const program = analyzeBash('ls ~/dev/**/package.json', { home: '/fictional-home' });
+  const program = analyzeBash('ls ~/dev/**/package.json', {
+    home: '/fictional-home',
+    cwd: '/tripwire-policy-fixture',
+  });
   const word = program.invocations[0]?.words[1];
   bunTest.expect(word?.source).toBe('~/dev/**/package.json');
   bunTest.expect(word?.kind).toBe('dynamic');
   bunTest
-    .expect(decideBash('ls ~/dev/**/package.json', {}, { home: '/fictional-home' }).kind)
+    .expect(
+      decideBash(
+        'ls ~/dev/**/package.json',
+        {},
+        { home: '/fictional-home', cwd: '/tripwire-policy-fixture' },
+      ).kind,
+    )
     .toBe('allow');
   bunTest
     .expect(
-      decideBash('cp ~/dev/**/package.json /tmp/example-target', {}, { home: '/fictional-home' })
-        .kind,
+      decideBash(
+        'cp ~/dev/**/package.json /tmp/example-target',
+        {},
+        { home: '/fictional-home', cwd: '/tripwire-policy-fixture' },
+      ).kind,
     )
     .toBe('deny');
 });
@@ -28,7 +40,15 @@ bunTest.test('unknown cwd never expands against the hook directory', () => {
   bunTest
     .expect(program.invocations[0]?.words[1])
     .toMatchObject({ value: 'package.*', kind: 'dynamic' });
-  bunTest.expect(decideBash('cd "$X"; cp package.* /tmp/example-target').kind).toBe('deny');
+  bunTest
+    .expect(
+      decideBash(
+        'cd "$X"; cp package.* /tmp/example-target',
+        {},
+        { cwd: '/tripwire-policy-fixture' },
+      ).kind,
+    )
+    .toBe('deny');
 });
 
 bunTest.test(

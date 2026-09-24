@@ -11,7 +11,7 @@ interface OperationContext {
 
 const recordOperation = (context: OperationContext, ...operations: readonly CodeEffect[]): void => {
   for (const operation of operations) {
-    let { cwd } = context;
+    const { cwd } = context;
     if (cwd === null) {
       let paths: readonly string[] = [];
       if (operation.kind === 'transfer') {
@@ -22,8 +22,7 @@ const recordOperation = (context: OperationContext, ...operations: readonly Code
       if (paths.length === 0 || paths.some((target) => !path.isAbsolute(target))) {
         return failInspection('An operation depends on an unresolved working directory.');
       }
-      // Absolute file operands do not depend on the interpreter's directory.
-      cwd = '/';
+      // Absolute file operands retain null: they do not need a directory.
     }
     context.operations.push({ ...operation, cwd });
   }

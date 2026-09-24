@@ -43,12 +43,13 @@ const loadCheckedScriptConfig = (): Effect.Effect<ResolvedConfig, CheckedScriptE
 
 const executeBytes = (
   bytes: Uint8Array,
+  cwd: string,
   arguments_: readonly string[],
 ): Effect.Effect<number, CheckedScriptError> =>
   Effect.tryPromise({
     try: async () => {
       const child = Bun.spawn(['/bin/bash', '-s', '--', ...arguments_], {
-        cwd: process.cwd(),
+        cwd,
         env: currentEnvironment(),
         stderr: 'inherit',
         stdin: 'pipe',
@@ -69,13 +70,11 @@ const runCheckedScript = (
   arguments_: readonly string[],
 ): Effect.Effect<void, CheckedScriptError> =>
   Effect.gen(function* runCheckedScriptEffect() {
+    const cwd = process.cwd();
     const bytes = yield* readScript(path);
     const source = yield* decodeScript(bytes);
     const config = yield* loadCheckedScriptConfig();
-    const decision = decideBash(source, config, {
-      cwd: process.cwd(),
-      positionalArguments: arguments_,
-    });
+    const decision = decideBash(source, config, { cwd, positionalArguments: arguments_ });
     if (decision.kind === 'deny' || decision.kind === 'ask') {
       return yield* new CheckedScriptError({
         message: `[tripwire:${decision.rule}] ${decision.message}`,
@@ -84,7 +83,7 @@ const runCheckedScript = (
     if (decision.kind === 'warn') {
       process.stderr.write(`[tripwire:${decision.rule}] ${decision.message}\n`);
     }
-    process.exitCode = yield* executeBytes(bytes, arguments_);
+    process.exitCode = yield* executeBytes(bytes, cwd, arguments_);
     return yield* Effect.void;
   });
 

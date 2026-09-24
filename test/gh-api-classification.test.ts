@@ -12,7 +12,7 @@ bunTest.test.each([
   'gh api search/issues --method POST --method GET -f q=sample',
   "gh api repos/example/project --jq '.name'",
 ])('allows read request: %s', (command) => {
-  bunTest.expect(decideBash(command).kind).toBe('allow');
+  bunTest.expect(decideBash(command, {}, { cwd: '/tripwire-policy-fixture' }).kind).toBe('allow');
 });
 
 bunTest.test.each([
@@ -31,5 +31,5 @@ bunTest.test.each([
   'gh api repos/example/project --method "$METHOD"',
   'gh api search/issues --unknown=GET -f q=sample',
 ])('preserves mutation review: %s', (command) => {
-  bunTest.expect(decideBash(command).kind).toBe('deny');
+  bunTest.expect(decideBash(command, {}, { cwd: '/tripwire-policy-fixture' }).kind).toBe('deny');
 });

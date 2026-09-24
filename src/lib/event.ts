@@ -12,6 +12,12 @@ const HookEvent = Schema.Struct({
   tool_use_id: Schema.optional(Schema.String),
 });
 type HookEventType = typeof HookEvent.Type;
+type ResolvedHookEvent = Omit<HookEventType, 'cwd'> & { readonly cwd: string | null };
+
+const resolveHookEvent = (event: HookEventType): ResolvedHookEvent => ({
+  ...event,
+  cwd: event.cwd ?? process.cwd(),
+});
 
 interface BashInput {
   readonly command: string;
@@ -95,6 +101,7 @@ const extractResponseText = (toolName: string, response: unknown): string => {
 };
 
 export type {
+  ResolvedHookEvent,
   BashInput,
   BashResponse,
   EditInput,
@@ -105,6 +112,7 @@ export type {
 };
 export {
   HookEvent as HookEventSchema,
+  resolveHookEvent,
   extractResponseText,
   isBashInput,
   isEditInput,

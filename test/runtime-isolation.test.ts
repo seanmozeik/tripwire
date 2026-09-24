@@ -75,6 +75,7 @@ bunTest.describe('rule isolation', () => {
 bunTest.describe('PowerShell handling', () => {
   bunTest.test('pre-tool calls deny unsupported PowerShell grammar', () => {
     const decision = decide({
+      cwd: '/tripwire-policy-fixture',
       hook_event_name: 'PreToolUse',
       tool_name: 'powershell',
       tool_input: { command: 'Remove-Item -Recurse C:\\' },
@@ -91,6 +92,7 @@ bunTest.describe('PowerShell handling', () => {
     try {
       const decision = decide(
         {
+          cwd: '/tripwire-policy-fixture',
           hook_event_name: 'PostToolUse',
           tool_name: 'powershell',
           tool_response: { stdout: fixture },

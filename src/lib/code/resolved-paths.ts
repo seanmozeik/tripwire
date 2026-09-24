@@ -37,7 +37,11 @@ const resolvePathCall = (
     if (
       affected === null ||
       affected.some((value) => {
-        const mutation = path.resolve(operation.cwd, value);
+        if (!path.isAbsolute(value) && operation.cwd === null) {
+          return true;
+        }
+        const mutation =
+          operation.cwd === null ? path.resolve(value) : path.resolve(operation.cwd, value);
         return overlaps(target, mutation) || overlaps(actual, resolveWritePath(mutation));
       })
     ) {

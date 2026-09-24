@@ -89,13 +89,19 @@ const transfers: readonly [CodeLanguage, string, readonly CodeOperation['kind'][
   ['javascript', 'require("fs").symlinkSync("example-a","example-b")', ['transfer']],
 ];
 bunTest.test.each(transfers)('extracts %s file effects: %s', (language, source, kinds) => {
-  const report = analyzeCode(language, source);
+  const report = analyzeCode(language, source, [], '/tripwire-policy-fixture');
   bunTest.expect(report.gap).toBeNull();
   bunTest.expect(report.operations.map((operation) => operation.kind)).toEqual([...kinds]);
   const runner = language === 'python' ? 'python3 -c' : 'node -e';
-  bunTest.expect(decideBash(`${runner} ${quote(source)}`).kind).toBe('allow');
+  bunTest
+    .expect(decideBash(`${runner} ${quote(source)}`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
+    .toBe('allow');
   const dangerous = source
     .replaceAll('example-b', '.env')
     .replaceAll('mkdirSync("example")', 'mkdirSync(".ssh/example")');
-  bunTest.expect(decideBash(`${runner} ${quote(dangerous)}`).kind).toBe('deny');
+  bunTest
+    .expect(
+      decideBash(`${runner} ${quote(dangerous)}`, {}, { cwd: '/tripwire-policy-fixture' }).kind,
+    )
+    .toBe('deny');
 });

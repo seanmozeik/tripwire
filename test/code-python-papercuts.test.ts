@@ -13,13 +13,15 @@ bunTest.describe('Python data operation regressions', () => {
     'import collections; c=collections.Counter(); print(c.most_common()); print(c["a"])',
     'from collections import Counter; import json; print(Counter(json.loads("[]")).most_common())',
   ])('accepts inert data: %s', (source) => {
-    bunTest.expect(analyzeCode('python', source).gap).toBeNull();
+    bunTest.expect(analyzeCode('python', source, [], '/tripwire-policy-fixture').gap).toBeNull();
   });
 
   bunTest.test('records effects in both expression branches', () => {
     const report = analyzeCode(
       'python',
       'import os; os.unlink("dist/a") if True else os.unlink("/protected")',
+      [],
+      '/tripwire-policy-fixture',
     );
     bunTest.expect(report.gap).toBeNull();
     bunTest
@@ -43,6 +45,8 @@ bunTest.describe('Python data operation regressions', () => {
     'import os; print("abc"[:os.system("id")])',
     'import os; os.unlink("/protected"[0:3])',
   ])('does not authorize effects through data: %s', (source) => {
-    bunTest.expect(analyzeCode('python', source).gap).not.toBeNull();
+    bunTest
+      .expect(analyzeCode('python', source, [], '/tripwire-policy-fixture').gap)
+      .not.toBeNull();
   });
 });

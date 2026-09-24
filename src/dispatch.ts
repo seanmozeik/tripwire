@@ -22,6 +22,8 @@ import {
   type BashInput,
   type EditInput,
   type HookEvent,
+  type ResolvedHookEvent,
+  resolveHookEvent,
   HookEventSchema,
   type ReadInput,
   type WriteInput,
@@ -94,14 +96,14 @@ const writeCursorPreGate = (decision: Decision): void => {
 
 // Codex rejects `hookSpecificOutput.additionalContext`. Its `turn_id`
 // extension selects the narrower output without changing Claude responses.
-const isCodex = (event: HookEvent): boolean => event.turn_id !== undefined;
+const isCodex = (event: ResolvedHookEvent): boolean => event.turn_id !== undefined;
 
 interface WarnOutput {
   hookEventName: string;
   additionalContext?: string;
 }
 
-const writeWarn = (event: HookEvent, decision: Decision, host: HookHost): void => {
+const writeWarn = (event: ResolvedHookEvent, decision: Decision, host: HookHost): void => {
   if (host.kind === 'cursor') {
     process.stdout.write(
       `${JSON.stringify({
@@ -222,7 +224,7 @@ interface Rule {
 const collectBashRules = (
   command: string,
   config: ResolvedConfig,
-  options: BashAnalysisOptions = {},
+  options: BashAnalysisOptions,
   depth = 0,
 ): Rule[] => {
   if (depth > 8) {
@@ -261,17 +263,13 @@ const collectBashRules = (
   return rules;
 };
 
-const codePolicy = (
-  config: ResolvedConfig,
-  cwd: string | null | undefined,
-  depth = 0,
-): CodePolicy => ({
+const codePolicy = (config: ResolvedConfig, cwd: string | null, depth = 0): CodePolicy => ({
   safePaths: config.safePaths,
   remoteHeads: new Set([
     'ssh',
     ...config.shell.executionCarrierAliases.map((alias) => alias.command[0] ?? ''),
   ]),
-  cwd: cwd === undefined ? process.cwd() : cwd,
+  cwd,
   inspectCommand: (command, commandCwd) =>
     runRulesSync(collectBashRules(command, config, { cwd: commandCwd }, depth + 1)),
 });
@@ -280,7 +278,7 @@ const collectExecutableToolRules = (
   tool: string,
   input: unknown,
   config: ResolvedConfig,
-  cwd?: string,
+  cwd: string | null,
 ): Rule[] | undefined => {
   if (tool === 'StatefulCode') {
     return [
@@ -297,11 +295,7 @@ const collectExecutableToolRules = (
     const decoded = decodeExecInput(input);
     const commandCwd = Option.isSome(decoded) ? (decoded.value.workdir ?? cwd) : cwd;
     return Option.isSome(decoded)
-      ? collectBashRules(
-          decoded.value.cmd,
-          config,
-          commandCwd === undefined ? {} : { cwd: commandCwd },
-        )
+      ? collectBashRules(decoded.value.cmd, config, { cwd: commandCwd })
       : [
           {
             name: 'embedded-code',
@@ -335,7 +329,7 @@ const collectPreToolUseRules = (
   tool: string,
   input: unknown,
   config: ResolvedConfig,
-  cwd?: string,
+  cwd: string | null,
 ): Rule[] => {
   const executableRules = collectExecutableToolRules(tool, input, config, cwd);
   if (executableRules !== undefined) {
@@ -355,7 +349,7 @@ const collectPreToolUseRules = (
   }
   if (tool === 'Bash' && isBashInput(input)) {
     const i: BashInput = input;
-    return collectBashRules(i.command, config, cwd === undefined ? {} : { cwd });
+    return collectBashRules(i.command, config, { cwd });
   }
   if (tool === 'Read' && isReadInput(input)) {
     const i: ReadInput = input;
@@ -429,7 +423,8 @@ const runRulesSync = (rules: readonly Rule[]): Decision => {
   return merge(decisions);
 };
 
-const decide = (event: HookEvent, config: Config = {}): Decision => {
+const decide = (input: HookEvent, config: Config = {}): Decision => {
+  const event = resolveHookEvent(input);
   const mergedConfig = mergeWithDefaults(config);
   const tool = normalizeToolName(event.tool_name ?? '');
   if (event.hook_event_name === 'PreToolUse') {
@@ -443,13 +438,10 @@ const decide = (event: HookEvent, config: Config = {}): Decision => {
   return allow('no-rules');
 };
 
-const decideBash = (
-  command: string,
-  config: Config = {},
-  options: BashAnalysisOptions = {},
-): Decision => runRulesSync(collectBashRules(command, mergeWithDefaults(config), options));
+const decideBash = (command: string, config: Config, options: BashAnalysisOptions): Decision =>
+  runRulesSync(collectBashRules(command, mergeWithDefaults(config), options));
 
-const handleAllow = (event: HookEvent, decision: Decision, host: HookHost): void => {
+const handleAllow = (event: ResolvedHookEvent, decision: Decision, host: HookHost): void => {
   const eventName = event.hook_event_name;
   const tool = normalizeToolName(event.tool_name ?? '');
   if (eventName === 'PreToolUse' && tool === 'Bash') {
@@ -517,7 +509,7 @@ const writeHookFailure = (stage: string, batch = false): void => {
   writeAllow(host);
 };
 
-const hookHostKey = (event: HookEvent, host: HookHost): string => {
+const hookHostKey = (event: ResolvedHookEvent, host: HookHost): string => {
   if (host.kind === 'cursor') {
     return `cursor:${host.eventName}`;
   }
@@ -530,8 +522,8 @@ const mergedDecisions = (decisions: readonly Decision[]): Decision =>
 type PreparedHookInput =
   | {
       readonly ok: true;
-      readonly events: readonly HookEvent[];
-      readonly firstEvent: HookEvent;
+      readonly events: readonly ResolvedHookEvent[];
+      readonly firstEvent: ResolvedHookEvent;
       readonly host: HookHost;
       readonly phase: string;
     }
@@ -546,7 +538,7 @@ const prepareHookInput = (input: unknown): Effect.Effect<PreparedHookInput> =>
       return { ok: false };
     }
 
-    let events: readonly HookEvent[];
+    let events: readonly ResolvedHookEvent[];
     let host: HookHost;
     if (batchInput) {
       const decodeExit = yield* Effect.exit(Schema.decodeEffect(HookEventBatchSchema)(input));
@@ -555,7 +547,7 @@ const prepareHookInput = (input: unknown): Effect.Effect<PreparedHookInput> =>
         writeHookFailure('unsupported batch event shape', true);
         return { ok: false };
       }
-      events = decodeExit.value;
+      events = decodeExit.value.map(resolveHookEvent);
       host = cursorHostFromArgs();
     } else {
       const normalized = normalizeHookInput(input, cursorEventNameFromArgs());
@@ -567,7 +559,7 @@ const prepareHookInput = (input: unknown): Effect.Effect<PreparedHookInput> =>
         writeHookFailure('unsupported event shape');
         return { ok: false };
       }
-      events = [decodeExit.value];
+      events = [resolveHookEvent(decodeExit.value)];
       ({ host } = normalized);
     }
 

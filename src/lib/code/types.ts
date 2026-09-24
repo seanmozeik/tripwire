@@ -30,7 +30,10 @@ type CodeEffect =
       readonly range: CodeRange;
     };
 
-type CodeOperation = CodeEffect & { readonly cwd: string };
+type CodeOperation = CodeEffect & {
+  /** Null is valid only for file operations whose operands are all absolute. */
+  readonly cwd: string | null;
+};
 
 interface CodeReport {
   readonly operations: readonly CodeOperation[];

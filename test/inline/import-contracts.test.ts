@@ -9,6 +9,8 @@ bunTest.test('transpiler literal source cannot hide macros', () => {
     .expect(
       decideBash(
         `bun -e ${quote('console.log(new Bun.Transpiler({loader:"ts"}).transformSync("const n: number = 1"))')}`,
+        {},
+        { cwd: '/tripwire-policy-fixture' },
       ).kind,
     )
     .toBe('allow');
@@ -16,6 +18,8 @@ bunTest.test('transpiler literal source cannot hide macros', () => {
     .expect(
       decideBash(
         `bun -e ${quote('new Bun.Transpiler().transformSync(await Bun.file("input.ts").text())')}`,
+        {},
+        { cwd: '/tripwire-policy-fixture' },
       ).kind,
     )
     .toBe('deny');
@@ -23,6 +27,8 @@ bunTest.test('transpiler literal source cannot hide macros', () => {
     .expect(
       decideBash(
         `bun -e ${quote('new Bun.Transpiler({macro:{example:{run:"./macro.ts"}}}).transformSync("run()")')}`,
+        {},
+        { cwd: '/tripwire-policy-fixture' },
       ).kind,
     )
     .toBe('deny');
@@ -30,14 +36,19 @@ bunTest.test('transpiler literal source cannot hide macros', () => {
 bunTest.test('module discovery excludes parent-package execution', () => {
   bunTest
     .expect(
-      decideBash('python3 -c \'import importlib.util; print(importlib.util.find_spec("example"))\'')
-        .kind,
+      decideBash(
+        'python3 -c \'import importlib.util; print(importlib.util.find_spec("example"))\'',
+        {},
+        { cwd: '/tripwire-policy-fixture' },
+      ).kind,
     )
     .toBe('allow');
   bunTest
     .expect(
       decideBash(
         'python3 -c \'import importlib.util; print(importlib.util.find_spec("example.child"))\'',
+        {},
+        { cwd: '/tripwire-policy-fixture' },
       ).kind,
     )
     .toBe('deny');

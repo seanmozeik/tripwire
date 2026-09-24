@@ -36,8 +36,6 @@ await bunTest.mock.module('node:os', () => ({
   tmpdir: () => process.env['TMPDIR'] ?? temporary,
 }));
 process.chdir(path.join(fixture, 'work'));
-// Policy defaults must not acquire temporary-path privileges from the checkout.
-bunTest.spyOn(process, 'cwd').mockReturnValue('/tripwire-policy-fixture');
 bunTest.afterAll(() => {
   process.chdir(repository);
   rmSync(temporary, { recursive: true, force: true });

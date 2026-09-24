@@ -15,7 +15,7 @@ bunTest.describe('project command classification (commands are never executed)',
     });
   }
   bunTest.test('command lookup emits no executable operand', () => {
-    const result = analyzeBash('command -v node python3 pnpm');
+    const result = analyzeBash('command -v node python3 pnpm', { cwd: '/tripwire-policy-fixture' });
     bunTest.expect(result.invocations.map((invocation) => invocation.head)).toEqual(['command']);
   });
   bunTest.test('Bun scripts do not depend on the selected package manifest', () => {

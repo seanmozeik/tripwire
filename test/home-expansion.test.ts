@@ -63,19 +63,39 @@ bunTest.test.each([
 });
 
 bunTest.test('home expansion is shared by transfer, rm, redirect and cd operands', () => {
-  const program = analyzeBash('cp x ~/backup/; rm ~/backup/x; echo x > ~/out; cd ~', { home });
+  const program = analyzeBash('cp x ~/backup/; rm ~/backup/x; echo x > ~/out; cd ~', {
+    home,
+    cwd: '/tripwire-policy-fixture',
+  });
   bunTest.expect(program.invocations[0]?.words.at(-1)?.value).toBe(`${home}/backup/`);
   bunTest.expect(program.invocations[1]?.words.at(-1)?.value).toBe(`${home}/backup/x`);
   bunTest.expect(program.redirects[0]?.target.value).toBe(`${home}/out`);
   bunTest.expect(program.invocations.at(-1)?.words.at(-1)?.value).toBe(home);
-  bunTest.expect(bashScopedRm(analyzeBash('HOME=$X; rm ~/x', { home }), {}).kind).toBe('deny');
+  bunTest
+    .expect(
+      bashScopedRm(analyzeBash('HOME=$X; rm ~/x', { home, cwd: '/tripwire-policy-fixture' }), {})
+        .kind,
+    )
+    .toBe('deny');
 });
 
 bunTest.test('resolved home retains catastrophic deletion and extraction protection', () => {
   bunTest
-    .expect(bashDeny(analyzeBash('rm -rf ~ # tripwire-allow: fixture', { home })).kind)
+    .expect(
+      bashDeny(
+        analyzeBash('rm -rf ~ # tripwire-allow: fixture', {
+          home,
+          cwd: '/tripwire-policy-fixture',
+        }),
+      ).kind,
+    )
     .toBe('deny');
-  bunTest.expect(bashTarExplosion(analyzeBash('tar -xf a.tar -C ~', { home })).kind).toBe('deny');
+  bunTest
+    .expect(
+      bashTarExplosion(analyzeBash('tar -xf a.tar -C ~', { home, cwd: '/tripwire-policy-fixture' }))
+        .kind,
+    )
+    .toBe('deny');
 });
 
 bunTest.test('assigned home resolves symlink destinations and cd uses the same home', () => {

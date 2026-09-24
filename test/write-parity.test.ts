@@ -19,7 +19,7 @@ bunTest.test('ordinary writes retain write effects even when the bytes may be em
     'open("output.json", "w").write("")',
     'from pathlib import Path; Path("output.json").write_text(Path("input.txt").read_text()[0:0])',
   ]) {
-    const report = analyzeCode('python', source);
+    const report = analyzeCode('python', source, [], '/tripwire-policy-fixture');
     bunTest.expect(report.gap).toBeNull();
     bunTest
       .expect(

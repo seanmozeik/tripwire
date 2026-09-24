@@ -76,13 +76,14 @@ const personalToolPolicies: readonly ToolPolicy[] = [
 ];
 
 const bashEvent = (command: string): HookEvent => ({
+  cwd: '/tripwire-policy-fixture',
   hook_event_name: 'PreToolUse',
   tool_name: 'Bash',
   tool_input: { command },
 });
 
 const allRules = (cmd: string) => {
-  const program = analyzeBash(cmd);
+  const program = analyzeBash(cmd, { cwd: '/tripwire-policy-fixture' });
   return {
     deny: bashDeny(program),
     git: bashGit(program, defaultGitConfig),
@@ -465,31 +466,53 @@ bunTest.describe('bash-scoped-rm', () => {
   });
   bunTest.test('unquoted backtick substitution is analyzed', () => {
     bunTest
-      .expect(analyzeBash('echo `whoami`').invocations.map((seg) => seg.head))
+      .expect(
+        analyzeBash('echo `whoami`', { cwd: '/tripwire-policy-fixture' }).invocations.map(
+          (seg) => seg.head,
+        ),
+      )
       .toEqual(['whoami', 'echo']);
   });
   bunTest.test('double-quoted dollar substitution is analyzed', () => {
     bunTest
-      .expect(analyzeBash('echo "result: $(date)"').invocations.map((seg) => seg.head))
+      .expect(
+        analyzeBash('echo "result: $(date)"', { cwd: '/tripwire-policy-fixture' }).invocations.map(
+          (seg) => seg.head,
+        ),
+      )
       .toEqual(['date', 'echo']);
   });
   bunTest.test('single-quoted backtick text is not analyzed', () => {
     bunTest
-      .expect(analyzeBash("echo 'literal `whoami`'").invocations.map((seg) => seg.head))
+      .expect(
+        analyzeBash("echo 'literal `whoami`'", { cwd: '/tripwire-policy-fixture' }).invocations.map(
+          (seg) => seg.head,
+        ),
+      )
       .toEqual(['echo']);
   });
   bunTest.test('double-quoted backtick text is analyzed', () => {
     bunTest
-      .expect(analyzeBash('cmd "with embedded `tick` text"').invocations.map((seg) => seg.head))
+      .expect(
+        analyzeBash('cmd "with embedded `tick` text"', {
+          cwd: '/tripwire-policy-fixture',
+        }).invocations.map((seg) => seg.head),
+      )
       .toEqual(['tick', 'cmd']);
   });
   bunTest.test('single-quoted embedded backtick text is not analyzed', () => {
     bunTest
-      .expect(analyzeBash("cmd 'with embedded `tick` text'").invocations.map((seg) => seg.head))
+      .expect(
+        analyzeBash("cmd 'with embedded `tick` text'", {
+          cwd: '/tripwire-policy-fixture',
+        }).invocations.map((seg) => seg.head),
+      )
       .toEqual(['cmd']);
   });
   bunTest.test('single-quoted prompt data is not reparsed as nested commands', () => {
-    const segs = analyzeBash("cdx run /repo 'class X { `constructor --fake` }'").invocations;
+    const segs = analyzeBash("cdx run /repo 'class X { `constructor --fake` }'", {
+      cwd: '/tripwire-policy-fixture',
+    }).invocations;
 
     bunTest.expect(segs.map((seg) => seg.head)).toEqual(['cdx']);
   });
@@ -497,13 +520,25 @@ bunTest.describe('bash-scoped-rm', () => {
     const protoKey = '__proto__';
 
     bunTest
-      .expect(analyzeBash('constructor rm -rf /').invocations.map((seg) => seg.head))
+      .expect(
+        analyzeBash('constructor rm -rf /', { cwd: '/tripwire-policy-fixture' }).invocations.map(
+          (seg) => seg.head,
+        ),
+      )
       .toEqual(['constructor']);
     bunTest
-      .expect(analyzeBash('toString rm -rf /').invocations.map((seg) => seg.head))
+      .expect(
+        analyzeBash('toString rm -rf /', { cwd: '/tripwire-policy-fixture' }).invocations.map(
+          (seg) => seg.head,
+        ),
+      )
       .toEqual(['toString']);
     bunTest
-      .expect(analyzeBash(`${protoKey} rm -rf /`).invocations.map((seg) => seg.head))
+      .expect(
+        analyzeBash(`${protoKey} rm -rf /`, { cwd: '/tripwire-policy-fixture' }).invocations.map(
+          (seg) => seg.head,
+        ),
+      )
       .toEqual([protoKey]);
   });
   bunTest.test('nested $(...) substitutions are analyzed', () => {
@@ -515,9 +550,9 @@ bunTest.describe('bash-scoped-rm', () => {
     bunTest.expect(allRules('rm -rf /tmp/foo &>>/tmp/log').rm.kind).toBe('allow');
   });
   bunTest.test('splits top-level newlines into separate command segments', () => {
-    const segs = analyzeBash(
-      'rm -f /private/tmp/foo.sock\nsomeothercmd alpha beta gamma',
-    ).invocations;
+    const segs = analyzeBash('rm -f /private/tmp/foo.sock\nsomeothercmd alpha beta gamma', {
+      cwd: '/tripwire-policy-fixture',
+    }).invocations;
 
     bunTest.expect(segs.map((seg) => seg.head)).toEqual(['rm', 'someothercmd']);
     bunTest.expect(segs[0]?.tokens).toEqual(['rm', '-f', '/private/tmp/foo.sock']);
@@ -528,11 +563,17 @@ bunTest.describe('bash-scoped-rm', () => {
 
     bunTest.expect(d.rm.kind).toBe('deny');
     bunTest
-      .expect(analyzeBash('echo first\nrm -rf /etc/passwd').invocations.map((seg) => seg.head))
+      .expect(
+        analyzeBash('echo first\nrm -rf /etc/passwd', {
+          cwd: '/tripwire-policy-fixture',
+        }).invocations.map((seg) => seg.head),
+      )
       .toEqual(['echo', 'rm']);
   });
   bunTest.test('preserves newlines inside double-quoted arguments', () => {
-    const segs = analyzeBash('git commit -m "feat: line one\nline two"').invocations;
+    const segs = analyzeBash('git commit -m "feat: line one\nline two"', {
+      cwd: '/tripwire-policy-fixture',
+    }).invocations;
 
     bunTest.expect(segs).toHaveLength(1);
     bunTest.expect(segs[0]?.tokens).toEqual(['git', 'commit', '-m', 'feat: line one\nline two']);
@@ -1087,9 +1128,9 @@ bunTest.describe('interior-command wrappers (rtk / privilege / exec)', () => {
     bunTest.expect(d.git.rule).toBe('git-push-protected');
   });
   bunTest.test('rtk git commit preserves a multi-word conventional message', () => {
-    const git = analyzeBash('rtk git commit -m "feat: add the thing"').invocations.find(
-      (seg) => seg.head === 'git',
-    );
+    const git = analyzeBash('rtk git commit -m "feat: add the thing"', {
+      cwd: '/tripwire-policy-fixture',
+    }).invocations.find((seg) => seg.head === 'git');
 
     bunTest.expect(git?.tokens).toEqual(['git', 'commit', '-m', 'feat: add the thing']);
     bunTest.expect(allRules('rtk git commit -m "feat: add the thing"').git.kind).toBe('allow');
@@ -1107,9 +1148,9 @@ bunTest.describe('interior-command wrappers (rtk / privilege / exec)', () => {
     bunTest.expect(allRules('sudo rm -rf /').deny.kind).toBe('deny');
   });
   bunTest.test('sudo preserves quoted rm targets while unwrapping', () => {
-    const rm = analyzeBash('sudo rm -rf "/some path/with spaces"').invocations.find(
-      (seg) => seg.head === 'rm',
-    );
+    const rm = analyzeBash('sudo rm -rf "/some path/with spaces"', {
+      cwd: '/tripwire-policy-fixture',
+    }).invocations.find((seg) => seg.head === 'rm');
 
     bunTest.expect(rm?.tokens).toEqual(['rm', '-rf', '/some path/with spaces']);
   });

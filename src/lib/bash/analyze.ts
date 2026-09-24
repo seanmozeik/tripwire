@@ -340,7 +340,7 @@ class BashAnalyzer {
 
   analyze(script: ParsedScript): ShellProgram {
     const environment = emptyEnvironment();
-    environment.cwd = this.#options.cwd === undefined ? process.cwd() : this.#options.cwd;
+    environment.cwd = this.#options.cwd;
     const bindLiteral = (name: string, value: string): void => {
       environment.bindings.set(name, {
         source: value,
@@ -1332,7 +1332,7 @@ class BashAnalyzer {
   }
 }
 
-const analyzeBash = (source: string, options: BashAnalysisOptions = {}): ShellProgram => {
+const analyzeBash = (source: string, options: BashAnalysisOptions): ShellProgram => {
   try {
     return new BashAnalyzer(source, options).analyze(parse(source));
   } catch (cause) {

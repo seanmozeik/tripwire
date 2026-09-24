@@ -19,6 +19,7 @@ bunTest.describe('embedded executable code policy (never executes fixtures)', ()
       bunTest
         .expect(
           decide({
+            cwd: '/tripwire-policy-fixture',
             hook_event_name: 'PreToolUse',
             tool_name: tool,
             tool_input: { code: 'unknown_delete("/protected")' },
@@ -31,6 +32,7 @@ bunTest.describe('embedded executable code policy (never executes fixtures)', ()
     bunTest
       .expect(
         decide({
+          cwd: '/tripwire-policy-fixture',
           hook_event_name: 'PreToolUse',
           tool_name: 'exec_command',
           tool_input: { cmd: 'python3 -c \'import os; os.unlink("/protected")\'' },
@@ -42,12 +44,16 @@ bunTest.describe('embedded executable code policy (never executes fixtures)', ()
     const report = analyzeCode(
       'python',
       'from os import remove as discard; target = "/protected"; discard(target)',
+      [],
+      '/tripwire-policy-fixture',
     );
     bunTest.expect(report.gap).toBeNull();
     bunTest.expect(report.operations.map(({ kind }) => kind)).toEqual(['delete']);
   });
   bunTest.test('fails closed on excessive input', () => {
-    bunTest.expect(analyzeCode('python', '#'.repeat(70_000)).gap).not.toBeNull();
+    bunTest
+      .expect(analyzeCode('python', '#'.repeat(70_000), [], '/tripwire-policy-fixture').gap)
+      .not.toBeNull();
   });
   bunTest.test('security rule defects fail closed in both dispatch paths', async () => {
     const rules = [

@@ -11,14 +11,22 @@ bunTest.test.each([
   ['javascript', 'console.log(1);\nconst = ;', 'node -e'],
   ['typescript', 'console.log(1);\nconst = ;', 'bun -e'],
 ] as const)('%s reports first syntax error with bounded excerpt', (language, source, runner) => {
-  const { gap } = analyzeCode(language, source);
+  const { gap } = analyzeCode(language, source, [], '/tripwire-policy-fixture');
   bunTest.expect(gap).toContain(`${language} syntax error at line 2, column`);
   bunTest.expect(gap).not.toContain('Internal');
   bunTest.expect(gap?.length).toBeLessThan(220);
   bunTest
-    .expect(decideBash(`${runner} '${language === 'python' ? 'print(1)' : 'console.log(1)'}'`).kind)
+    .expect(
+      decideBash(
+        `${runner} '${language === 'python' ? 'print(1)' : 'console.log(1)'}'`,
+        {},
+        { cwd: '/tripwire-policy-fixture' },
+      ).kind,
+    )
     .toBe('allow');
-  bunTest.expect(decideBash(`${runner} '${source}'`).kind).toBe('deny');
+  bunTest
+    .expect(decideBash(`${runner} '${source}'`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
+    .toBe('deny');
 });
 
 bunTest.test.each([
@@ -26,15 +34,27 @@ bunTest.test.each([
   ['node', 'console.log(1);', 'console.log(2);'],
 ])('literal backslash-n in single quotes explains heredoc: %s', (runner, first, second) => {
   const flag = runner === 'python3' ? '-c' : '-e';
-  const result = decideBash(`${runner} ${flag} '${first}\\n${second}'`);
+  const result = decideBash(
+    `${runner} ${flag} '${first}\\n${second}'`,
+    {},
+    { cwd: '/tripwire-policy-fixture' },
+  );
   bunTest.expect(result.kind).toBe('deny');
   bunTest.expect(result.message).toContain('two characters, not a newline; use a heredoc');
-  bunTest.expect(decideBash(`${runner} - <<'CODE'\n${first}\n${second}\nCODE`).kind).toBe('allow');
+  bunTest
+    .expect(
+      decideBash(
+        `${runner} - <<'CODE'\n${first}\n${second}\nCODE`,
+        {},
+        { cwd: '/tripwire-policy-fixture' },
+      ).kind,
+    )
+    .toBe('allow');
 });
 
 bunTest.test('syntax diagnostics never include the whole source', () => {
   const source = `const = ;\n${' '.repeat(100)}"fictional-secret-outside-excerpt";`;
-  const { gap } = analyzeCode('javascript', source);
+  const { gap } = analyzeCode('javascript', source, [], '/tripwire-policy-fixture');
   bunTest.expect(gap).not.toContain('fictional-secret-outside-excerpt');
   bunTest.expect(gap).toContain('line 1');
 });
@@ -46,13 +66,15 @@ bunTest.test(
       throw new Error('fictional-private-exception-text');
     });
     try {
-      const report = analyzeCode('python', 'print(1)');
+      const report = analyzeCode('python', 'print(1)', [], '/tripwire-policy-fixture');
       bunTest.expect(report.gap).toContain('Internal code inspector error');
       bunTest.expect(report.gap).not.toContain('fictional-private-exception-text');
     } finally {
       spy.mockRestore();
     }
-    bunTest.expect(analyzeCode('python', 'print(1)').gap).toBeNull();
+    bunTest
+      .expect(analyzeCode('python', 'print(1)', [], '/tripwire-policy-fixture').gap)
+      .toBeNull();
   },
 );
 

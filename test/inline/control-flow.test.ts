@@ -96,6 +96,12 @@ const denied: readonly [CodeLanguage, string][] = [
 ];
 bunTest.test.each(denied)('denies effects through %s state: %s', (language, source) => {
   bunTest
-    .expect(decideBash(`${language === 'python' ? 'python3 -c' : 'node -e'} ${quote(source)}`).kind)
+    .expect(
+      decideBash(
+        `${language === 'python' ? 'python3 -c' : 'node -e'} ${quote(source)}`,
+        {},
+        { cwd: '/tripwire-policy-fixture' },
+      ).kind,
+    )
     .toBe('deny');
 });

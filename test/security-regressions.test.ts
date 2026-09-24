@@ -13,14 +13,21 @@ import { pathProtect } from '../src/rules/path-protect';
 import { readProtect } from '../src/rules/read-protect';
 
 const shellDecision = (command: string) =>
-  decide({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command } });
+  decide({
+    cwd: '/tripwire-policy-fixture',
+    hook_event_name: 'PreToolUse',
+    tool_name: 'Bash',
+    tool_input: { command },
+  });
 
-const bashDenyDecision = (command: string) => bashDeny(analyzeBash(command));
+const bashDenyDecision = (command: string) =>
+  bashDeny(analyzeBash(command, { cwd: '/tripwire-policy-fixture' }));
 
 const lazyCodeDecision = (line: string) =>
   lazyCode({ file_path: 'src/example.ts', old_string: '', new_string: line });
 
-const tarDecision = (command: string) => bashTarExplosion(analyzeBash(command));
+const tarDecision = (command: string) =>
+  bashTarExplosion(analyzeBash(command, { cwd: '/tripwire-policy-fixture' }));
 
 bunTest.describe('compound shell commands', () => {
   bunTest.test('treats shell negation as a transparent command prefix', () => {
@@ -166,7 +173,12 @@ bunTest.describe('protected path aliases', () => {
     ];
 
     for (const command of commands) {
-      bunTest.expect(bashRedirect(analyzeBash(command)).kind, command).toBe('deny');
+      bunTest
+        .expect(
+          bashRedirect(analyzeBash(command, { cwd: '/tripwire-policy-fixture' })).kind,
+          command,
+        )
+        .toBe('deny');
     }
   });
 
@@ -177,7 +189,9 @@ bunTest.describe('protected path aliases', () => {
       .toBe('deny');
 
     const command = `echo value > ${JSON.stringify(newProtectedPath)}`;
-    bunTest.expect(bashRedirect(analyzeBash(command)).kind).toBe('deny');
+    bunTest
+      .expect(bashRedirect(analyzeBash(command, { cwd: '/tripwire-policy-fixture' })).kind)
+      .toBe('deny');
   });
 
   bunTest.test('allows aliases whose resolved target is safe', () => {
@@ -189,7 +203,9 @@ bunTest.describe('protected path aliases', () => {
       .toBe('allow');
 
     const command = `echo value > ${JSON.stringify(safeAlias)}`;
-    bunTest.expect(bashRedirect(analyzeBash(command)).kind).toBe('allow');
+    bunTest
+      .expect(bashRedirect(analyzeBash(command, { cwd: '/tripwire-policy-fixture' })).kind)
+      .toBe('allow');
     bunTest
       .expect(pathProtect({ file_path: ordinaryNewPath, content: 'after' }).kind)
       .toBe('allow');

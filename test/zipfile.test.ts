@@ -21,7 +21,9 @@ bunTest.describe('Python archive and text operations', () => {
     // Reduced from 01a095c0-2eb8-7443-b1d2-67f9147d0b03, 2026-09-12.
     'import zipfile,pathlib; z=zipfile.ZipFile("input.zip"); p=pathlib.Path("/tmp/tripwire-zip-output"); p.mkdir(exist_ok=True); [(p / n).write_bytes(z.read(n)) for n in z.namelist() if n in ("guide.md", "transcript.md", "record.json")]',
   ])('allows %s', (source) => {
-    bunTest.expect(decideBash(python(source)).kind).toBe('allow');
+    bunTest
+      .expect(decideBash(python(source), {}, { cwd: '/tripwire-policy-fixture' }).kind)
+      .toBe('allow');
   });
 
   bunTest.test.each([
@@ -36,7 +38,9 @@ bunTest.describe('Python archive and text operations', () => {
     'import glob,os; [os.unlink(n) for n in glob.glob("*")]',
     'import difflib,os; print("".join(difflib.unified_diff(["old"], ["new"], fromfile=os.unlink("/protected"))))',
   ])('blocks %s', (source) => {
-    bunTest.expect(decideBash(python(source)).kind).toBe('deny');
+    bunTest
+      .expect(decideBash(python(source), {}, { cwd: '/tripwire-policy-fixture' }).kind)
+      .toBe('deny');
   });
 
   bunTest.test('reads local JSON as data and retains protected-path checks', () => {

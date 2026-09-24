@@ -15,14 +15,14 @@ bunTest.describe('uv forwarded commands (policy data only)', () => {
     'uv run --no-sync "$PROGRAM"',
     'uv run --no-sync rm -rf /protected # tripwire-allow: fixture',
   ])('denies %s', (command) => {
-    bunTest.expect(decideBash(command).kind).toBe('deny');
+    bunTest.expect(decideBash(command, {}, { cwd: '/tripwire-policy-fixture' }).kind).toBe('deny');
   });
   bunTest.test.each([
     'uv run --no-sync printf hello',
     'uv run --no-sync git status',
     'uv --offline run --no-sync -- printf hello',
   ])('preserves ordinary command handling: %s', (command) => {
-    bunTest.expect(decideBash(command).kind).toBe('allow');
+    bunTest.expect(decideBash(command, {}, { cwd: '/tripwire-policy-fixture' }).kind).toBe('allow');
   });
 });
 
@@ -33,7 +33,7 @@ bunTest.describe('uv dependency setup guidance', () => {
     'uv run --with-requirements requirements.txt python -c "print(1)"',
     'uv run --with-editable . python -c "print(1)"',
   ])('gives a complete setup path: %s', (command) => {
-    const result = decideBash(command);
+    const result = decideBash(command, {}, { cwd: '/tripwire-policy-fixture' });
     bunTest.expect(result.kind).toBe('deny');
     for (const step of [
       'pyproject.toml',
@@ -46,13 +46,36 @@ bunTest.describe('uv dependency setup guidance', () => {
     }
   });
   bunTest.test('accepts the recommended invocation', () => {
-    bunTest.expect(decideBash('uv run python -c "print(1)"').kind).toBe('allow');
     bunTest
-      .expect(decideBash('uv run --python 3.12 --no-sync python -c "print(1)"').kind)
+      .expect(
+        decideBash('uv run python -c "print(1)"', {}, { cwd: '/tripwire-policy-fixture' }).kind,
+      )
+      .toBe('allow');
+    bunTest
+      .expect(
+        decideBash(
+          'uv run --python 3.12 --no-sync python -c "print(1)"',
+          {},
+          { cwd: '/tripwire-policy-fixture' },
+        ).kind,
+      )
       .toBe('allow');
   });
   bunTest.test('leaves dependency-like child arguments alone', () => {
-    bunTest.expect(decideBash('uv run --no-sync printf --with pandas').kind).toBe('allow');
-    bunTest.expect(decideBash('uv run --no-sync -- printf --with=pandas').kind).toBe('allow');
+    bunTest
+      .expect(
+        decideBash('uv run --no-sync printf --with pandas', {}, { cwd: '/tripwire-policy-fixture' })
+          .kind,
+      )
+      .toBe('allow');
+    bunTest
+      .expect(
+        decideBash(
+          'uv run --no-sync -- printf --with=pandas',
+          {},
+          { cwd: '/tripwire-policy-fixture' },
+        ).kind,
+      )
+      .toBe('allow');
   });
 });

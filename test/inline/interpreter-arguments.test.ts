@@ -9,8 +9,13 @@ bunTest.test.each([
   'node -e \'require("fs").writeFileSync(process.argv[1],"example")\' -- report.txt',
   'bun -e \'await Bun.write(process.argv[1],"example")\' report.txt',
 ])('binds interpreter argv: %s', (command) => {
-  bunTest.expect(decideBash(command).kind).toBe('allow');
-  bunTest.expect(decideBash(command.replace('report.txt', '.env')).kind).toBe('deny');
+  bunTest.expect(decideBash(command, {}, { cwd: '/tripwire-policy-fixture' }).kind).toBe('allow');
+  bunTest
+    .expect(
+      decideBash(command.replace('report.txt', '.env'), {}, { cwd: '/tripwire-policy-fixture' })
+        .kind,
+    )
+    .toBe('deny');
 });
 
 bunTest.test('stdin argument binding preserves policy targets', () => {
@@ -18,13 +23,18 @@ bunTest.test('stdin argument binding preserves policy targets', () => {
     .expect(
       decideBash(
         'python3 - report.txt <<\'PY\'\nimport sys\nopen(sys.argv[1],"w").write("example")\nPY',
+        {},
+        { cwd: '/tripwire-policy-fixture' },
       ).kind,
     )
     .toBe('allow');
   bunTest
     .expect(
-      decideBash('python3 - .env <<\'PY\'\nimport sys\nopen(sys.argv[1],"w").write("example")\nPY')
-        .kind,
+      decideBash(
+        'python3 - .env <<\'PY\'\nimport sys\nopen(sys.argv[1],"w").write("example")\nPY',
+        {},
+        { cwd: '/tripwire-policy-fixture' },
+      ).kind,
     )
     .toBe('deny');
 });
@@ -38,7 +48,9 @@ bunTest.test.each([
     'const env=process.env; env.NODE_OPTIONS="--require /srv/example/payload.js"; require("child_process").execFileSync("node",["-e","console.log(1)"])',
   ],
 ])('environment aliases cannot change interpreter startup in %s', (runner, source) => {
-  bunTest.expect(decideBash(`${runner} ${quote(source)}`).kind).toBe('deny');
+  bunTest
+    .expect(decideBash(`${runner} ${quote(source)}`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
+    .toBe('deny');
 });
 
 bunTest.test.each(['$VALUES', '"$@"', `"\${values[@]}"`])(
@@ -46,25 +58,63 @@ bunTest.test.each(['$VALUES', '"$@"', `"\${values[@]}"`])(
   (expansion) => {
     const source = 'import sys,os; os.remove(sys.argv[2])';
     bunTest
-      .expect(decideBash(`python3 -c ${quote(source)} ${expansion} /tmp/example`).kind)
+      .expect(
+        decideBash(
+          `python3 -c ${quote(source)} ${expansion} /tmp/example`,
+          {},
+          { cwd: '/tripwire-policy-fixture' },
+        ).kind,
+      )
       .toBe('deny');
   },
 );
 bunTest.test('quoted scalar argv can be printed without authorizing a path', () => {
   bunTest
-    .expect(decideBash('python3 -c \'import sys; print(sys.argv[1])\' "$VALUE"').kind)
+    .expect(
+      decideBash(
+        'python3 -c \'import sys; print(sys.argv[1])\' "$VALUE"',
+        {},
+        { cwd: '/tripwire-policy-fixture' },
+      ).kind,
+    )
     .toBe('allow');
   bunTest
-    .expect(decideBash('python3 -c \'import sys,os; os.remove(sys.argv[1])\' "$VALUE"').kind)
+    .expect(
+      decideBash(
+        'python3 -c \'import sys,os; os.remove(sys.argv[1])\' "$VALUE"',
+        {},
+        { cwd: '/tripwire-policy-fixture' },
+      ).kind,
+    )
     .toBe('deny');
 });
 
 bunTest.test('unknown JavaScript argv cannot supply interpreter startup flags', () => {
-  bunTest.expect(decideBash('node -e \'console.log(1)\' "$OPTION" ./payload.js').kind).toBe('deny');
   bunTest
-    .expect(decideBash("bun -e 'console.log(1)' example --preload ./payload.js").kind)
+    .expect(
+      decideBash(
+        'node -e \'console.log(1)\' "$OPTION" ./payload.js',
+        {},
+        { cwd: '/tripwire-policy-fixture' },
+      ).kind,
+    )
     .toBe('deny');
   bunTest
-    .expect(decideBash('node -e \'console.log(process.argv[1])\' -- "$VALUE"').kind)
+    .expect(
+      decideBash(
+        "bun -e 'console.log(1)' example --preload ./payload.js",
+        {},
+        { cwd: '/tripwire-policy-fixture' },
+      ).kind,
+    )
+    .toBe('deny');
+  bunTest
+    .expect(
+      decideBash(
+        'node -e \'console.log(process.argv[1])\' -- "$VALUE"',
+        {},
+        { cwd: '/tripwire-policy-fixture' },
+      ).kind,
+    )
     .toBe('allow');
 });

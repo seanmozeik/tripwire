@@ -10,7 +10,7 @@ type ShellWordKind = 'literal' | 'dynamic' | 'trusted-temp-path' | 'background-p
 
 interface BashAnalysisOptions {
   readonly home?: string;
-  readonly cwd?: string | null;
+  readonly cwd: string | null;
   readonly executionCarrierAliases?: readonly ExecutionCarrierAlias[];
   readonly positionalArguments?: readonly string[];
 }

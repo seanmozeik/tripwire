@@ -7,7 +7,7 @@ import { parseCode } from '../../src/lib/code/syntax';
 bunTest.test('nested literal loops with calls stop within a bounded amount of CPU work', () => {
   const values = Array.from({ length: 128 }, (_, index) => index + 1).join(',');
   const source = `def f(x):\n return x + 1\nt = 0\nfor a in [${values}]:\n for b in [${values}]:\n  t = f(a) + f(b) + a * b`;
-  const report = analyzeCode('python', source);
+  const report = analyzeCode('python', source, [], '/tripwire-policy-fixture');
   bunTest.expect(report.gap).toContain('budget');
 });
 
