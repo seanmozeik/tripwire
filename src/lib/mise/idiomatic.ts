@@ -1,7 +1,9 @@
 import path from 'node:path';
 
-import { coreTool, version } from './config';
+import { coreTool } from './config';
 import { entries, readOptional } from './files';
+import { assertPackageJson } from './idiomatic-package';
+import { assertVersionSelector, stripBom, versionLines } from './idiomatic-version';
 import { assertSafe } from './inspection-error';
 
 // Mise v2026.9.12 registry/*.toml; backend/mod.rs adds these to backend filenames.
@@ -66,6 +68,69 @@ const IDIOMATIC_FILES: Readonly<Record<string, readonly string[]>> = {
   zig: ['.zig-version'],
 };
 
+// The remaining structured readers require their own parsers. Never mistake a
+// scalar-looking body for a successfully parsed Gemfile, TOML, JSON, or Go file.
+const PLAIN_FILES = new Set([
+  '.atmos-version',
+  '.bun-version',
+  '.chezmoiversion',
+  '.crystal-version',
+  '.deno-version',
+  '.exenv-version',
+  '.go-version',
+  '.java-version',
+  '.nvmrc',
+  '.node-version',
+  '.opentofu-version',
+  '.packer-version',
+  '.perl-version',
+  '.python-version',
+  '.python-versions',
+  '.ruby-version',
+  '.swift-version',
+  '.terraform-version',
+  '.terragrunt-version',
+  '.terramate-version',
+  '.yvmrc',
+  '.zig-version',
+]);
+
+const assertIdiomaticSource = (source: string, filename: string, tool: string): void => {
+  const name = path.basename(filename);
+  if (name === 'package.json') {
+    assertPackageJson(source, filename, tool);
+    return;
+  }
+  if (name === '.bazelversion') {
+    // Registry/bazel.toml anchors its numeric capture to the first line.
+    const version =
+      /^[\t ]*v?(?<version>[0-9]+\.[0-9]+(?:\.[0-9]+)?[0-9A-Za-z.-]*)[\t ]*\r?$/u.exec(
+        stripBom(source).split('\n')[0] ?? '',
+      )?.groups?.['version'];
+    assertVersionSelector(version, `${filename}: version for ${tool}`);
+    return;
+  }
+  assertSafe(PLAIN_FILES.has(name), `${filename}: unsupported idiomatic file format for ${tool}.`);
+  const lines = versionLines(source);
+  // Core node/java consume lines; ruby/go consume the whole normalized body.
+  // All other plain readers inherit backend/mod.rs's whitespace tokenization.
+  let values: string[];
+  if (tool === 'ruby' || tool === 'go') {
+    const body = lines.join('\n');
+    values =
+      lines.length === 0
+        ? []
+        : [(tool === 'ruby' ? body.replace(/^(?:ruby-)*/u, '') : body).replace(/^v*/u, '')];
+  } else if (tool === 'node' || tool === 'java') {
+    values = lines;
+  } else {
+    values = lines.flatMap((line) => line.split(/\p{White_Space}+/u));
+  }
+  for (const value of values) {
+    assertVersionSelector(value, `${filename}: version for ${tool}`);
+  }
+};
+
 const assertIdiomaticFiles = (
   parents: ReadonlySet<string>,
   tools: ReadonlySet<string>,
@@ -82,10 +147,9 @@ const assertIdiomaticFiles = (
       for (const name of filenames) {
         const filename = path.join(parent, name);
         const source = readOptional(filename);
-        assertSafe(
-          source === null || version(source.trim()),
-          `${filename}: unverified idiomatic version for ${tool}.`,
-        );
+        if (source !== null) {
+          assertIdiomaticSource(source, filename, tool);
+        }
       }
     }
   }

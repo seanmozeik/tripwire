@@ -1,0 +1,27 @@
+{
+  "name": "@cloudberry/observatory",
+  "private": true,
+  "scripts": {
+    "test": "bun test",
+    "build": "tsc",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "cloudberry-ui": "^2.0.0"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.0"
+  },
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "^22 || ~24.1"
+    }
+  },
+  "engines": {
+    "bun": ">=1.4",
+    "node": "^22 || >=24",
+    "pnpm": "9.x"
+  },
+  "packageManager": "pnpm@9.1.0+sha512.0123456789abcdef"
+}

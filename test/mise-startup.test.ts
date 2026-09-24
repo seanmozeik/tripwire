@@ -384,13 +384,6 @@ bunTest.test.each([
   ['swift', '.swift-version'],
   ['zig', '.zig-version'],
   ['terraform', '.terraform-version'],
-  ['ruby', 'Gemfile'],
-  ['node', 'package.json'],
-  ['go', 'go.mod'],
-  ['go', 'go.work'],
-  ['rust', 'rust-toolchain.toml'],
-  ['dotnet', 'global.json'],
-  ['java', '.sdkmanrc'],
 ])('checks enabled %s file %s in ancestors', (tool, filename) => {
   write('global/config.toml', `[settings]\nidiomatic_version_file_enable_tools=["${tool}"]`);
   write(`project/${filename}`, ' 3.13.1\n');
@@ -405,6 +398,20 @@ bunTest.test.each([
   bunTest.expect(decision.message).toContain(filename);
 });
 
+bunTest.test.each([
+  ['ruby', 'Gemfile'],
+  ['node', 'package.json'],
+  ['go', 'go.mod'],
+  ['go', 'go.work'],
+  ['rust', 'rust-toolchain.toml'],
+  ['dotnet', 'global.json'],
+  ['java', '.sdkmanrc'],
+])('does not accept scalar text as a parsed %s %s file', (tool, filename) => {
+  write('global/config.toml', `[settings]\nidiomatic_version_file_enable_tools=["${tool}"]`);
+  write(`project/${filename}`, '3.13.1\n');
+  bunTest.expect(inspect()).toBe('deny');
+});
+
 bunTest.test('idiomatic discovery respects enabled tools and the ceiling', () => {
   write('project/.python-version', 'invalid source');
   bunTest.expect(inspect()).toBe('allow');
@@ -414,6 +421,14 @@ bunTest.test('idiomatic discovery respects enabled tools and the ceiling', () =>
   process.env['MISE_CEILING_PATHS'] = path.join(root, 'project');
   bunTest.expect(inspect()).toBe('deny');
 });
+
+bunTest.test.each(['^22', '>=22', 'lts/*', 'path:./payload'])(
+  'idiomatic selectors do not widen tools config: %s',
+  (version) => {
+    write('global/config.toml', `[tools]\nnode="${version}"`);
+    bunTest.expect(inspect()).toBe('deny');
+  },
+);
 
 bunTest.test('enabled non-core tools cannot consult installed plugins', () => {
   write(

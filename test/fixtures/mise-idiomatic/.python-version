@@ -1,0 +1,3 @@
+# Cloudberry supports both Python release lines.
+3.13.1
+3.12.8 # compatibility
