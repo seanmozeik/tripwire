@@ -64,8 +64,14 @@ bunTest.test('mise startup in a real process with an activated shell and global 
       config,
       '[tools]\npython="3.13"\n[settings]\nidiomatic_version_file_enable_tools=["python"]\n[settings.ruby]\ncompile=false\n',
     );
+    writeFileSync(path.join(cwd, '.python-version'), '3.13.1\n');
     bunTest.expect(run('print(1)').trim()).toBe('{"continue": true}');
     bunTest.expect(run('import os; os.remove("/")')).toContain('"deny"');
+    writeFileSync(path.join(cwd, '.python-version'), '$(echo fictional)');
+    const idiomaticDenied = run('print(1)');
+    bunTest.expect(idiomaticDenied).toContain('"deny"');
+    bunTest.expect(idiomaticDenied).toContain('.python-version');
+    writeFileSync(path.join(cwd, '.python-version'), '3.13.1');
     writeFileSync(config, '[tools]\npython="3.13"\n[env]\nPYTHONPATH="payload"\n');
     const denied = run('print(1)');
     bunTest.expect(denied).toContain('"deny"');

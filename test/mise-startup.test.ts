@@ -4,6 +4,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { decideBash } from '../src/dispatch';
+import { analyzeBash } from '../src/lib/bash';
+import { emptyEnvironment } from '../src/lib/bash/values';
+import { miseStartupSafe } from '../src/lib/mise/startup';
 
 let root = '';
 let previous: Record<string, string | undefined> = {};
@@ -365,4 +368,120 @@ bunTest.test('submitted activation mutations cannot reuse inherited bookkeeping 
   bunTest.expect(inspect('__MISE_DIFF=fictional mise exec --')).toBe('deny');
   write('project/mise.toml', '[env]\n__MISE_DIFF="fictional"');
   bunTest.expect(inspect()).toBe('deny');
+});
+
+bunTest.test.each([
+  ['node', '.nvmrc'],
+  ['node', '.node-version'],
+  ['python', '.python-version'],
+  ['python', '.python-versions'],
+  ['ruby', '.ruby-version'],
+  ['bun', '.bun-version'],
+  ['deno', '.deno-version'],
+  ['elixir', '.exenv-version'],
+  ['go', '.go-version'],
+  ['java', '.java-version'],
+  ['swift', '.swift-version'],
+  ['zig', '.zig-version'],
+  ['terraform', '.terraform-version'],
+  ['ruby', 'Gemfile'],
+  ['node', 'package.json'],
+  ['go', 'go.mod'],
+  ['go', 'go.work'],
+  ['rust', 'rust-toolchain.toml'],
+  ['dotnet', 'global.json'],
+  ['java', '.sdkmanrc'],
+])('checks enabled %s file %s in ancestors', (tool, filename) => {
+  write('global/config.toml', `[settings]\nidiomatic_version_file_enable_tools=["${tool}"]`);
+  write(`project/${filename}`, ' 3.13.1\n');
+  bunTest.expect(inspect()).toBe('allow');
+  write(`project/${filename}`, '$(echo fictional)');
+  const decision = decideBash(
+    "mise exec -- python3 -c 'print(1)'",
+    {},
+    { cwd: path.join(root, 'project/child') },
+  );
+  bunTest.expect(decision.kind).toBe('deny');
+  bunTest.expect(decision.message).toContain(filename);
+});
+
+bunTest.test('idiomatic discovery respects enabled tools and the ceiling', () => {
+  write('project/.python-version', 'invalid source');
+  bunTest.expect(inspect()).toBe('allow');
+  write('global/config.toml', '[settings]\nidiomatic_version_file_enable_tools=["python"]');
+  process.env['MISE_CEILING_PATHS'] = path.join(root, 'project/child');
+  bunTest.expect(inspect()).toBe('allow');
+  process.env['MISE_CEILING_PATHS'] = path.join(root, 'project');
+  bunTest.expect(inspect()).toBe('deny');
+});
+
+bunTest.test('enabled non-core tools cannot consult installed plugins', () => {
+  write(
+    'global/config.toml',
+    '[settings]\nidiomatic_version_file_enable_tools=["terraform","fictional"]',
+  );
+  bunTest.expect(inspect()).toBe('allow');
+  write('data/plugins/fictional/bin/list-idiomatic-filenames', 'echo fictional');
+  bunTest.expect(inspect()).toBe('deny');
+});
+
+bunTest.test.each([
+  'mise -E example exec python@3.13 --',
+  'mise exec --env=example python@3.13 --',
+  'mise exec python@3.13 -j=2 -E example --',
+])('uses parsed options and operands: %s', (wrapper) => {
+  write('project/mise.example.toml', '[env]\nLABEL="fictional"');
+  bunTest.expect(inspect(wrapper)).toBe('allow');
+  write('project/mise.example.toml', '[env]\nPYTHONPATH="fictional"');
+  bunTest.expect(inspect(wrapper)).toBe('deny');
+});
+
+bunTest.test('unexpected inspector exceptions fail closed without exception text', () => {
+  const [invocation] = analyzeBash('mise exec -- python3', { cwd: root }).invocations;
+  if (invocation === undefined) {
+    throw new Error('Missing fixture invocation');
+  }
+  const environment = emptyEnvironment();
+  environment.cwd = root;
+  const spy = bunTest.spyOn(environment.bindings, 'get').mockImplementation(() => {
+    throw new TypeError('private bug details');
+  });
+  try {
+    bunTest
+      .expect(miseStartupSafe(invocation, environment, { operands: [], options: [] }))
+      .toEqual({ safe: false, reason: 'Internal mise inspector error.' });
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+bunTest.test('a programming error inside config inspection is not a policy reason', () => {
+  write('project/mise.toml', '[tools]\npython="3.13"');
+  const spy = bunTest.spyOn(Bun.TOML, 'parse').mockImplementation(() => {
+    throw new TypeError('private config details');
+  });
+  try {
+    const decision = decideBash(
+      "mise exec -- python3 -c 'print(1)'",
+      {},
+      { cwd: path.join(root, 'project/child') },
+    );
+    bunTest.expect(decision.kind).toBe('deny');
+    bunTest.expect(decision.message).toContain('Internal mise inspector error.');
+    bunTest.expect(decision.message).not.toContain('private config details');
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+bunTest.test('an unreadable idiomatic file identifies its filename', () => {
+  write('global/config.toml', '[settings]\nidiomatic_version_file_enable_tools=["python"]');
+  mkdirSync(path.join(root, 'project/.python-version'));
+  const decision = decideBash(
+    "mise exec -- python3 -c 'print(1)'",
+    {},
+    { cwd: path.join(root, 'project/child') },
+  );
+  bunTest.expect(decision.kind).toBe('deny');
+  bunTest.expect(decision.message).toContain('.python-version');
 });

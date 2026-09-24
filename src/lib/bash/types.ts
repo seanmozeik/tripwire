@@ -1,4 +1,5 @@
 import type { ExecutionCarrierAlias } from './config';
+import type { StartupState } from './startup';
 
 interface SourceRange {
   readonly start: number;
@@ -42,9 +43,7 @@ interface PipelinePosition {
 interface ShellInvocation {
   readonly home?: string;
   readonly cwd: string | null;
-  readonly unverifiedStartup?: boolean;
-  readonly startupReason?: string | undefined;
-  readonly checkedStartup?: boolean;
+  readonly startup: StartupState;
   readonly id: number;
   readonly head: string;
   readonly words: readonly ShellWord[];

@@ -1,5 +1,6 @@
 import type { Command, Function as BashFunction, ParsedScript, Word, WordPart } from 'unbash';
 
+import { joinStartup, type StartupState } from './startup';
 import type { ShellWord, SourceRange } from './types';
 
 const DYNAMIC_VALUE = '__tripwire_dynamic_shell_value__';
@@ -12,9 +13,7 @@ interface TrustedTempValue {
 
 interface Environment {
   cwd: string | null;
-  unverifiedStartup: boolean;
-  startupReason: string | undefined;
-  checkedStartup: boolean;
+  startup: StartupState;
   directoryStack: (string | null)[];
   readonly aliases: Map<string, string>;
   backgroundPidAvailable: boolean;
@@ -41,9 +40,7 @@ const basename = (value: string): string => {
 
 const emptyEnvironment = (): Environment => ({
   cwd: null,
-  unverifiedStartup: false,
-  startupReason: undefined,
-  checkedStartup: false,
+  startup: { kind: 'direct' },
   directoryStack: [],
   aliases: new Map(),
   backgroundPidAvailable: false,
@@ -54,9 +51,7 @@ const emptyEnvironment = (): Environment => ({
 
 const cloneEnvironment = (environment: Environment): Environment => ({
   cwd: environment.cwd,
-  unverifiedStartup: environment.unverifiedStartup,
-  startupReason: environment.startupReason,
-  checkedStartup: environment.checkedStartup,
+  startup: joinStartup(environment.startup),
   directoryStack: [...environment.directoryStack],
   aliases: new Map(environment.aliases),
   backgroundPidAvailable: environment.backgroundPidAvailable,

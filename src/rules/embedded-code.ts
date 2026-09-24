@@ -2,6 +2,7 @@ import { lstatSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { isSafePathTarget, type ShellProgram } from '../lib/bash';
+import { UNKNOWN_STARTUP } from '../lib/bash/startup';
 import { skipHeadRenamingPrefix } from '../lib/bash/wrappers';
 import { analyzeCode } from '../lib/code/analyze';
 import { interpreterInput } from '../lib/code/carriers';
@@ -21,7 +22,17 @@ interface CodePolicy {
   readonly remoteHeads: ReadonlySet<string>;
 }
 
-const miseContextChanged = (program: ShellProgram): boolean => {
+const CHECKED_STARTUP_HARMLESS_COMMANDS = new Set([
+  'mise',
+  'cd',
+  'pwd',
+  'printf',
+  'echo',
+  'true',
+  'false',
+]);
+
+const checkedStartupContextChanged = (program: ShellProgram): boolean => {
   if (
     program.redirects.some((redirect) => ['>', '>>', '>&', '<>', '&>', '&>>'].includes(redirect.op))
   ) {
@@ -42,7 +53,7 @@ const miseContextChanged = (program: ShellProgram): boolean => {
   for (const command of program.invocations) {
     if (interpreterInput(command).kind === 'source') {
       sources += 1;
-    } else if (!['mise', 'cd', 'pwd', 'printf', 'echo', 'true', 'false'].includes(command.head)) {
+    } else if (!CHECKED_STARTUP_HARMLESS_COMMANDS.has(command.head)) {
       // Another executable can change configuration before mise reads it.
       return true;
     }
@@ -210,17 +221,16 @@ const embeddedCode = (program: ShellProgram, policy: CodePolicy): Decision => {
       decisions.push(policy.inspectCommand(input.command, localPolicy.cwd));
     }
     if (input.kind === 'source') {
-      if (
-        uncertainContext(program, policy) ||
-        invocation.unverifiedStartup === true ||
-        (invocation.checkedStartup === true && miseContextChanged(program))
-      ) {
+      if (invocation.startup.kind === 'unverified') {
+        return codeDeny(invocation.startup.reason);
+      }
+      if (invocation.startup.kind === 'checked' && checkedStartupContextChanged(program)) {
         return codeDeny(
-          invocation.startupReason ??
-            (invocation.checkedStartup === true && miseContextChanged(program)
-              ? 'mise exec startup blocked: earlier commands, redirects, or environment assignments can change the inspected configuration.'
-              : 'Interpreter startup, working directory, or remote filesystem state is not verified.'),
+          'mise exec startup blocked: earlier commands, redirects, or environment assignments can change the inspected configuration.',
         );
+      }
+      if (uncertainContext(program, policy)) {
+        return codeDeny(UNKNOWN_STARTUP);
       }
       decisions.push(inspectCode(input.language, input.source, localPolicy, input.argv));
     }

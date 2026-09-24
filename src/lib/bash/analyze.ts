@@ -17,6 +17,7 @@ import {
 
 import { changeDirectory } from './cwd';
 import { ExecutionInspector } from './execution';
+import { joinStartup } from './startup';
 import type {
   BashAnalysisOptions,
   PipelinePosition,
@@ -91,10 +92,7 @@ const environmentsAgree = (environments: readonly Environment[]): Environment =>
     return emptyEnvironment();
   }
   return {
-    unverifiedStartup: environments.some((environment) => environment.unverifiedStartup),
-    startupReason: environments.find((environment) => environment.startupReason !== undefined)
-      ?.startupReason,
-    checkedStartup: environments.some((environment) => environment.checkedStartup),
+    startup: joinStartup(...environments.map((environment) => environment.startup)),
     cwd: rest.every((environment) => environment.cwd === first.cwd) ? first.cwd : null,
     directoryStack: rest.every(
       (environment) =>
@@ -113,9 +111,7 @@ const environmentsAgree = (environments: readonly Environment[]): Environment =>
 };
 
 const replaceEnvironment = (target: Environment, source: Environment): void => {
-  target.unverifiedStartup = source.unverifiedStartup;
-  target.startupReason = source.startupReason;
-  target.checkedStartup = source.checkedStartup;
+  target.startup = joinStartup(source.startup);
   target.cwd = source.cwd;
   target.directoryStack = [...source.directoryStack];
   target.backgroundPidAvailable = source.backgroundPidAvailable;
@@ -163,9 +159,7 @@ const propagateFunctionEffects = (
   propagateMap(target.functions, source.functions, new Set());
   propagateMap(target.bindings, source.bindings, excludedVariables);
   propagateMap(target.temps, source.temps, excludedVariables);
-  target.unverifiedStartup = source.unverifiedStartup;
-  target.startupReason = source.startupReason;
-  target.checkedStartup = source.checkedStartup;
+  target.startup = joinStartup(source.startup);
   target.cwd = source.cwd;
   target.directoryStack = [...source.directoryStack];
   target.backgroundPidAvailable = source.backgroundPidAvailable;
@@ -1045,9 +1039,7 @@ class BashAnalyzer {
     const invocation: ShellInvocation = {
       ...(home?.kind === 'literal' && { home: home.value }),
       cwd: environment.cwd,
-      unverifiedStartup: environment.unverifiedStartup,
-      startupReason: environment.startupReason,
-      checkedStartup: environment.checkedStartup,
+      startup: joinStartup(environment.startup),
       id: this.#nextInvocationId,
       head: basename(executable.value),
       words,
@@ -1168,6 +1160,7 @@ class BashAnalyzer {
         ...arguments_,
       ];
       const parent: ShellInvocation = {
+        startup: joinStartup(environment.startup),
         cwd: environment.cwd,
         id: 0,
         head: name,

@@ -1,6 +1,8 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 
+import { MiseInspectionError } from './inspection-error';
+
 const absent = (cause: unknown): boolean =>
   cause instanceof Error && 'code' in cause && cause.code === 'ENOENT';
 
@@ -8,7 +10,7 @@ const readOptional = (filename: string): string | null => {
   try {
     const stat = statSync(filename);
     if (!stat.isFile() || stat.size > 131_072) {
-      throw new Error(
+      throw new MiseInspectionError(
         `Uninspectable mise file ${filename}: expected a regular file of at most 131072 bytes.`,
       );
     }
@@ -16,6 +18,9 @@ const readOptional = (filename: string): string | null => {
   } catch (cause) {
     if (absent(cause)) {
       return null;
+    }
+    if (cause instanceof Error && 'code' in cause) {
+      throw new MiseInspectionError(`Cannot read mise file ${filename}.`, { cause });
     }
     throw cause;
   }
@@ -25,12 +30,15 @@ const entries = (directory: string): string[] => {
   try {
     const names = readdirSync(directory);
     if (names.length > 256) {
-      throw new Error(`Mise directory ${directory} exceeds inspection limit.`);
+      throw new MiseInspectionError(`Mise directory ${directory} exceeds inspection limit.`);
     }
     return names;
   } catch (cause) {
     if (absent(cause)) {
       return [];
+    }
+    if (cause instanceof Error && 'code' in cause) {
+      throw new MiseInspectionError(`Cannot read mise directory ${directory}.`, { cause });
     }
     throw cause;
   }
@@ -44,7 +52,7 @@ const ancestors = (cwd: string, ceilings: ReadonlySet<string> = new Set()): stri
       return result;
     }
   }
-  throw new Error('Mise ancestor limit.');
+  throw new MiseInspectionError('Mise ancestor limit.');
 };
 
 // Mise v2026.9.12 src/config/mod.rs: LOCAL_CONFIG_FILENAMES and env_config_patterns.
@@ -95,7 +103,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const record = (value: unknown, context = 'mise config'): Record<string, unknown> => {
   if (!isRecord(value)) {
-    throw new TypeError(`${context}: expected a table.`);
+    throw new MiseInspectionError(`${context}: expected a table.`);
   }
   return value;
 };
@@ -103,9 +111,12 @@ const record = (value: unknown, context = 'mise config'): Record<string, unknown
 const parseToml = (filename: string, source: string): unknown => {
   try {
     return Bun.TOML.parse(source);
-  } catch {
+  } catch (cause) {
+    if (!(cause instanceof SyntaxError)) {
+      throw cause;
+    }
     // Parser messages can contain config values; identify the file without leaking them.
-    throw new Error(`TOML parse error in ${filename}.`);
+    throw new MiseInspectionError(`TOML parse error in ${filename}.`);
   }
 };
 

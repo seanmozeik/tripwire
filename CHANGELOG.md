@@ -24,6 +24,7 @@ This file records notable project changes. The format follows [Keep a Changelog]
 
 ### Fixed
 
+- Check enabled mise idiomatic version files through the configured ancestor ceiling. Reject non-plain versions and unverified plugins, naming the file or plugin in the denial.
 - Allow statically safe mise startup in activated agent shells, including supported global settings and verified core backend metadata. Report the config key, environment variable, plugin, or parse failure behind a startup denial, and cover the real CLI in a hermetic child process without the test preload.
 
 - Report inline syntax errors with language, line, column, and a bounded excerpt. Explain literal `\n` in single shell quotes and identify unexpected failures as internal inspector errors.

@@ -1,9 +1,15 @@
-import type { StartupResult } from '../mise/result';
 import { miseStartupSafe } from '../mise/startup';
 import { resolveDirectory } from './cwd';
 import type { ExecutionContext, ExecutionHost } from './execution-types';
+import { joinStartup, UNKNOWN_STARTUP } from './startup';
 import type { ShellInvocation } from './types';
 import { cloneEnvironment, type Environment } from './values';
+
+type StartupResult = { readonly safe: true } | { readonly safe: false; readonly reason: string };
+interface WrapperArguments {
+  readonly operands: string[];
+  readonly options: { readonly name: string; readonly value: string }[];
+}
 
 interface WrapperSpec {
   readonly extraDelimiters?: readonly string[];
@@ -16,7 +22,11 @@ interface WrapperSpec {
   readonly operands?: number;
   readonly delimiter?: boolean;
   readonly startup?: boolean;
-  readonly checkStartup?: (invocation: ShellInvocation, environment: Environment) => StartupResult;
+  readonly checkStartup?: (
+    invocation: ShellInvocation,
+    environment: Environment,
+    args: WrapperArguments,
+  ) => StartupResult;
   readonly shell?: boolean;
 }
 
@@ -93,6 +103,7 @@ const specs: Readonly<Record<string, WrapperSpec>> = {
 
 interface WrapperCursor {
   index: number;
+  readonly args: WrapperArguments;
   subcommand: boolean;
   operands: number;
   readonly environment: Environment;
@@ -114,6 +125,7 @@ const optionValue = (
   if (target?.kind !== 'literal') {
     return false;
   }
+  cursor.args.options.push({ name: flag ?? '', value: target.value });
   if (spec.cwdOptions?.includes(flag ?? '') === true) {
     cursor.environment.cwd = resolveDirectory(target, cursor.environment.cwd);
   }
@@ -127,9 +139,11 @@ const wrapperCommand = (
   invocation: ShellInvocation,
   spec: WrapperSpec,
   environment: Environment,
+  args: WrapperArguments,
 ): number | null => {
   const cursor: WrapperCursor = {
     index: 1,
+    args,
     subcommand: spec.subcommands.length === 0,
     operands: spec.operands ?? 0,
     environment,
@@ -172,6 +186,7 @@ const wrapperOperand = (
   if (word.value.startsWith('-') || !cursor.subcommand) {
     return null;
   }
+  cursor.args.operands.push(word.value);
   if (cursor.operands > 0) {
     if (spec.cwdOperand === (spec.operands ?? 0) - cursor.operands) {
       cursor.environment.cwd = resolveDirectory(word, cursor.environment.cwd);
@@ -193,17 +208,25 @@ const inspectToolWrapper = (
     return false;
   }
   const child = cloneEnvironment(environment);
-  child.unverifiedStartup ||= spec.startup === true;
+
   if (spec.startup === true) {
+    child.startup = joinStartup(child.startup, { kind: 'unverified', reason: UNKNOWN_STARTUP });
     child.bindings.delete('HOME');
   }
-  const index = wrapperCommand(invocation, spec, child);
-  child.checkedStartup ||= spec.checkStartup !== undefined;
+  const args: WrapperArguments = { operands: [], options: [] };
+  const index = wrapperCommand(invocation, spec, child, args);
   if (index !== null && spec.checkStartup !== undefined) {
-    const result = spec.checkStartup(invocation, child);
+    const result = spec.checkStartup(invocation, child, args);
+    child.startup = joinStartup(
+      child.startup,
+      result.safe
+        ? { kind: 'checked' }
+        : {
+            kind: 'unverified',
+            reason: `${invocation.head} exec startup blocked: ${result.reason}`,
+          },
+    );
     if (!result.safe) {
-      child.unverifiedStartup = true;
-      child.startupReason = `mise exec startup blocked: ${result.reason}`;
       child.bindings.delete('HOME');
     }
   }
@@ -228,3 +251,5 @@ const inspectToolWrapper = (
 };
 
 export { inspectToolWrapper };
+
+export type { StartupResult, WrapperArguments };

@@ -1,11 +1,12 @@
 import { realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 
+import type { StartupResult, WrapperArguments } from '../bash/tool-wrappers';
 import type { ShellInvocation } from '../bash/types';
 import type { Environment } from '../bash/values';
 import { currentEnvironment } from '../environment';
 import { checkBackends } from './backends';
-import { configSafe, coreTool, literal, version } from './config';
+import { assertConfig, coreTool, literal, version } from './config';
 import {
   ancestors,
   configRoot,
@@ -15,7 +16,8 @@ import {
   record,
   parseToml,
 } from './files';
-import { requireSafe, type StartupResult } from './result';
+import { assertIdiomaticFiles } from './idiomatic';
+import { assertSafe, MiseInspectionError } from './inspection-error';
 
 // Activation state is inert for exec additions; see docs/mise-startup.md for
 // the source audit. Unknown private variables still fail closed.
@@ -55,42 +57,30 @@ const ENVIRONMENT_KEYS = new Set([
 const profilesFrom = (value: string | undefined, origin: string): string[] => {
   const profiles = value?.split(',') ?? [];
   if (profiles.length > 16 || profiles.some((name) => !/^[\w-]+$/u.test(name))) {
-    throw new Error(`Uninspectable mise profile from ${origin}.`);
+    throw new MiseInspectionError(`Uninspectable mise profile from ${origin}.`);
   }
   return profiles;
 };
 
-const commandTools = (
-  invocation: ShellInvocation,
+const assertCommandTools = (
+  args: WrapperArguments,
   profiles: string[],
   tools: Set<string>,
-): boolean => {
-  for (let index = 1; index < invocation.words.length; index += 1) {
-    const word = invocation.words[index];
-    if (word?.kind !== 'literal') {
-      return false;
-    }
-    if (word.value === '--') {
-      return true;
-    }
-    const [flag, inline] = word.value.split('=');
-    if (['-C', '--cd', '-j', '--jobs', '-E', '--env'].includes(flag ?? '')) {
-      if (inline === undefined) {
-        index += 1;
-      }
-      const value = inline ?? invocation.words[index]?.value;
-      if (flag === '-E' || flag === '--env') {
-        profiles.push(...profilesFrom(value, `command option ${flag}`));
-      }
-    } else if (!['exec', 'x'].includes(word.value)) {
-      const [tool, requested, ...rest] = word.value.split('@');
-      if (tool === undefined || !coreTool(tool) || !version(requested) || rest.length > 0) {
-        throw new Error(`Unverified mise command tool ${tool ?? '(missing)'} or its version.`);
-      }
-      tools.add(tool.replace(/^core:/u, ''));
+): void => {
+  for (const { name, value } of args.options) {
+    if (name === '-E' || name === '--env') {
+      profiles.push(...profilesFrom(value, `command option ${name}`));
     }
   }
-  return false;
+  for (const operand of args.operands) {
+    const [tool, requested, ...rest] = operand.split('@');
+    if (tool === undefined || !coreTool(tool) || !version(requested) || rest.length > 0) {
+      throw new MiseInspectionError(
+        `Unverified mise command tool ${tool ?? '(missing)'} or its version.`,
+      );
+    }
+    tools.add(tool.replace(/^core:/u, ''));
+  }
 };
 
 const misercProfiles = (filename: string, profiles: string[]): void => {
@@ -101,15 +91,15 @@ const misercProfiles = (filename: string, profiles: string[]): void => {
   const config: unknown = parseToml(filename, source);
   for (const [name, setting] of Object.entries(record(config))) {
     if (name !== 'env') {
-      throw new Error(`${filename}: unverified early config key ${name}.`);
+      throw new MiseInspectionError(`${filename}: unverified early config key ${name}.`);
     }
     for (const profile of Array.isArray(setting) ? setting : [setting]) {
       if (typeof profile !== 'string') {
-        throw new TypeError(`${filename}: uninspectable early config key env.`);
+        throw new MiseInspectionError(`${filename}: uninspectable early config key env.`);
       }
       profiles.push(...profilesFrom(profile, `${filename}: env`));
       if (profiles.length > 16) {
-        throw new Error(`${filename}: env profile count exceeds inspection limit.`);
+        throw new MiseInspectionError(`${filename}: env profile count exceeds inspection limit.`);
       }
     }
   }
@@ -117,7 +107,7 @@ const misercProfiles = (filename: string, profiles: string[]): void => {
 
 const startupEnvironment = (environment: Environment): Record<string, string | undefined> => {
   if (environment.bindings.get('HOME')?.kind !== 'literal') {
-    throw new Error('Unknown mise home.');
+    throw new MiseInspectionError('Unknown mise home.');
   }
   const env = currentEnvironment();
   for (const [name, word] of environment.bindings) {
@@ -128,14 +118,14 @@ const startupEnvironment = (environment: Environment): Record<string, string | u
       name.startsWith('__MISE')
     ) {
       if (word.kind !== 'literal') {
-        throw new Error(`Unknown mise environment variable ${name}.`);
+        throw new MiseInspectionError(`Unknown mise environment variable ${name}.`);
       }
       env[name] = word.value;
     }
   }
   for (const name of Object.keys(env)) {
     if ((name.startsWith('MISE_') || name.startsWith('__MISE')) && !ENVIRONMENT_KEYS.has(name)) {
-      throw new Error(`Unsupported mise environment variable ${name}.`);
+      throw new MiseInspectionError(`Unsupported mise environment variable ${name}.`);
     }
   }
   return env;
@@ -154,7 +144,7 @@ const filenameList = (value: string | undefined, variable: string): string[] => 
         name.split('/').includes('..'),
     )
   ) {
-    throw new Error(`Uninspectable mise filenames from ${variable}.`);
+    throw new MiseInspectionError(`Uninspectable mise filenames from ${variable}.`);
   }
   return names;
 };
@@ -165,7 +155,7 @@ const localFiles = (
 ): { readonly toml: string[]; readonly versions: string[]; readonly fragments: boolean } => {
   for (const name of ['MISE_DEFAULT_CONFIG_FILENAME', 'MISE_DEFAULT_TOOL_VERSIONS_FILENAME']) {
     if (env[name]?.includes(path.delimiter) === true) {
-      throw new Error(`${name} must be one literal path.`);
+      throw new MiseInspectionError(`${name} must be one literal path.`);
     }
   }
   const defaults = new Set(localNames([]));
@@ -181,7 +171,7 @@ const localFiles = (
     toml.push(...filenameList(env['MISE_DEFAULT_CONFIG_FILENAME'], 'MISE_DEFAULT_CONFIG_FILENAME'));
   }
   if (toml.some((name) => !name.endsWith('.toml'))) {
-    throw new Error(
+    throw new MiseInspectionError(
       'MISE_OVERRIDE_CONFIG_FILENAMES or MISE_DEFAULT_CONFIG_FILENAME contains a non-TOML filename.',
     );
   }
@@ -207,11 +197,15 @@ const discover = (
   env: Record<string, string | undefined>,
   profiles: string[],
   roots: { readonly global: string; readonly system: string; readonly home: string },
-): { readonly files: Map<string, string>; readonly versions: Set<string> } => {
+): {
+  readonly files: Map<string, string>;
+  readonly versions: Set<string>;
+  readonly parents: ReadonlySet<string>;
+} => {
   const { global, system, home } = roots;
   const ceilings = env['MISE_CEILING_PATHS']?.split(path.delimiter) ?? [];
   if (ceilings.some((ceiling) => !path.isAbsolute(ceiling) || !literal(ceiling))) {
-    throw new Error('Uninspectable mise directory variable MISE_CEILING_PATHS.');
+    throw new MiseInspectionError('Uninspectable mise directory variable MISE_CEILING_PATHS.');
   }
   const limits = new Set(ceilings.flatMap((ceiling) => [ceiling, realpathSync(ceiling)]));
   const parents = new Set([...ancestors(cwd, limits), ...ancestors(realpathSync(cwd), limits)]);
@@ -254,7 +248,7 @@ const discover = (
     const names = override === undefined ? configDirectory(directoryName, profiles) : [override];
     for (const filename of names) {
       if (!literal(filename) || !path.isAbsolute(filename)) {
-        throw new Error(
+        throw new MiseInspectionError(
           'Uninspectable mise config override: MISE_CONFIG_FILE, MISE_GLOBAL_CONFIG_FILE, or MISE_SYSTEM_CONFIG_FILE must be an absolute literal filename.',
         );
       }
@@ -267,26 +261,30 @@ const discover = (
   );
   files.set(homeVersions, home);
   versions.add(homeVersions);
-  return { files, versions };
+  return { files, versions, parents };
 };
 
 // No subprocesses, template rendering, plugins, or mise caches are consulted.
 // Unknown discovery/settings inputs fail closed rather than silently omitting files.
-const miseStartupSafe = (invocation: ShellInvocation, environment: Environment): StartupResult => {
+const miseStartupSafe = (
+  invocation: ShellInvocation,
+  environment: Environment,
+  args: WrapperArguments,
+): StartupResult => {
   try {
     const { cwd } = environment;
     if (cwd === null || invocation.cwd === null || !statSync(cwd).isDirectory()) {
-      throw new Error('Unverified mise working directory.');
+      throw new MiseInspectionError('Unverified mise working directory.');
     }
     const env = startupEnvironment(environment);
     const home = env['HOME'];
     if (home === undefined || !path.isAbsolute(home)) {
-      throw new Error('Unverified mise HOME: expected an absolute path.');
+      throw new MiseInspectionError('Unverified mise HOME: expected an absolute path.');
     }
     const directory = (name: string, fallback: string): string => {
       const value = env[name] ?? fallback;
       if (!path.isAbsolute(value) || !literal(value)) {
-        throw new Error(`Uninspectable mise directory variable ${name}.`);
+        throw new MiseInspectionError(`Uninspectable mise directory variable ${name}.`);
       }
       return value;
     };
@@ -304,38 +302,40 @@ const miseStartupSafe = (invocation: ShellInvocation, environment: Environment):
       env['MISE_ENV'] === undefined ? 'MISE_ENVIRONMENT' : 'MISE_ENV',
     );
     const tools = new Set<string>();
-    if (!commandTools(invocation, profiles, tools)) {
-      throw new Error('Unverified mise command tool or version.');
-    }
-    const { files, versions } = discover(cwd, invocation.cwd, env, profiles, {
+    assertCommandTools(args, profiles, tools);
+    const idiomaticTools = new Set<string>();
+    const { files, versions, parents } = discover(cwd, invocation.cwd, env, profiles, {
       global,
       system,
       home,
     });
-    requireSafe(files.size <= 2048, 'Mise config discovery exceeds 2048 files.');
+    assertSafe(files.size <= 2048, 'Mise config discovery exceeds 2048 files.');
     for (const [filename, root] of files) {
       try {
-        requireSafe(
-          configSafe(filename, tools, root, versions.has(filename)),
-          'Unverified config value.',
-        );
+        assertConfig(filename, tools, root, versions.has(filename), idiomaticTools);
       } catch (cause) {
-        throw new Error(
-          `${filename}: ${cause instanceof Error ? cause.message : 'Config inspection failed.'}`,
-          { cause },
-        );
+        if (!(cause instanceof MiseInspectionError)) {
+          throw cause;
+        }
+        throw new MiseInspectionError(`${filename}: ${cause.message}`, { cause });
       }
     }
+    assertIdiomaticFiles(
+      parents,
+      idiomaticTools,
+      directory('MISE_PLUGINS_DIR', path.join(data, 'plugins')),
+    );
     checkBackends(
       directory('MISE_INSTALLS_DIR', path.join(data, 'installs')),
       directory('MISE_PLUGINS_DIR', path.join(data, 'plugins')),
-      tools,
+      new Set([...tools, ...idiomaticTools]),
     );
     return { safe: true };
   } catch (cause) {
     return {
       safe: false,
-      reason: cause instanceof Error ? cause.message : 'Mise inspection failed.',
+      reason:
+        cause instanceof MiseInspectionError ? cause.message : 'Internal mise inspector error.',
     };
   }
 };
