@@ -37,7 +37,9 @@ bunTest.test('tracked cwd reaches inline code, redirects, copies, and deletion',
       bunTest.expect(inspect(`(cd protected); cd ordinary; ${command}`)).toBe('allow');
       bunTest.expect(inspect(`cd "$DIR"; ${command}`)).toBe('deny');
     }
-    bunTest.expect(inspect('cd protected; rm -rf dist')).toBe('deny');
+    bunTest.expect(inspect('cd protected; rm -rf dist')).toBe('allow');
+    bunTest.expect(inspect('cd protected; rm -rf dist/')).toBe('deny');
+    bunTest.expect(inspect('cd protected; rm -rf dist/etc')).toBe('deny');
     bunTest.expect(inspect('command cd protected; echo example > output')).toBe('deny');
     bunTest.expect(inspect('builtin cd protected; echo example > output')).toBe('deny');
     bunTest

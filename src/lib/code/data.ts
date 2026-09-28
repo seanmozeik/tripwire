@@ -18,6 +18,8 @@ const isData = (value: Value): boolean => {
       }
       if (current.kind === 'list') {
         pending.push(...current.items);
+      } else if (current.kind === 'sequence') {
+        pending.push(current.item);
       } else if (current.kind === 'object') {
         pending.push(...current.entries.values());
       } else if (
@@ -97,6 +99,8 @@ const textMethod = (
         'strip',
         'rstrip',
         'lstrip',
+        'removeprefix',
+        'removesuffix',
         'trim',
         'lower',
         'upper',
@@ -122,6 +126,7 @@ const textMethod = (
         'includes',
         'find',
         'rfind',
+        'rindex',
         'partition',
         'rpartition',
         'finditer',
@@ -151,6 +156,13 @@ const dataMethod = (
   language: CodeLanguage,
 ): Value => {
   requireData(args);
+  if (language !== 'python' && name === 'at') {
+    if (args.length !== 1) {
+      return failInspection('at needs one inert index.');
+    }
+    requireData([receiver]);
+    return data;
+  }
   if (language !== 'python' && name === 'includes' && isData(receiver)) {
     return data;
   }

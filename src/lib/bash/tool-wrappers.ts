@@ -17,6 +17,7 @@ interface WrapperSpec {
   readonly cwdOptions?: readonly string[];
   readonly cwdOperand?: number;
   readonly subcommands: readonly string[];
+  readonly ordinarySubcommands?: readonly string[];
   readonly values?: readonly string[];
   readonly flags?: readonly string[];
   readonly operands?: number;
@@ -42,7 +43,20 @@ const specs: Readonly<Record<string, WrapperSpec>> = {
   },
   mise: {
     subcommands: ['exec', 'x'],
+    ordinarySubcommands: ['which', 'where', 'ls', 'list', '--version', '-V', '--help', '-h'],
     values: ['-C', '--cd', '-j', '--jobs', '-E', '--env'],
+    flags: [
+      '-q',
+      '--quiet',
+      '-v',
+      '-vv',
+      '--verbose',
+      '-y',
+      '--yes',
+      '--raw',
+      '--locked',
+      '--silent',
+    ],
     cwdOptions: ['-C', '--cd'],
     delimiter: true,
     checkStartup: miseStartupSafe,
@@ -140,7 +154,7 @@ const wrapperCommand = (
   spec: WrapperSpec,
   environment: Environment,
   args: WrapperArguments,
-): number | null => {
+): number | 'ordinary-command' | null => {
   const cursor: WrapperCursor = {
     index: 1,
     args,
@@ -149,6 +163,7 @@ const wrapperCommand = (
     environment,
   };
   const subcommands = new Set(spec.subcommands);
+  const ordinarySubcommands = new Set(spec.ordinarySubcommands);
   const values = new Set(spec.values);
   const flags = new Set(spec.flags);
   const delimiters = new Set(['--', ...(spec.extraDelimiters ?? [])]);
@@ -158,6 +173,9 @@ const wrapperCommand = (
       return null;
     }
     const { value } = word;
+    if (!cursor.subcommand && ordinarySubcommands.has(value)) {
+      return 'ordinary-command';
+    }
     if (!cursor.subcommand && subcommands.has(value)) {
       cursor.subcommand = true;
     } else if (cursor.subcommand && delimiters.has(value)) {
@@ -215,6 +233,9 @@ const inspectToolWrapper = (
   }
   const args: WrapperArguments = { operands: [], options: [] };
   const index = wrapperCommand(invocation, spec, child, args);
+  if (index === 'ordinary-command') {
+    return false;
+  }
   if (index !== null && spec.checkStartup !== undefined) {
     const result = spec.checkStartup(invocation, child, args);
     child.startup = joinStartup(

@@ -53,6 +53,9 @@ const archiveCall = (
   context: OperationContext,
 ): Value => {
   requireData(args);
+  if (member === 'infolist' && args.length === 0) {
+    return { kind: 'sequence', item: { kind: 'builtin', name: 'zip-info' } };
+  }
   if (['close', 'namelist', 'testzip', 'printdir'].includes(member) && args.length === 0) {
     return data;
   }

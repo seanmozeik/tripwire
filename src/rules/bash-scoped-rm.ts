@@ -1,3 +1,4 @@
+import { lstatSync } from 'node:fs';
 import path from 'node:path';
 
 import {
@@ -37,7 +38,17 @@ const safeTarget = (
   if (resolved === null) {
     return false;
   }
-  const actual = resolveWritePath(resolved);
+  let actual = resolveWritePath(resolved);
+  if (seg.head === 'rm' && !target.endsWith('/') && !/\/(?:\.|\.\.)$/u.test(target)) {
+    try {
+      if (lstatSync(resolved).isSymbolicLink()) {
+        // Unlink the final link. Links in parent components still resolve.
+        actual = path.join(resolveWritePath(path.dirname(resolved)), path.basename(resolved));
+      }
+    } catch {
+      // Missing paths retain the normal resolved-path policy.
+    }
+  }
   if (seg.cwd !== null && !path.isAbsolute(target) && isSafePathTarget(target, relative, [])) {
     return isSafePathTarget(path.relative(resolveWritePath(seg.cwd), actual), relative, []);
   }

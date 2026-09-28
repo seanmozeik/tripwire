@@ -111,6 +111,23 @@ const containsLoopJump = (node: SyntaxNode): boolean =>
   ['ContinueStatement', 'BreakStatement'].includes(node.name) ||
   children(node).some((part) => containsLoopJump(part));
 
+const iterationValues = (iterable: Value): readonly Value[] => {
+  if (iterable.kind === 'list' && iterable.opaque !== true) {
+    return iterable.items;
+  }
+  if (iterable.kind === 'sequence') {
+    requireData([iterable.item]);
+    return [iterable.item];
+  }
+  if (
+    ['data', 'text', 'string', 'list', 'object', 'file', 'builtin'].includes(iterable.kind) ||
+    (iterable.kind === 'symbol' && iterable.name === 'sys.stdin')
+  ) {
+    return [data];
+  }
+  return failInspection('Iteration needs bounded literals or inert JSON data.');
+};
+
 const iterate = (
   target: SyntaxNode | undefined,
   input: SyntaxNode | undefined,
@@ -126,17 +143,7 @@ const iterate = (
     return failInspection('Only simple iteration bindings are inspected.');
   }
   const iterable = context.evaluate(input);
-  let values: readonly Value[];
-  if (iterable.kind === 'list' && iterable.opaque !== true) {
-    values = iterable.items;
-  } else if (
-    ['data', 'text', 'string', 'list', 'object', 'file', 'builtin'].includes(iterable.kind) ||
-    (iterable.kind === 'symbol' && iterable.name === 'sys.stdin')
-  ) {
-    values = [data];
-  } else {
-    return failInspection('Iteration needs bounded literals or inert JSON data.');
-  }
+  const values = iterationValues(iterable);
   if (values.length > 128) {
     return failInspection('Iteration needs bounded literals or inert JSON data.');
   }

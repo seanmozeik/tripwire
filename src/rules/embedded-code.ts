@@ -87,7 +87,7 @@ const uncertainContext = (program: ShellProgram, policy: CodePolicy): boolean =>
 const codeDeny = (message: string): Decision =>
   deny(
     'embedded-code',
-    `${message} Use a dedicated file tool, a recoverable deletion tool, or a command Tripwire can fully inspect.`,
+    `${message} Tripwire could not complete inline-code inspection. Use a supported command or a dedicated file tool. Named script files follow the normal tool policy; their contents are not inspected.`,
   );
 
 const canonicalPath = (target: string): string | null => {
@@ -197,8 +197,9 @@ const operationDecision = (operation: CodeOperation, originalPolicy: CodePolicy)
     (operation.kind === 'delete' || operation.kind === 'truncate') &&
     !safeDeletion(operation.path, policy)
   ) {
-    return codeDeny(
-      `${operation.kind} outside a verified safe scope: ${JSON.stringify(operation.path)}.`,
+    return deny(
+      'embedded-code',
+      `${operation.kind} outside a verified safe scope: ${JSON.stringify(operation.path)}. Use a recoverable deletion tool or limit the target to a verified build, cache, or temporary path.`,
     );
   }
   return operation.kind === 'read'

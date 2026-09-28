@@ -16,6 +16,11 @@ const indexedValue = (value: Value, key: Value): Value => {
   if (!isData(key)) {
     return failInspection('Index has uninspected effects.');
   }
+  if (value.kind === 'sequence') {
+    return isData(value.item)
+      ? value.item
+      : failInspection('Computed access cannot select a callable.');
+  }
   if (value.kind === 'text' || value.kind === 'string') {
     return text;
   }
@@ -116,6 +121,7 @@ const dataMember = (value: Value, member: string, language: CodeLanguage): Value
       language !== 'python' &&
       ![
         'map',
+        'at',
         'filter',
         'forEach',
         'some',

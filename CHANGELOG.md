@@ -4,6 +4,17 @@ This file records notable project changes. The format follows [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-09-28
+
+### Fixed
+
+- Classify package install and removal commands as package operations. Inspect commands forwarded by `pnpm dlx` and `yarn dlx`, including pnpm shell mode.
+- Recognize Node's short version flag and read-only mise commands after global options.
+- Support tuple-form Python type checks, built-in defaultdict factories, string prefix and suffix operations, JavaScript `at`, and ZIP metadata through iteration and indexing. Keep data-derived paths and callable values subject to inspection.
+- Accept local rsync include and exclude patterns while retaining protected-path and remote-transfer checks.
+- Check the final symbolic link when shell deletion unlinks it. Continue to resolve links in parent paths and check traversal through links.
+- Distinguish rejected destructive operations from unsupported inline-code inspection in denial messages.
+
 ## [0.11.0] - 2026-09-23
 
 ### Added

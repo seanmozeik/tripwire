@@ -277,11 +277,15 @@ const introspectionCall = (name: string, args: readonly Value[]): Value | null =
   }
   if (name === 'isinstance') {
     const [value, target] = args;
+    const targets = target?.kind === 'list' && target.opaque !== true ? target.items : [target];
     if (
       args.length !== 2 ||
       value === undefined ||
-      target?.kind !== 'symbol' ||
-      !['dict', 'list', 'str', 'int', 'float', 'tuple', 'set', 'bool'].includes(target.name)
+      !targets.every(
+        (item) =>
+          item?.kind === 'symbol' &&
+          ['dict', 'list', 'str', 'int', 'float', 'tuple', 'set', 'bool'].includes(item.name),
+      )
     ) {
       return null;
     }
@@ -401,6 +405,9 @@ const builtinMethods: Readonly<Record<string, Readonly<Record<string, Value>>>> 
   },
 };
 const builtinMethod = (receiver: string, name: string, args: readonly Value[]): Value | null => {
+  if (receiver === 'zip-info' && name === 'is_dir' && args.length === 0) {
+    return data;
+  }
   if (receiver === 'transpiler') {
     return transpile(name, args);
   }
@@ -416,6 +423,13 @@ const builtinMethod = (receiver: string, name: string, args: readonly Value[]): 
 };
 
 const builtinProperties: Readonly<Record<string, Readonly<Record<string, Value>>>> = {
+  'zip-info': {
+    filename: { kind: 'text' },
+    file_size: { kind: 'data' },
+    compress_size: { kind: 'data' },
+    CRC: { kind: 'data' },
+    date_time: { kind: 'data' },
+  },
   'process-result': {
     stdout: { kind: 'text' as const },
     stderr: { kind: 'text' as const },

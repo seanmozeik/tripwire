@@ -79,6 +79,8 @@ class Scopes {
         for (const item of value.items) {
           visitValue(item);
         }
+      } else if (value.kind === 'sequence') {
+        visitValue(value.item);
       } else if (value.kind === 'object') {
         for (const item of value.entries.values()) {
           visitValue(item);

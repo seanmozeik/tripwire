@@ -240,7 +240,11 @@ const directInput = (invocation: CarrierInvocation, language: CodeLanguage): Cod
   }
   if (
     commandMode ||
-    args.some((word) => ['--help', '-h', '--version', '-V', '--test'].includes(word.value))
+    args.some(
+      (word) =>
+        ['--help', '-h', '--version', '-V', '--test'].includes(word.value) ||
+        (language !== 'python' && word.value === '-v'),
+    )
   ) {
     return irrelevant;
   }
@@ -262,6 +266,10 @@ const PACKAGE_LAUNCHERS = new Set([
   'yarn',
 ]);
 const LAUNCHER_VALUES = new Set([
+  '--allow-build',
+  '--cpu',
+  '--os',
+  '--libc',
   '--package',
   '-p',
   '--filter',
@@ -323,10 +331,56 @@ const uvInput = (invocation: CarrierInvocation, depth: number): CodeInput => {
   );
 };
 
+const PACKAGE_LIFECYCLE_COMMANDS = new Set([
+  'install',
+  'i',
+  'add',
+  'remove',
+  'rm',
+  'r',
+  'un',
+  'unlink',
+  'link',
+  'ln',
+  'uninstall',
+  'update',
+  'upgrade',
+  'ci',
+  'run',
+  'run-script',
+]);
+
+const packageShellInput = (words: readonly ShellWord[]): CodeInput =>
+  words.length > 0 && words.every((word) => word.kind === 'literal')
+    ? { kind: 'command', command: words.map((word) => word.value).join(' '), requiresContext: true }
+    : blocked('Package shell source is unresolved.');
+
+const packageCommandKind = (
+  launcher: string,
+  word: string,
+  forwarded: boolean,
+): 'lifecycle' | 'forward' | null => {
+  if (forwarded) {
+    return null;
+  }
+  if (['npm', 'pnpm', 'yarn'].includes(launcher) && PACKAGE_LIFECYCLE_COMMANDS.has(word)) {
+    return 'lifecycle';
+  }
+  if (
+    ['run', 'exec', 'x'].includes(word) ||
+    (['pnpm', 'yarn'].includes(launcher) && word === 'dlx')
+  ) {
+    return 'forward';
+  }
+  return null;
+};
+
 const packageInput = (invocation: CarrierInvocation, depth: number): CodeInput => {
-  let index = path.posix.basename(invocation.head) === 'bun' ? 2 : 1;
+  const launcher = path.posix.basename(invocation.head);
+  let index = launcher === 'bun' ? 2 : 1;
   let unsafeContext = false;
   let subcommand = false;
+  let shellMode = false;
   for (; index < invocation.words.length; index += 1) {
     const word = invocation.words[index];
     if (word?.kind !== 'literal') {
@@ -336,13 +390,21 @@ const packageInput = (invocation: CarrierInvocation, depth: number): CodeInput =
       index += 1;
       break;
     }
-    if (!subcommand && ['run', 'exec', 'x'].includes(word.value)) {
+    // Package lifecycle commands and named scripts are not executable operands.
+    // Explicit exec/x forwarding still reaches the child's normal policy checks.
+    const kind = packageCommandKind(launcher, word.value, subcommand);
+    if (kind === 'lifecycle') {
+      return irrelevant;
+    }
+    if (kind === 'forward') {
       subcommand = true;
     } else {
       if (!word.value.startsWith('-')) {
         break;
       }
-      if (['-c', '--call'].includes(word.value)) {
+      if (launcher === 'pnpm' && ['-c', '--shell-mode'].includes(word.value)) {
+        shellMode = true;
+      } else if (['-c', '--call'].includes(word.value)) {
         const source = invocation.words[index + 1];
         return source?.kind === 'literal'
           ? withContext(
@@ -363,7 +425,7 @@ const packageInput = (invocation: CarrierInvocation, depth: number): CodeInput =
   return words.length === 0
     ? irrelevant
     : withContext(
-        forwardedInput(invocation, words, depth),
+        shellMode ? packageShellInput(words) : forwardedInput(invocation, words, depth),
         unsafeContext,
         'Forwarded inline source or command has an unverified package working directory.',
       );

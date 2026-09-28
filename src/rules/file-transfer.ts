@@ -8,6 +8,11 @@ import { pathProtect } from './path-protect';
 import { readProtect } from './read-protect';
 import { checkShellWritePath } from './shell-write';
 
+const isRsyncInlineOption = (value: string): boolean =>
+  value.startsWith('--exclude=') ||
+  value.startsWith('--include=') ||
+  ['--archive', '--recursive', '--verbose', '--dry-run'].includes(value);
+
 const transferOperands = (command: ShellInvocation): string[] | null => {
   let options = true;
   let optionValue = false;
@@ -21,7 +26,11 @@ const transferOperands = (command: ShellInvocation): string[] | null => {
     } else if (options && word.value === '--') {
       options = false;
     } else if (options && word.value.startsWith('-')) {
-      if (command.head === 'install' && ['-m', '-o', '-g'].includes(word.value)) {
+      if (command.head === 'rsync' && ['--exclude', '--include'].includes(word.value)) {
+        optionValue = true;
+      } else if (command.head === 'rsync' && isRsyncInlineOption(word.value)) {
+        // Pattern options do not add sources, destinations, or external files.
+      } else if (command.head === 'install' && ['-m', '-o', '-g'].includes(word.value)) {
         optionValue = true;
       } else {
         const flags = command.head === 'rsync' ? /^-[avzRrptlHn]+$/u : /^-[RrpfinsvLHP]+$/u;

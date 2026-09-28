@@ -90,6 +90,7 @@ type Value =
   | { readonly kind: 'archive'; readonly path: string }
   | { readonly kind: 'method'; readonly receiver: Value; readonly name: string }
   | { readonly kind: 'list'; opaque?: boolean; readonly items: readonly Value[] }
+  | { readonly kind: 'sequence'; readonly item: Value }
   | { readonly kind: 'object'; opaque?: boolean; readonly entries: ReadonlyMap<string, Value> }
   | { readonly kind: 'unknown' };
 

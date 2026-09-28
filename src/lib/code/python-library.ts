@@ -52,6 +52,18 @@ const pythonLibraryCall = (
     }
     return { kind: 'counter' };
   }
+  if (name === 'collections.defaultdict') {
+    const [factory, ...initial] = args;
+    if (
+      args.length > 2 ||
+      factory?.kind !== 'symbol' ||
+      !['int', 'float', 'str', 'list', 'dict', 'set', 'tuple', 'bool'].includes(factory.name)
+    ) {
+      return failInspection('defaultdict needs a known inert built-in factory.');
+    }
+    requireData(initial);
+    return data;
+  }
   if (['glob.glob', 'glob.iglob'].includes(name)) {
     if (args.length !== 1) {
       return failInspection('Globbing needs a literal pattern.');
