@@ -168,7 +168,17 @@ An execution-carrier alias states that a fixed command path has the same nested-
 
 `ruleActions` can set a listed workflow-policy rule to `allow`, `warn`, `ask`, or `deny`. Unknown rule names and safety-invariant rule names fail config validation instead of silently weakening policy.
 
-Configurable workflow rules are `brew-mutation`, `chmod-777-recursive`, `defaults-write`, `dscl-mutate`, `launchctl-mutation`, `mas-mutation`, `no-gpg-sign`, `no-verify`, `osascript`, `pmset-write`, `rsync-delete`, `scutil-set`, `security-keychain-add-write`, `softwareupdate-install`, `sudo`, `systemsetup`, and `topgrade`.
+Configurable workflow rules are `brew-mutation`, `chmod-777-recursive`, `defaults-write`, `dscl-mutate`, `git-cherry-pick`, `git-rebase`, `launchctl-mutation`, `mas-mutation`, `no-gpg-sign`, `no-verify`, `osascript`, `pmset-write`, `rsync-delete`, `scutil-set`, `security-keychain-add-write`, `softwareupdate-install`, `sudo`, `systemsetup`, and `topgrade`.
+
+To allow ordinary cherry-picks and non-interactive rebases without a permission prompt:
+
+```json
+{ "ruleActions": { "git-cherry-pick": "allow", "git-rebase": "allow" } }
+```
+
+Both rules default to `ask`. Interactive rebase remains denied (`git-rebase-interactive`). A rebase whose upstream, `--onto` target, or explicit branch operand matches a configured protected branch, including remote-qualified names such as `origin/main`, still asks (`git-rebase-onto-protected`). Rebase `--exec` / `-x` commands run outside Tripwire's inspection and still ask (`git-rebase-exec`); submitted `rebase.instructionFormat` overrides also ask because they can inject exec instructions. Rebase `--update-refs` or submitted config enabling `rebase.updateRefs` still asks (`git-rebase-update-refs`) because it can also rewrite protected branch pointers outside the named targets; explicit `--no-update-refs` disables these additional updates. Submitted `GIT_EDITOR`, `GIT_SEQUENCE_EDITOR`, `core.editor`, `sequence.editor`, and `core.hooksPath` overrides still ask (`git-editor-override`) unless their values are `true`, `:`, or empty, including on `--continue`. Environment-based Git config carriers also require approval. Cherry-pick `-e` / `--edit` uses the same override protection. These safety rule IDs cannot be configured through `ruleActions`.
+
+Tripwire does not read HEAD to determine the current branch. Allowing `git-cherry-pick` also permits cherry-picking onto a protected branch in the main checkout; as with a local commit, the reflog can help recover it. Review the current branch before using this policy. Later Git invocations in the same shell program still receive their own checks.
 
 `toolPolicies` accepts these optional match fields:
 

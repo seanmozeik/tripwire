@@ -4,6 +4,7 @@ interface RebaseArguments {
   readonly branch: string | undefined;
   readonly interactive: boolean;
   readonly exec: boolean;
+  readonly updateRefs: boolean | undefined;
   readonly operation: string | undefined;
 }
 
@@ -130,12 +131,16 @@ const parseRebaseArguments = (args: readonly string[]): RebaseArguments => {
   }
   const root =
     options.findLast((option) => ['--root', '--no-root'].includes(option.name))?.name === '--root';
+  const updateRefs = options.findLast((option) =>
+    ['--update-refs', '--no-update-refs'].includes(option.name),
+  );
   return {
     upstream: root ? undefined : positional[0],
     onto: options.findLast((option) => ['--onto', '--no-onto'].includes(option.name))?.value,
     branch: root ? positional[0] : positional[1],
     interactive: options.some((option) => option.name === '--interactive'),
     exec: options.some((option) => option.name === '--exec'),
+    updateRefs: updateRefs === undefined ? undefined : updateRefs.name === '--update-refs',
     operation: options.findLast((option) => OPERATIONS.has(option.name))?.name,
   };
 };

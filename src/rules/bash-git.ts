@@ -1,6 +1,7 @@
 import type { ShellInvocation, ShellProgram } from '../lib/bash';
 import type { GitConfig } from '../lib/config';
-import { type Decision, allow, ask, deny, warn } from '../lib/decision';
+import { type Decision, allow, ask, deny, merge, warn } from '../lib/decision';
+import { applyRuleAction, type RuleActions } from '../lib/rule-actions';
 import { parseRebaseArguments } from './git-rebase-options';
 
 // Git policy separates read operations from destructive worktree, history,
@@ -359,6 +360,17 @@ const handleRebase: Handler = ({ subArgs, config, invocation }) => {
       '`git rebase --exec / -x` and a `rebase.instructionFormat` override can run uninspected shell commands after commits. Run checks separately, or confirm the override before rebasing.',
     );
   }
+  const configuredUpdateRefs = invocation.configOverrides.get('rebase.updaterefs');
+  const updateRefs =
+    args.updateRefs ??
+    (invocation.configOverrides.has('rebase.updaterefs') &&
+      !new Set(['false', 'no', '0', 'off']).has(configuredUpdateRefs?.toLowerCase() ?? ''));
+  if (updateRefs) {
+    return ask(
+      'git-rebase-update-refs',
+      '`git rebase --update-refs` can also rewrite protected branch pointers outside the named targets. Use `--no-update-refs`, or confirm the additional branch updates.',
+    );
+  }
   const override = editorOverride(invocation);
   if (override !== null) {
     return override;
@@ -634,7 +646,7 @@ const HANDLERS: ReadonlyMap<string, Handler> = new Map<string, Handler>([
   ],
 ]);
 
-const evalGit = (inv: GitInvocation, config: GitConfig): Decision | null => {
+const evalGit = (inv: GitInvocation, config: GitConfig): Decision => {
   const { subcommand, subArgs } = inv;
   const flags = flagsOf(subArgs);
   const positional = positionalOf(subArgs);
@@ -723,7 +735,12 @@ const isReadOnlyInvocation = (invocation: GitInvocation): boolean => {
   return operation === undefined || operation === 'get-url' || operation === 'show';
 };
 
-const bashGit = (program: ShellProgram, config: GitConfig): Decision => {
+const bashGit = (
+  program: ShellProgram,
+  config: GitConfig,
+  ruleActions: RuleActions = {},
+): Decision => {
+  let advisory = allow('bash-git');
   for (const seg of program.invocations) {
     const inv = parseGit(seg);
     if (inv !== null) {
@@ -747,13 +764,15 @@ const bashGit = (program: ShellProgram, config: GitConfig): Decision => {
           `Tripwire cannot prove that computed arguments to \`git ${inv.subcommand}\` preserve Git safety policy.`,
         );
       }
-      const decision = evalGit(inv, config);
-      if (decision !== null && decision.kind !== 'allow') {
+      const decision = applyRuleAction(evalGit(inv, config), ruleActions);
+      if (decision.kind === 'warn') {
+        advisory = merge([advisory, decision]);
+      } else if (decision.kind !== 'allow') {
         return decision;
       }
     }
   }
-  return allow('bash-git');
+  return advisory;
 };
 
 export { bashGit };

@@ -12,6 +12,8 @@ const RuleActionsSchema = Schema.Struct({
   'chmod-777-recursive': Schema.optional(RuleActionSchema),
   'defaults-write': Schema.optional(RuleActionSchema),
   'dscl-mutate': Schema.optional(RuleActionSchema),
+  'git-cherry-pick': Schema.optional(RuleActionSchema),
+  'git-rebase': Schema.optional(RuleActionSchema),
   'launchctl-mutation': Schema.optional(RuleActionSchema),
   'mas-mutation': Schema.optional(RuleActionSchema),
   'no-gpg-sign': Schema.optional(RuleActionSchema),

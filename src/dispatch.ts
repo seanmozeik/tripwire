@@ -250,7 +250,7 @@ const collectBashRules = (
       fn: () => embeddedCode(program, codePolicy(config, options.cwd, depth)),
     },
     shellRule('bash-deny', () => bashDeny(program, config.ruleActions)),
-    shellRule('bash-git', () => bashGit(program, config.git)),
+    shellRule('bash-git', () => bashGit(program, config.git, config.ruleActions)),
     shellRule('bash-scoped-rm', () => bashScopedRm(program, config.safePaths)),
     shellRule('bash-redirect', () => bashRedirect(program)),
     shellRule('bash-network-install', () => bashNetworkInstall(program)),

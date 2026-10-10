@@ -126,18 +126,40 @@ bunTest.describe('loadConfigResult', () => {
   bunTest.test('loads typed workflow-policy rule actions', async () => {
     await writeFile(
       configPath,
-      JSON.stringify({ ruleActions: { 'no-verify': 'ask', sudo: 'warn' } }),
+      JSON.stringify({
+        ruleActions: {
+          'no-verify': 'ask',
+          sudo: 'warn',
+          'git-cherry-pick': 'allow',
+          'git-rebase': 'allow',
+        },
+      }),
     );
 
     const result = await Effect.runPromise(loadConfigResult(configPath));
     bunTest.expect(result.ok).toBe(true);
     if (result.ok) {
-      bunTest.expect(result.config.ruleActions).toEqual({ 'no-verify': 'ask', sudo: 'warn' });
+      bunTest
+        .expect(result.config.ruleActions)
+        .toEqual({
+          'no-verify': 'ask',
+          sudo: 'warn',
+          'git-cherry-pick': 'allow',
+          'git-rebase': 'allow',
+        });
     }
   });
 
   bunTest.test('rejects unknown and safety-invariant rule action keys', async () => {
-    for (const rule of ['no-verfiy', 'rm-rf-root']) {
+    for (const rule of [
+      'no-verfiy',
+      'rm-rf-root',
+      'git-rebase-onto-protected',
+      'git-rebase-interactive',
+      'git-rebase-exec',
+      'git-rebase-update-refs',
+      'git-editor-override',
+    ]) {
       await writeFile(configPath, JSON.stringify({ ruleActions: { [rule]: 'allow' } }));
       const result = await Effect.runPromise(loadConfigResult(configPath));
       bunTest.expect(result.ok).toBe(false);
