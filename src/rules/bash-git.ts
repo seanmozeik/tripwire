@@ -1,6 +1,7 @@
 import type { ShellInvocation, ShellProgram } from '../lib/bash';
 import type { GitConfig } from '../lib/config';
 import { type Decision, allow, ask, deny, warn } from '../lib/decision';
+import { parseRebaseArguments } from './git-rebase-options';
 
 // Git policy separates read operations from destructive worktree, history,
 // Branch, push, commit, and configuration changes. Global Git options are
@@ -17,6 +18,7 @@ const CONVENTIONAL_RE =
 const PRE_SUB_FLAG_TAKES_VALUE: ReadonlySet<string> = new Set([
   '-C',
   '-c',
+  '--config-env',
   '--git-dir',
   '--work-tree',
   '--namespace',
@@ -44,7 +46,26 @@ interface GitInvocation {
   readonly subcommand: string;
   readonly subcommandIndex: number;
   readonly subArgs: readonly string[];
+  readonly configOverrides: ReadonlyMap<string, string | null>;
+  readonly bindings: ShellInvocation['bindings'];
 }
+
+const addConfigOverride = (
+  overrides: Map<string, string | null>,
+  assignment: string,
+  bindings: ShellInvocation['bindings'],
+  fromEnvironment: boolean,
+): void => {
+  const equals = assignment.indexOf('=');
+  const key = (equals === -1 ? assignment : assignment.slice(0, equals)).toLowerCase();
+  const value = equals === -1 ? '' : assignment.slice(equals + 1);
+  if (!fromEnvironment) {
+    overrides.set(key, value);
+    return;
+  }
+  const binding = bindings.get(value);
+  overrides.set(key, binding?.kind === 'literal' ? binding.value : null);
+};
 
 const READ_ONLY: ReadonlySet<string> = new Set([
   'status',
@@ -84,13 +105,23 @@ const parseGit = (seg: ShellInvocation): GitInvocation | null => {
     return null;
   }
   const toks = seg.tokens.slice(1);
+  const configOverrides = new Map<string, string | null>();
   let i = 0;
   while (i < toks.length) {
     const t = toks[i];
     if (t === undefined) {
       break;
     }
-    if (PRE_SUB_FLAG_TAKES_VALUE.has(t)) {
+    if (t === '-c' || t === '--config-env') {
+      addConfigOverride(configOverrides, toks[i + 1] ?? '', seg.bindings, t === '--config-env');
+      i += 2;
+    } else if (t.startsWith('-c') && !t.startsWith('--')) {
+      addConfigOverride(configOverrides, t.slice(2), seg.bindings, false);
+      i += 1;
+    } else if (t.startsWith('--config-env=')) {
+      addConfigOverride(configOverrides, t.slice('--config-env='.length), seg.bindings, true);
+      i += 1;
+    } else if (PRE_SUB_FLAG_TAKES_VALUE.has(t)) {
       i += 2;
     } else if (PRE_SUB_FLAG_NO_VALUE.has(t)) {
       i += 1;
@@ -106,7 +137,13 @@ const parseGit = (seg: ShellInvocation): GitInvocation | null => {
       // Unknown pre-subcommand flag; assume no value, advance.
       i += 1;
     } else {
-      return { subcommand: t, subcommandIndex: i + 1, subArgs: toks.slice(i + 1) };
+      return {
+        subcommand: t,
+        subcommandIndex: i + 1,
+        subArgs: toks.slice(i + 1),
+        configOverrides,
+        bindings: seg.bindings,
+      };
     }
   }
   return null;
@@ -163,6 +200,7 @@ interface HandlerCtx {
   readonly flags: readonly string[];
   readonly positional: readonly string[];
   readonly config: GitConfig;
+  readonly invocation: GitInvocation;
 }
 
 type Handler = (ctx: HandlerCtx) => Decision;
@@ -283,22 +321,57 @@ const handleClean: Handler = ({ subArgs, flags }) => {
   return allow('bash-git');
 };
 
-const handleRebase: Handler = ({ subArgs, positional, config }) => {
-  if (has(subArgs, '--abort', '--quit', '--continue', '--skip', '--edit-todo')) {
-    return allow('bash-git');
-  }
-  if (has(subArgs, '-i', '--interactive')) {
+const editorOverride = (invocation: GitInvocation): Decision | null => {
+  const safeValues = new Set(['true', ':', '']);
+  const environmentKeys = ['GIT_EDITOR', 'GIT_SEQUENCE_EDITOR', 'VISUAL', 'EDITOR'];
+  const configKeys = ['core.editor', 'sequence.editor', 'core.hookspath'];
+  const unsafeEnvironment = environmentKeys.some((key) => {
+    const word = invocation.bindings.get(key);
+    return word !== undefined && (word.kind !== 'literal' || !safeValues.has(word.value));
+  });
+  const unsafeConfig = configKeys.some(
+    (key) =>
+      invocation.configOverrides.has(key) &&
+      !safeValues.has(invocation.configOverrides.get(key) ?? '__unresolved__'),
+  );
+  const configEnvironment = [...invocation.bindings.keys()].some((key) =>
+    /^(?:GIT_CONFIG_PARAMETERS|GIT_CONFIG_COUNT|GIT_CONFIG_(?:KEY|VALUE)_\d+)$/u.test(key),
+  );
+  return unsafeEnvironment || unsafeConfig || configEnvironment
+    ? ask(
+        'git-editor-override',
+        'This Git invocation overrides an editor or hooks path with an uninspected command. Use `GIT_EDITOR=true` / `GIT_SEQUENCE_EDITOR=true` to suppress editors, or confirm the override.',
+      )
+    : null;
+};
+
+const handleRebase: Handler = ({ subArgs, config, invocation }) => {
+  const args = parseRebaseArguments(subArgs);
+  if (args.interactive) {
     return deny(
       'git-rebase-interactive',
       '`git rebase -i` rewrites history interactively. Refuse — too easy to lose commits in the agent loop. If this is genuinely required, do it manually outside the agent.',
     );
   }
-  const [onto] = positional;
-  const branches = getProtectedBranches(config);
-  if (onto !== undefined && branches.includes(onto)) {
+  if (args.exec || invocation.configOverrides.has('rebase.instructionformat')) {
+    return ask(
+      'git-rebase-exec',
+      '`git rebase --exec / -x` and a `rebase.instructionFormat` override can run uninspected shell commands after commits. Run checks separately, or confirm the override before rebasing.',
+    );
+  }
+  const override = editorOverride(invocation);
+  if (override !== null) {
+    return override;
+  }
+  if (args.operation !== undefined) {
+    return allow('bash-git');
+  }
+  const targets = [args.upstream, args.onto, args.branch].filter((target) => target !== undefined);
+  const hit = protectedBranchHit(targets, config);
+  if (hit !== null) {
     return ask(
       'git-rebase-onto-protected',
-      `Rebasing onto \`${onto}\` rewrites history of the current branch. \`git merge ${onto}\` is usually safer. Confirm intent.`,
+      `Rebasing onto protected branch \`${hit}\` rewrites history of the current branch. \`git merge ${hit}\` is usually safer. Confirm intent.`,
     );
   }
   return ask(
@@ -307,7 +380,11 @@ const handleRebase: Handler = ({ subArgs, positional, config }) => {
   );
 };
 
-const handleCherryPick: Handler = ({ subArgs }) => {
+const handleCherryPick: Handler = ({ subArgs, invocation }) => {
+  const override = editorOverride(invocation);
+  if (override !== null) {
+    return override;
+  }
   if (has(subArgs, '--abort', '--quit', '--continue', '--skip')) {
     return allow('bash-git');
   }
@@ -581,7 +658,7 @@ const evalGit = (inv: GitInvocation, config: GitConfig): Decision | null => {
 
   const handler = HANDLERS.get(subcommand);
   if (handler !== undefined) {
-    return handler({ subcommand, subArgs, flags, positional, config });
+    return handler({ subcommand, subArgs, flags, positional, config, invocation: inv });
   }
   return warn(
     'git-unknown-subcommand',

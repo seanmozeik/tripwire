@@ -15,6 +15,15 @@ import {
   type WordPart,
 } from 'unbash';
 
+import {
+  assignedNameOf,
+  dynamicBinding,
+  invalidateArithmeticBinding,
+  joinBindings,
+  restoreDeclaredBinding,
+  variableWriteTargets,
+  visitRepeatedBindings,
+} from './bindings';
 import { changeDirectory } from './cwd';
 import { ExecutionInspector } from './execution';
 import { joinStartup } from './startup';
@@ -51,7 +60,7 @@ interface VisitContext {
 }
 
 interface AssignmentEffect {
-  readonly binding: ShellWord | undefined;
+  readonly binding: ShellWord;
   readonly name: string;
   readonly trustedTemp: boolean;
 }
@@ -104,7 +113,7 @@ const environmentsAgree = (environments: readonly Environment[]): Environment =>
     backgroundPidAvailable: [first, ...rest].every(
       (environment) => environment.backgroundPidAvailable,
     ),
-    bindings: mapsAgree([first.bindings, ...rest.map((environment) => environment.bindings)]),
+    bindings: joinBindings(environments),
     functions: mapsAgree([first.functions, ...rest.map((environment) => environment.functions)]),
     temps: mapsAgree([first.temps, ...rest.map((environment) => environment.temps)]),
   };
@@ -170,7 +179,7 @@ const applyAssignment = (effect: AssignmentEffect, environment: Environment): vo
   environment.bindings.delete(effect.name);
   if (effect.trustedTemp) {
     environment.temps.set(effect.name, { variable: effect.name });
-  } else if (effect.binding !== undefined) {
+  } else {
     environment.bindings.set(effect.name, effect.binding);
   }
 };
@@ -233,7 +242,7 @@ const mayMutateHomeIndirectly = (invocation: ShellInvocation): boolean => {
   if (['source', '.', 'eval', 'read', 'getopts', 'let'].includes(invocation.head)) {
     return true;
   }
-  if (invocation.head === 'printf' && invocation.tokens.includes('-v')) {
+  if (invocation.head === 'printf' && variableWriteTargets(invocation) !== null) {
     return true;
   }
   if (['export', 'readonly', 'declare', 'typeset', 'local', 'unset'].includes(invocation.head)) {
@@ -243,22 +252,6 @@ const mayMutateHomeIndirectly = (invocation: ShellInvocation): boolean => {
     );
   }
   return false;
-};
-
-const restoreExportedHome = (
-  invocation: ShellInvocation,
-  word: ShellWord,
-  previous: ShellWord | undefined,
-  environment: Environment,
-): void => {
-  if (invocation.head !== 'export' || word.kind !== 'literal') {
-    return;
-  }
-  if (word.value.startsWith('HOME=')) {
-    environment.bindings.set('HOME', { ...word, value: word.value.slice(5) });
-  } else if (word.value === 'HOME' && previous !== undefined) {
-    environment.bindings.set('HOME', previous);
-  }
 };
 
 const HOME_MUTATION_WORDS = new Set([
@@ -310,7 +303,7 @@ class BashAnalyzer {
   readonly #diagnostics: ShellDiagnostic[] = [];
   readonly #environmentAssignments = new Set<string>();
   readonly #heredocRanges: SourceRange[] = [];
-  readonly #seenScripts = new WeakSet<object>();
+  readonly #activeScripts = new WeakSet<object>();
   readonly #activeAliases = new Set<string>();
   readonly #activeFunctions = new Set<string>();
   readonly #functionScopes: FunctionScope[] = [];
@@ -378,15 +371,19 @@ class BashAnalyzer {
   }
 
   #visitScript(script: ParsedScript, environment: Environment, context: VisitContext): void {
-    if (this.#seenScripts.has(script)) {
+    if (this.#activeScripts.has(script)) {
       return;
     }
-    this.#seenScripts.add(script);
-    const source = script.source ?? context.source;
-    for (const error of script.errors ?? []) {
-      this.#addDiagnostic('parse-error', error.message, { start: error.pos, end: error.pos });
+    this.#activeScripts.add(script);
+    try {
+      const source = script.source ?? context.source;
+      for (const error of script.errors ?? []) {
+        this.#addDiagnostic('parse-error', error.message, { start: error.pos, end: error.pos });
+      }
+      this.#visitStatements(script.commands, environment, { ...context, source });
+    } finally {
+      this.#activeScripts.delete(script);
     }
-    this.#visitStatements(script.commands, environment, { ...context, source });
   }
 
   #visitStatements(
@@ -507,8 +504,13 @@ class BashAnalyzer {
       }
       this.#visitArithmetic(node.initialize, environment, context);
       this.#visitArithmetic(node.test, environment, context);
-      this.#visitArithmetic(node.update, environment, context);
-      this.#visitNode(node.body, cloneEnvironment(environment), context);
+      const loopEnvironment = cloneEnvironment(environment);
+      visitRepeatedBindings(loopEnvironment, (iteration) => {
+        this.#visitNode(node.body, iteration, context);
+        this.#visitArithmetic(node.update, iteration, context);
+        this.#visitArithmetic(node.test, iteration, context);
+      });
+      propagateMap(environment.bindings, joinBindings([environment, loopEnvironment]), new Set());
       return true;
     }
     if (node.type === 'While') {
@@ -517,9 +519,12 @@ class BashAnalyzer {
         loopEnvironment.cwd = null;
         loopEnvironment.directoryStack = [];
       }
-      this.#visitNode(node.clause, loopEnvironment, context);
-      this.#visitNode(node.body, loopEnvironment, context);
+      visitRepeatedBindings(loopEnvironment, (iteration) => {
+        this.#visitNode(node.clause, iteration, context);
+        this.#visitNode(node.body, iteration, context);
+      });
       environment.cwd = environmentsAgree([environment, loopEnvironment]).cwd;
+      propagateMap(environment.bindings, joinBindings([environment, loopEnvironment]), new Set());
       return true;
     }
     if (node.type === 'Function') {
@@ -549,6 +554,7 @@ class BashAnalyzer {
       this.#normalizeWordMany(word, environment, context),
     );
     if (
+      node.type === 'For' &&
       name.kind === 'literal' &&
       /^[A-Za-z_][A-Za-z0-9_]*$/u.test(name.value) &&
       values.length > 0 &&
@@ -560,12 +566,16 @@ class BashAnalyzer {
         iteration.temps.delete(name.value);
         iteration.bindings.set(name.value, value);
         this.#visitNode(node.body, iteration, context);
+        propagateMap(environment.bindings, joinBindings([environment, iteration]), new Set());
       }
     } else {
       const iteration = cloneEnvironment(environment);
       iteration.temps.delete(name.value);
       iteration.bindings.delete(name.value);
-      this.#visitNode(node.body, iteration, context);
+      visitRepeatedBindings(iteration, (repeated) => {
+        this.#visitNode(node.body, repeated, context);
+      });
+      propagateMap(environment.bindings, joinBindings([environment, iteration]), new Set());
     }
   }
 
@@ -612,8 +622,13 @@ class BashAnalyzer {
   }
 
   #visitCommand(command: Command, environment: Environment, context: VisitContext): void {
+    const executionEnvironment =
+      command.prefix.length === 0 ? environment : cloneEnvironment(environment);
     const assignmentEffects = command.prefix.flatMap((assignment) => {
-      const effect = this.#inspectAssignment(assignment, environment, context);
+      const effect = this.#inspectAssignment(assignment, executionEnvironment, context);
+      if (effect !== null) {
+        applyAssignment(effect, executionEnvironment);
+      }
       return effect === null ? [] : [effect];
     });
     if (command.name === undefined) {
@@ -642,7 +657,12 @@ class BashAnalyzer {
       return;
     }
     if (name.kind === 'literal' && environment.aliases.has(name.value)) {
-      this.#invokeAlias(name.value, suffix, operandEnvironment, context, rangeOf(command));
+      this.#invokeAlias(name.value, suffix, executionEnvironment, context, rangeOf(command));
+      propagateFunctionEffects(
+        environment,
+        executionEnvironment,
+        new Set(assignmentEffects.map((effect) => effect.name)),
+      );
       return;
     }
     const invocation = this.#emitInvocation(
@@ -651,7 +671,7 @@ class BashAnalyzer {
       rangeOf(command),
       context,
       false,
-      environment,
+      executionEnvironment,
     );
     if (invocation === null) {
       return;
@@ -667,10 +687,10 @@ class BashAnalyzer {
     const inlineShellSource = this.#execution.inspectShellInput(
       invocation,
       command.redirects,
-      operandEnvironment,
+      executionEnvironment,
       context,
     );
-    this.#execution.inspectWrapper(invocation, operandEnvironment, context, inlineShellSource);
+    this.#execution.inspectWrapper(invocation, executionEnvironment, context, inlineShellSource);
     this.#applyVariableBuiltin(invocation, environment);
     if (
       assignmentEffects.some((effect) => effect.name === 'CDPATH') &&
@@ -708,7 +728,16 @@ class BashAnalyzer {
       isTrustedMktemp(assignment.value, environment);
     const exactBinding = isExactAssignmentBinding(assignment, normalizedValue, environment);
     return {
-      binding: exactBinding || assignment.name === 'CDPATH' ? normalizedValue : undefined,
+      binding:
+        normalizedValue !== undefined && (exactBinding || assignment.name === 'CDPATH')
+          ? normalizedValue
+          : dynamicBinding({
+              source: assignment.value?.text ?? assignment.name,
+              value: DYNAMIC_VALUE,
+              kind: 'dynamic',
+              range: rangeOf(assignment),
+              quoted: false,
+            }),
       name: assignment.name,
       trustedTemp,
     };
@@ -860,8 +889,22 @@ class BashAnalyzer {
     environment: Environment,
     context: VisitContext,
   ): void {
-    if (part.parameter === 'HOME' && ['=', ':='].includes(part.operator ?? '')) {
-      environment.bindings.delete('HOME');
+    if (
+      ['=', ':='].includes(part.operator ?? '') &&
+      /^[A-Za-z_][A-Za-z0-9_]*$/u.test(part.parameter)
+    ) {
+      const binding = environment.bindings.get(part.parameter);
+      if (part.parameter === 'HOME') {
+        environment.bindings.delete('HOME');
+      } else if (binding?.kind !== 'literal' || (part.operator === ':=' && binding.value === '')) {
+        environment.bindings.set(part.parameter, {
+          source: part.parameter,
+          value: DYNAMIC_VALUE,
+          kind: 'dynamic',
+          range: part.operand === undefined ? { start: 0, end: 0 } : rangeOf(part.operand),
+          quoted: false,
+        });
+      }
     }
     for (const child of part.indexParts ?? []) {
       this.#visitWordPart(child, environment, context);
@@ -894,11 +937,17 @@ class BashAnalyzer {
     }
     switch (expression.type) {
       case 'ArithmeticBinary': {
+        if (/^(?:=|\+=|-=|\*=|\/=|%=|<<=|>>=|&=|\^=|\|=)$/u.test(expression.operator)) {
+          this.#invalidateArithmeticTarget(expression.left, environment);
+        }
         this.#visitArithmetic(expression.left, environment, context);
         this.#visitArithmetic(expression.right, environment, context);
         return;
       }
       case 'ArithmeticUnary': {
+        if (expression.operator === '++' || expression.operator === '--') {
+          this.#invalidateArithmeticTarget(expression.operand, environment);
+        }
         this.#visitArithmetic(expression.operand, environment, context);
         return;
       }
@@ -927,6 +976,16 @@ class BashAnalyzer {
       default: {
         break;
       }
+    }
+  }
+
+  #invalidateArithmeticTarget(expression: ArithmeticExpression, environment: Environment): void {
+    if (!invalidateArithmeticBinding(expression, environment)) {
+      this.#addDiagnostic(
+        'dynamic-shell-source',
+        'A computed environment variable name can change how later commands execute.',
+        rangeOf(expression),
+      );
     }
   }
 
@@ -1037,6 +1096,7 @@ class BashAnalyzer {
     const args = tokens.slice(1).filter((token) => !token.startsWith('-') || token === '-');
     const home = environment.bindings.get('HOME');
     const invocation: ShellInvocation = {
+      bindings: new Map(environment.bindings),
       ...(home?.kind === 'literal' && { home: home.value }),
       cwd: environment.cwd,
       startup: joinStartup(environment.startup),
@@ -1160,6 +1220,7 @@ class BashAnalyzer {
         ...arguments_,
       ];
       const parent: ShellInvocation = {
+        bindings: new Map(environment.bindings),
         startup: joinStartup(environment.startup),
         cwd: environment.cwd,
         id: 0,
@@ -1291,6 +1352,17 @@ class BashAnalyzer {
     if (mayMutateHomeIndirectly(invocation)) {
       environment.bindings.delete('HOME');
     }
+    if (invocation.head === 'let') {
+      // The let builtin receives arithmetic source as data; the AST does not expose its destinations.
+      for (const [name, word] of environment.bindings) {
+        environment.bindings.set(name, dynamicBinding(word));
+      }
+      environment.temps.clear();
+      return;
+    }
+    if (this.#applyVariableWrite(invocation, environment)) {
+      return;
+    }
     if (invocation.head === 'unset') {
       for (const word of invocation.words.slice(1)) {
         if (/^[A-Za-z_][A-Za-z0-9_]*$/u.test(word.value)) {
@@ -1305,7 +1377,14 @@ class BashAnalyzer {
     }
     const functionScope = this.#functionScopes.at(-1);
     for (const word of invocation.words.slice(1)) {
-      const name = /^(?<name>[A-Za-z_][A-Za-z0-9_]*)/u.exec(word.source)?.groups?.['name'];
+      const name = assignedNameOf(word);
+      if (name === undefined && word.kind === 'dynamic') {
+        this.#addDiagnostic(
+          'dynamic-shell-source',
+          'A computed environment variable name can change how later commands execute.',
+          word.range,
+        );
+      }
       if (name !== undefined) {
         this.#environmentAssignments.add(name);
         if (invocation.head === 'local') {
@@ -1314,9 +1393,31 @@ class BashAnalyzer {
         const previous = environment.bindings.get(name);
         environment.temps.delete(name);
         environment.bindings.delete(name);
-        restoreExportedHome(invocation, word, previous, environment);
+        restoreDeclaredBinding(invocation, word, previous, environment);
       }
     }
+  }
+
+  #applyVariableWrite(invocation: ShellInvocation, environment: Environment): boolean {
+    const targets = variableWriteTargets(invocation);
+    if (targets === null) {
+      return false;
+    }
+    for (const target of targets) {
+      const name = assignedNameOf(target);
+      if (target.kind !== 'literal' || name !== target.value) {
+        this.#addDiagnostic(
+          'dynamic-shell-source',
+          'A computed environment variable name can change how later commands execute.',
+          target.range,
+        );
+      } else {
+        environment.temps.delete(name);
+        environment.bindings.set(name, dynamicBinding(target));
+        this.#environmentAssignments.add(name);
+      }
+    }
+    return true;
   }
 
   #findBypass(): boolean {

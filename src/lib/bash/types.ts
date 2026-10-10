@@ -41,6 +41,8 @@ interface PipelinePosition {
 }
 
 interface ShellInvocation {
+  /** Submitted shell bindings visible at this invocation; unresolved values stay dynamic. */
+  readonly bindings: ReadonlyMap<string, ShellWord>;
   readonly home?: string;
   readonly cwd: string | null;
   readonly startup: StartupState;

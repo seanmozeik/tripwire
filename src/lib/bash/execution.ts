@@ -25,6 +25,34 @@ import {
   type PrefixWrapper,
 } from './wrappers';
 
+const applyEnvWord = (
+  word: ShellWord,
+  next: ShellWord | undefined,
+  environment: Environment,
+): number => {
+  if (word.value === '-u' || word.value === '--unset') {
+    environment.bindings.delete(next?.value ?? '');
+    return 1;
+  }
+  if (['-i', '--ignore-environment', '-'].includes(word.value)) {
+    environment.bindings.clear();
+  }
+  const unset = /^--unset=(?<name>.*)$|^-u(?<shortName>.+)$/u.exec(word.value)?.groups;
+  if (unset !== undefined) {
+    environment.bindings.delete(unset['name'] ?? unset['shortName'] ?? '');
+  }
+  const name =
+    /^(?<name>[A-Za-z_][A-Za-z0-9_]*)=/u.exec(word.value)?.groups?.['name'] ??
+    /^['"]?(?<name>[A-Za-z_][A-Za-z0-9_]*)=/u.exec(word.source)?.groups?.['name'];
+  if (name !== undefined) {
+    environment.bindings.set(name, {
+      ...word,
+      value: word.kind === 'literal' ? word.value.slice(name.length + 1) : DYNAMIC_VALUE,
+    });
+  }
+  return 0;
+};
+
 const wrapperEnvironment = (
   invocation: ShellInvocation,
   environment: Environment,
@@ -32,17 +60,10 @@ const wrapperEnvironment = (
 ): Environment => {
   const child = cloneEnvironment(environment);
   if (invocation.head === 'env') {
-    for (const word of invocation.words.slice(1, start)) {
-      if (
-        ['-i', '--ignore-environment', '-', 'HOME', '--unset=HOME', '-uHOME'].includes(word.value)
-      ) {
-        child.bindings.delete('HOME');
-      }
-      if (word.value.startsWith('HOME=') || /^['"]?HOME=/u.test(word.source)) {
-        child.bindings.delete('HOME');
-        if (word.kind === 'literal') {
-          child.bindings.set('HOME', { ...word, value: word.value.slice(5) });
-        }
+    for (let index = 1; index < start; index += 1) {
+      const word = invocation.words[index];
+      if (word !== undefined) {
+        index += applyEnvWord(word, invocation.words[index + 1], child);
       }
     }
   } else if (['sudo', 'su', 'doas'].includes(invocation.head)) {
