@@ -319,8 +319,11 @@ class BashAnalyzer {
   }
 
   #visitStatement(statement: Statement, environment: Environment, context: VisitContext): void {
-    this.#visitRedirects(statement.redirects, environment, context);
-    this.#visitNode(statement.command, environment, context);
+    // Bash runs a background statement in a subshell, so its directory and
+    // variable changes never reach the commands after it.
+    const scope = statement.background === true ? cloneEnvironment(environment) : environment;
+    this.#visitRedirects(statement.redirects, scope, context);
+    this.#visitNode(statement.command, scope, context);
     if (statement.background === true) {
       environment.backgroundPidAvailable = true;
     }

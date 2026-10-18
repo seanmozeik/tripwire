@@ -13,6 +13,7 @@ This file records notable project changes. The format follows [Keep a Changelog]
 
 - Keep static variables and the working directory through `&&` lists. A command after `&&` starts from the state where the commands before it succeeded, so `cd dir && S=/path && cmd > "$S/out"` resolves the redirect. A resolved `cd` followed by `&&` no longer makes the rest of the program unresolved.
 - Treat the literal targets of `mkdir -p` as known directories for a later `cd` and for paths under them in the same command. Protected-path and destructive rules still check the resolved paths.
+- Analyze a background statement (`cmd &`) in its own scope, as Bash runs it in a subshell. `cd /tmp & rm -rf src` was checked in `/tmp`, but Bash runs `rm` in the original directory.
 
 ## [0.11.1] - 2026-09-28
 

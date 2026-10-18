@@ -265,3 +265,18 @@ bunTest.describe('directories made by mkdir -p in the same program', () => {
       .toEqual({ kind: 'deny', rule: 'redirect-env' });
   });
 });
+
+bunTest.test('background statements keep their directory and variable changes', () => {
+  bunTest
+    .expect(decideIn('cd /tmp & rm -rf src', '/work/project'))
+    .toEqual({ kind: 'deny', rule: 'destructive-outside-safe-paths' });
+  for (const command of [
+    `S=${scratch} & printf x > $S/a.txt`,
+    `mkdir -p ${scratch}/bg & cd ${scratch}/bg && printf x > a.txt`,
+  ]) {
+    bunTest.expect(decideIn(command)).toEqual(unresolvedRedirect);
+  }
+  bunTest
+    .expect(invocationCwd(`cd ${project} && printf one & printf two`, 'printf'))
+    .toEqual([project, session]);
+});
