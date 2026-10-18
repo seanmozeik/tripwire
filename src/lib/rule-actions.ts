@@ -13,6 +13,7 @@ const RuleActionsSchema = Schema.Struct({
   'defaults-write': Schema.optional(RuleActionSchema),
   'dscl-mutate': Schema.optional(RuleActionSchema),
   'git-cherry-pick': Schema.optional(RuleActionSchema),
+  'git-merge': Schema.optional(RuleActionSchema),
   'git-rebase': Schema.optional(RuleActionSchema),
   'launchctl-mutation': Schema.optional(RuleActionSchema),
   'mas-mutation': Schema.optional(RuleActionSchema),

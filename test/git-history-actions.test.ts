@@ -10,7 +10,7 @@ import { parseJsonRecord, recordField } from './support/json';
 const git = { protectedBranches: ['main'] };
 const configured: Config = {
   git,
-  ruleActions: { 'git-cherry-pick': 'allow', 'git-rebase': 'allow' },
+  ruleActions: { 'git-cherry-pick': 'allow', 'git-merge': 'allow', 'git-rebase': 'allow' },
 };
 const policies: readonly Config[] = [{ git }, configured];
 const options = { cwd: '/work/example.git.feature' };
@@ -18,6 +18,7 @@ const options = { cwd: '/work/example.git.feature' };
 bunTest.describe('configurable Git history workflow', () => {
   bunTest.test.each([
     ['git cherry-pick a..b', 'git-cherry-pick'],
+    ['git merge feature/x', 'git-merge'],
     ['git rebase --autosquash 1111111', 'git-rebase'],
   ])('%s defaults to ask', (command, rule) => {
     bunTest.expect(decideBash(command, { git }, options)).toMatchObject({ kind: 'ask', rule });
@@ -32,6 +33,10 @@ bunTest.describe('configurable Git history workflow', () => {
     'GIT_SEQUENCE_EDITOR=true git -C /work/example.git.feature rebase --autosquash 1111111',
     'GIT_EDITOR=: GIT_SEQUENCE_EDITOR= git rebase --autosquash 1111111',
     'git -c core.editor=true -c sequence.editor=: -c core.hooksPath= cherry-pick --edit a',
+    'git merge feature/x',
+    'git -C /work/example.git.feature merge feature/x',
+    'GIT_EDITOR=true git merge --no-edit feature/x',
+    'GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: git -c core.hooksPath= merge --no-edit feature/x',
   ])('allows configured workflow: %s', (command) => {
     bunTest.expect(decideBash(command, configured, options).kind).toBe('allow');
   });
@@ -39,8 +44,14 @@ bunTest.describe('configurable Git history workflow', () => {
   bunTest.test.each<RuleAction>(['allow', 'warn', 'ask', 'deny'])(
     'applies the %s action to ordinary history operations',
     (action) => {
-      for (const command of ['git cherry-pick a..b', 'git rebase --autosquash 1111111']) {
-        const config: Config = { ruleActions: { 'git-cherry-pick': action, 'git-rebase': action } };
+      for (const command of [
+        'git cherry-pick a..b',
+        'git merge feature/x',
+        'git rebase --autosquash 1111111',
+      ]) {
+        const config: Config = {
+          ruleActions: { 'git-cherry-pick': action, 'git-merge': action, 'git-rebase': action },
+        };
         bunTest.expect(decideBash(command, config, options).kind).toBe(action);
       }
     },
@@ -94,6 +105,11 @@ bunTest.describe('configurable Git history workflow', () => {
           'git -c core.hooksPath=./hooks cherry-pick a',
           'GIT_EDITOR=./x.sh git cherry-pick --continue',
           'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.editor GIT_CONFIG_VALUE_0=./x.sh git rebase --continue',
+          'GIT_EDITOR=vim git merge --continue',
+          'GIT_EDITOR=./x.sh git merge --abort',
+          'GIT_EDITOR=./x.sh git merge --no-edit feature/x',
+          'git -c core.hooksPath=./hooks merge feature/x',
+          'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=pull.twohead GIT_CONFIG_VALUE_0=custom git merge feature/x',
         ])('requires approval for execution overrides: %s', (command) => {
           bunTest
             .expect(decideBash(command, policy, options))
@@ -134,21 +150,105 @@ bunTest.describe('configurable Git history workflow', () => {
             bunTest.expect(decision.rule).toBe('git-rebase');
           }
         });
+
+        bunTest.test.each([
+          'git merge -e feature/x',
+          'git merge --edit feature/x',
+          'git merge --ed feature/x',
+          'git merge --no-edit -e feature/x',
+          'git merge -ne feature/x',
+          'git merge -m "Merge feature/x" -e feature/x',
+          'GIT_EDITOR=true git merge -e feature/x',
+          'GIT_MERGE_AUTOEDIT=yes git merge feature/x',
+          'GIT_MERGE_AUTOEDIT=1 git merge feature/x',
+          'GIT_MERGE_AUTOEDIT=$AUTOEDIT git merge feature/x',
+        ])('denies merges that open an editor: %s', (command) => {
+          bunTest
+            .expect(decideBash(command, policy, options))
+            .toMatchObject({ kind: 'deny', rule: 'git-merge-edit' });
+        });
+
+        bunTest.test.each([
+          'git merge -s custom feature/x',
+          'git merge --strategy custom feature/x',
+          'git merge --strategy=custom feature/x',
+          'git merge -scustom feature/x',
+          'git merge -qs custom feature/x',
+          'git merge -s ort -s custom feature/x',
+          'git -c pull.twohead=custom merge feature/x',
+          "git -c 'pull.octopus=octopus custom' merge feature/x feature/y",
+          'git --config-env=pull.twohead=UNRESOLVED_STRATEGY merge feature/x',
+        ])('requires approval for external merge strategies: %s', (command) => {
+          bunTest
+            .expect(decideBash(command, policy, options))
+            .toMatchObject({ kind: 'ask', rule: 'git-merge-strategy' });
+        });
+
+        bunTest.test.each([
+          "git -c 'merge.example.driver=./merge-tool %O %A %B' merge feature/x",
+          'git -c merge.example.driver=true merge feature/x',
+          'git -c merge.Example.Driver=true merge --no-edit feature/x',
+          'DRIVER=./merge-tool git --config-env=merge.example.driver=DRIVER merge feature/x',
+        ])('requires approval for submitted merge drivers: %s', (command) => {
+          bunTest
+            .expect(decideBash(command, policy, options))
+            .toMatchObject({ kind: 'ask', rule: 'git-merge-driver' });
+        });
+
+        bunTest.test.each([
+          'git merge feature/x',
+          'git merge main',
+          'git merge --no-ff --no-edit feature/x',
+          'git merge -e --no-edit feature/x',
+          'git merge --no-edit -m "Merge feature/x" feature/x',
+          'git merge -m "-s custom" feature/x',
+          'GIT_MERGE_AUTOEDIT=no git merge feature/x',
+          'GIT_MERGE_AUTOEDIT=yes git merge -m "Merge feature/x" feature/x',
+          'GIT_MERGE_AUTOEDIT=yes git merge --no-edit feature/x',
+          'git merge -s ort -X theirs feature/x',
+          'git merge --strategy=recursive feature/x',
+          'git merge -s octopus feature/x feature/y',
+          'git -c pull.twohead=ort merge feature/x',
+          "git -c 'pull.octopus=octopus resolve' merge feature/x feature/y",
+          'git -c pull.twohead=custom merge -s ort feature/x',
+          'git -c merge.renormalize=true merge feature/x',
+        ])('uses workflow policy for ordinary merges: %s', (command) => {
+          const decision = decideBash(command, policy, options);
+          bunTest.expect(decision.kind).toBe(policy.ruleActions === undefined ? 'ask' : 'allow');
+          if (policy.ruleActions === undefined) {
+            bunTest.expect(decision.rule).toBe('git-merge');
+          }
+        });
+
+        bunTest.test.each([
+          'git merge --abort',
+          'git merge --quit',
+          'git merge --continue',
+          'GIT_EDITOR=true git merge --continue',
+        ])('allows merge state operations: %s', (command) => {
+          bunTest.expect(decideBash(command, policy, options).kind).toBe('allow');
+        });
       },
     );
   }
 
-  bunTest.test('an allowed cherry-pick does not skip a later protected push', () => {
-    bunTest
-      .expect(decideBash('git cherry-pick a..b; git push origin main', configured, options))
-      .toMatchObject({ kind: 'deny', rule: 'git-push-protected' });
-  });
+  bunTest.test.each(['git cherry-pick a..b', 'git merge feature/x'])(
+    'an allowed %s does not skip a later protected push',
+    (command) => {
+      bunTest
+        .expect(decideBash(`${command}; git push origin main`, configured, options))
+        .toMatchObject({ kind: 'deny', rule: 'git-push-protected' });
+    },
+  );
 
   bunTest.test.each([
     ['git push origin main', 'deny', 'git-push-protected'],
     ['git rebase --exec ./check.sh 1111111', 'ask', 'git-rebase-exec'],
     ['git rebase -i HEAD~3', 'deny', 'git-rebase-interactive'],
     ['git rebase --update-refs 1111111', 'ask', 'git-rebase-update-refs'],
+    ['git merge -e feature/x', 'deny', 'git-merge-edit'],
+    ['git merge -s custom feature/x', 'ask', 'git-merge-strategy'],
+    ['git -c merge.example.driver=true merge feature/x', 'ask', 'git-merge-driver'],
   ])('a configured warning does not hide later safety checks: %s', (later, kind, rule) => {
     const policy: Config = { git, ruleActions: { 'git-cherry-pick': 'warn' } };
     bunTest
@@ -175,6 +275,12 @@ bunTest.describe('configurable Git history workflow', () => {
     bunTest
       .expect(decideBash("ssh example-host 'git rebase origin/main'", configured, options))
       .toMatchObject({ kind: 'ask', rule: 'git-rebase-onto-protected' });
+    bunTest
+      .expect(decideBash("ssh example-host 'git merge feature/x'", configured, options).kind)
+      .toBe('allow');
+    bunTest
+      .expect(decideBash("ssh example-host 'git merge -s custom feature/x'", configured, options))
+      .toMatchObject({ kind: 'ask', rule: 'git-merge-strategy' });
   });
 });
 
@@ -194,6 +300,11 @@ bunTest.test(
           'git rebase -i HEAD~3',
           'git rebase --exec ./scripts/check.sh 1111111',
           'git rebase --update-refs --onto ordinary-base 1111111',
+          'git merge feature/x',
+          'GIT_EDITOR=true git merge --no-edit feature/x',
+          'git merge -e feature/x',
+          'git merge -s custom feature/x',
+          'git -c merge.example.driver=./merge-tool merge feature/x',
         ]) {
           const decision = decideBash(command, policy, options);
           const result = Bun.spawnSync(

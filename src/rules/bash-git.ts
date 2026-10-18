@@ -2,6 +2,7 @@ import type { ShellInvocation, ShellProgram } from '../lib/bash';
 import type { GitConfig } from '../lib/config';
 import { type Decision, allow, ask, deny, merge, warn } from '../lib/decision';
 import { applyRuleAction, type RuleActions } from '../lib/rule-actions';
+import { parseMergeArguments } from './git-merge-options';
 import { parseRebaseArguments } from './git-rebase-options';
 
 // Git policy separates read operations from destructive worktree, history,
@@ -406,9 +407,68 @@ const handleCherryPick: Handler = ({ subArgs, invocation }) => {
   );
 };
 
-const handleMerge: Handler = ({ subArgs }) => {
-  if (has(subArgs, '--abort', '--continue', '--quit')) {
+// Git runs these strategies itself. Any other name runs an external
+// `git-merge-<name>` program found on the exec path or PATH.
+const BUILT_IN_MERGE_STRATEGIES: ReadonlySet<string> = new Set([
+  'ort',
+  'recursive',
+  'resolve',
+  'octopus',
+  'ours',
+  'subtree',
+]);
+
+// `git merge` reads `pull.twohead` and `pull.octopus` as its default
+// Strategy lists when no `-s` option is given.
+const MERGE_STRATEGY_CONFIG_KEYS = ['pull.twohead', 'pull.octopus'] as const;
+
+const mergeAutoEdit = (invocation: GitInvocation): boolean => {
+  const word = invocation.bindings.get('GIT_MERGE_AUTOEDIT');
+  return (
+    word !== undefined &&
+    (word.kind !== 'literal' || ['true', 'yes', 'on', '1'].includes(word.value.toLowerCase()))
+  );
+};
+
+const handleMerge: Handler = ({ subArgs, invocation }) => {
+  const args = parseMergeArguments(subArgs);
+  if (args.edit ?? (!args.message && mergeAutoEdit(invocation))) {
+    return deny(
+      'git-merge-edit',
+      '`git merge -e / --edit` and `GIT_MERGE_AUTOEDIT` open an editor for the merge message, which hangs a non-interactive agent. Use `--no-edit`, or pass the message with `-m "<message>"`.',
+    );
+  }
+  const override = editorOverride(invocation);
+  if (override !== null) {
+    return override;
+  }
+  if (args.operation !== undefined) {
     return allow('bash-git');
+  }
+  const strategies: readonly (string | null)[] =
+    args.strategies.length > 0
+      ? args.strategies
+      : MERGE_STRATEGY_CONFIG_KEYS.flatMap((key) => {
+          if (!invocation.configOverrides.has(key)) {
+            return [];
+          }
+          return invocation.configOverrides.get(key)?.split(' ') ?? [null];
+        });
+  const external = strategies.find(
+    (strategy) => strategy === null || !BUILT_IN_MERGE_STRATEGIES.has(strategy),
+  );
+  if (external !== undefined) {
+    const strategy = external === null ? 'from an unresolved environment value' : `\`${external}\``;
+    return ask(
+      'git-merge-strategy',
+      `Merge strategy ${strategy} is not built into Git, so Git runs an external \`git-merge-<strategy>\` program that Tripwire does not inspect. Use a built-in strategy such as \`ort\`, or confirm the program.`,
+    );
+  }
+  if ([...invocation.configOverrides.keys()].some((key) => /^merge\..+\.driver$/u.test(key))) {
+    return ask(
+      'git-merge-driver',
+      'A submitted `merge.<driver>.driver` override runs an uninspected command for each path that selects the driver. Merge without the override, or confirm the command.',
+    );
   }
   return ask('git-merge', '`git merge <branch>` may create merge conflicts. Confirm intent.');
 };

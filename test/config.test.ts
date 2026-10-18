@@ -131,6 +131,7 @@ bunTest.describe('loadConfigResult', () => {
           'no-verify': 'ask',
           sudo: 'warn',
           'git-cherry-pick': 'allow',
+          'git-merge': 'allow',
           'git-rebase': 'allow',
         },
       }),
@@ -145,6 +146,7 @@ bunTest.describe('loadConfigResult', () => {
           'no-verify': 'ask',
           sudo: 'warn',
           'git-cherry-pick': 'allow',
+          'git-merge': 'allow',
           'git-rebase': 'allow',
         });
     }
@@ -159,6 +161,9 @@ bunTest.describe('loadConfigResult', () => {
       'git-rebase-exec',
       'git-rebase-update-refs',
       'git-editor-override',
+      'git-merge-edit',
+      'git-merge-strategy',
+      'git-merge-driver',
     ]) {
       await writeFile(configPath, JSON.stringify({ ruleActions: { [rule]: 'allow' } }));
       const result = await Effect.runPromise(loadConfigResult(configPath));
