@@ -24,7 +24,13 @@ import {
   variableWriteTargets,
   visitRepeatedBindings,
 } from './bindings';
-import { changeDirectory } from './cwd';
+import { changeDirectory, recordCreatedDirectories } from './cwd';
+import {
+  environmentsAgree,
+  propagateFunctionEffects,
+  propagateMap,
+  replaceEnvironment,
+} from './environment-merge';
 import { ExecutionInspector } from './execution';
 import { joinStartup } from './startup';
 import type {
@@ -79,99 +85,6 @@ const rangeOf = (node: { readonly pos: number; readonly end: number }): SourceRa
 const basename = (value: string): string => {
   const index = value.lastIndexOf('/');
   return index === -1 ? value : value.slice(index + 1);
-};
-
-const mapsAgree = <Value>(maps: readonly ReadonlyMap<string, Value>[]): Map<string, Value> => {
-  const [first, ...rest] = maps;
-  const joined = new Map<string, Value>();
-  if (first === undefined) {
-    return joined;
-  }
-  for (const [name, value] of first) {
-    if (rest.every((map) => map.get(name) === value)) {
-      joined.set(name, value);
-    }
-  }
-  return joined;
-};
-
-const environmentsAgree = (environments: readonly Environment[]): Environment => {
-  const [first, ...rest] = environments;
-  if (first === undefined) {
-    return emptyEnvironment();
-  }
-  return {
-    startup: joinStartup(...environments.map((environment) => environment.startup)),
-    cwd: rest.every((environment) => environment.cwd === first.cwd) ? first.cwd : null,
-    directoryStack: rest.every(
-      (environment) =>
-        JSON.stringify(environment.directoryStack) === JSON.stringify(first.directoryStack),
-    )
-      ? [...first.directoryStack]
-      : [],
-    aliases: mapsAgree([first.aliases, ...rest.map((environment) => environment.aliases)]),
-    backgroundPidAvailable: [first, ...rest].every(
-      (environment) => environment.backgroundPidAvailable,
-    ),
-    bindings: joinBindings(environments),
-    functions: mapsAgree([first.functions, ...rest.map((environment) => environment.functions)]),
-    temps: mapsAgree([first.temps, ...rest.map((environment) => environment.temps)]),
-  };
-};
-
-const replaceEnvironment = (target: Environment, source: Environment): void => {
-  target.startup = joinStartup(source.startup);
-  target.cwd = source.cwd;
-  target.directoryStack = [...source.directoryStack];
-  target.backgroundPidAvailable = source.backgroundPidAvailable;
-  target.aliases.clear();
-  for (const [name, value] of source.aliases) {
-    target.aliases.set(name, value);
-  }
-  target.bindings.clear();
-  for (const [name, value] of source.bindings) {
-    target.bindings.set(name, value);
-  }
-  target.functions.clear();
-  for (const [name, value] of source.functions) {
-    target.functions.set(name, value);
-  }
-  target.temps.clear();
-  for (const [name, value] of source.temps) {
-    target.temps.set(name, value);
-  }
-};
-
-const propagateMap = <Value>(
-  target: Map<string, Value>,
-  source: ReadonlyMap<string, Value>,
-  excluded: ReadonlySet<string>,
-): void => {
-  for (const name of target.keys()) {
-    if (!excluded.has(name) && !source.has(name)) {
-      target.delete(name);
-    }
-  }
-  for (const [name, value] of source) {
-    if (!excluded.has(name)) {
-      target.set(name, value);
-    }
-  }
-};
-
-const propagateFunctionEffects = (
-  target: Environment,
-  source: Environment,
-  excludedVariables: ReadonlySet<string>,
-): void => {
-  propagateMap(target.aliases, source.aliases, new Set());
-  propagateMap(target.functions, source.functions, new Set());
-  propagateMap(target.bindings, source.bindings, excludedVariables);
-  propagateMap(target.temps, source.temps, excludedVariables);
-  target.startup = joinStartup(source.startup);
-  target.cwd = source.cwd;
-  target.directoryStack = [...source.directoryStack];
-  target.backgroundPidAvailable = source.backgroundPidAvailable;
 };
 
 const applyAssignment = (effect: AssignmentEffect, environment: Environment): void => {
@@ -237,6 +150,15 @@ const mayChangeDirectory = (node: Node, environment: Environment): boolean => {
   }
   return false;
 };
+
+// A plain cd, pushd, or popd that no function or alias shadows.
+const isDirectoryChange = (node: Node, environment: Environment): boolean =>
+  node.type === 'Command' &&
+  node.name !== undefined &&
+  wordIsStatic(node.name) &&
+  ['cd', 'pushd', 'popd'].includes(node.name.value) &&
+  !environment.functions.has(node.name.value) &&
+  !environment.aliases.has(node.name.value);
 
 const mayMutateHomeIndirectly = (invocation: ShellInvocation): boolean => {
   if (['source', '.', 'eval', 'read', 'getopts', 'let'].includes(invocation.head)) {
@@ -458,16 +380,38 @@ class BashAnalyzer {
     context: VisitContext,
   ): void {
     const working = cloneEnvironment(environment);
+    // Every state where the list can stop, and every state where it has succeeded so far.
     let outgoing: Environment | undefined;
+    let succeeded: Environment | undefined;
     for (const [index, command] of node.commands.entries()) {
-      const branch =
-        node.operators[index - 1] === '||' ? environmentsAgree([environment, working]) : working;
+      const operator = node.operators[index - 1];
+      let branch = working;
+      if (operator === '||') {
+        branch = environmentsAgree([environment, working]);
+      } else if (operator === '&&' && succeeded !== undefined) {
+        // A command after && runs only when the list before it succeeded.
+        branch = cloneEnvironment(succeeded);
+      }
+      const directoryChange = isDirectoryChange(command, branch);
       this.#visitNode(command, branch, context);
       const exits =
         command.type === 'Command' && ['exit', 'return'].includes(command.name?.value ?? '');
-      if (!exits) {
-        outgoing =
-          outgoing === undefined ? cloneEnvironment(branch) : environmentsAgree([outgoing, branch]);
+      if (exits) {
+        succeeded = operator === '||' ? succeeded : undefined;
+      } else {
+        succeeded =
+          operator === '||' && succeeded !== undefined
+            ? environmentsAgree([succeeded, branch])
+            : cloneEnvironment(branch);
+        // The analysis already assumes that a resolved directory change
+        // succeeds, so a following && command always runs after it.
+        const continues = directoryChange && branch.cwd !== null && node.operators[index] === '&&';
+        if (!continues) {
+          outgoing =
+            outgoing === undefined
+              ? cloneEnvironment(branch)
+              : environmentsAgree([outgoing, branch]);
+        }
       }
       replaceEnvironment(working, outgoing ?? branch);
     }
@@ -699,6 +643,7 @@ class BashAnalyzer {
       environment.cwd = null;
     }
     changeDirectory(invocation, environment);
+    recordCreatedDirectories(invocation, environment);
   }
 
   #inspectAssignment(

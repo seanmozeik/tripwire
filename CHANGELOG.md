@@ -4,6 +4,16 @@ This file records notable project changes. The format follows [Keep a Changelog]
 
 ## [Unreleased]
 
+### Added
+
+- Load `require('<package>/<file>.json')` in `node -e` and `node -p` as data. Tripwire resolves the specifier from the startup directory through the package's own exports or `node_modules`, the same way Node does. Code modules, extension fallbacks, links to other file types, and exports that map to a different file stay denied. Other runtimes keep the previous policy, because they can remap specifiers.
+- Support the Python `csv` module: readers on files, standard input, or data, and writers on files or standard output. Rows are data and cannot become paths or calls. `open()` accepts `newline=''`.
+
+### Fixed
+
+- Keep static variables and the working directory through `&&` lists. A command after `&&` starts from the state where the commands before it succeeded, so `cd dir && S=/path && cmd > "$S/out"` resolves the redirect. A resolved `cd` followed by `&&` no longer makes the rest of the program unresolved.
+- Treat the literal targets of `mkdir -p` as known directories for a later `cd` and for paths under them in the same command. Protected-path and destructive rules still check the resolved paths.
+
 ## [0.11.1] - 2026-09-28
 
 ### Fixed

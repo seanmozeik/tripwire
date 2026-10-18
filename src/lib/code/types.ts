@@ -17,6 +17,12 @@ type CodeEffect =
       readonly range: CodeRange;
     }
   | {
+      /** A bare `require` specifier for package JSON, resolved from the interpreter cwd. */
+      readonly kind: 'json-package';
+      readonly specifier: string;
+      readonly range: CodeRange;
+    }
+  | {
       readonly kind: 'transfer';
       readonly command: 'mv' | 'cp' | 'ln';
       readonly sources: readonly string[];

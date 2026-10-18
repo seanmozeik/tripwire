@@ -18,6 +18,9 @@ const changedPaths = (operation: CodeOperation): readonly string[] | null => {
       ? [...operation.sources, operation.destination]
       : [operation.destination];
   }
+  if (operation.kind === 'json-package') {
+    return [];
+  }
   return operation.kind === 'read' || operation.kind === 'json-module' ? [] : [operation.path];
 };
 

@@ -1,4 +1,4 @@
-import { statSync } from 'node:fs';
+import { lstatSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import type { ShellInvocation, ShellWord } from './types';
@@ -12,7 +12,16 @@ const resolveShellPath = (target: string, cwd: string | null): string | null => 
   return cwd === null ? null : path.resolve(cwd, target);
 };
 
-const resolveDirectory = (target: ShellWord | undefined, cwd: string | null): string | null => {
+const isCreatedDirectory = (target: string, created: ReadonlySet<string>): boolean =>
+  [...created].some((directory) => directory === target || directory.startsWith(`${target}/`));
+
+// A directory that exists, or that an earlier `mkdir -p` in the same program
+// made, is a known destination. An existing non-directory is never one.
+const resolveDirectory = (
+  target: ShellWord | undefined,
+  cwd: string | null,
+  created: ReadonlySet<string>,
+): string | null => {
   if (target?.kind !== 'literal' || target.value === '-' || target.value === '') {
     return null;
   }
@@ -20,11 +29,84 @@ const resolveDirectory = (target: ShellWord | undefined, cwd: string | null): st
   if (!path.isAbsolute(expanded) && cwd === null) {
     return null;
   }
-  try {
-    const resolved = resolveShellPath(expanded, cwd);
-    return resolved !== null && statSync(resolved).isDirectory() ? resolved : null;
-  } catch {
+  const resolved = resolveShellPath(expanded, cwd);
+  if (resolved === null) {
     return null;
+  }
+  try {
+    return statSync(resolved).isDirectory() ? resolved : null;
+  } catch {
+    return isCreatedDirectory(resolved, created) ? resolved : null;
+  }
+};
+
+// `mkdir -p` fails when an existing component is a file or a dangling link.
+const canCreateDirectory = (target: string): boolean => {
+  let current = target;
+  for (;;) {
+    try {
+      return statSync(current).isDirectory();
+    } catch (error) {
+      if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') {
+        return false;
+      }
+    }
+    try {
+      lstatSync(current);
+      return false;
+    } catch {
+      // The component is missing. Check its parent.
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return false;
+    }
+    current = parent;
+  }
+};
+
+// Returns the operands of `mkdir -p`, or null for any other or unrecognized form.
+const mkdirParentOperands = (invocation: ShellInvocation): readonly ShellWord[] | null => {
+  let parents = false;
+  const operands: ShellWord[] = [];
+  const words = invocation.words.slice(1);
+  for (let index = 0; index < words.length; index += 1) {
+    const word = words[index];
+    if (word?.kind !== 'literal') {
+      return null;
+    }
+    const { value } = word;
+    if (value === '--') {
+      operands.push(...words.slice(index + 1));
+      break;
+    }
+    if (value === '-m' || value === '--mode') {
+      index += 1;
+    } else if (value === '--parents' || /^-[pv]+$/u.test(value)) {
+      parents ||= value === '--parents' || value.includes('p');
+    } else if (value !== '--verbose' && !value.startsWith('--mode=')) {
+      if (value.startsWith('-')) {
+        return null;
+      }
+      operands.push(word);
+    }
+  }
+  return parents ? operands : null;
+};
+
+// Record literal `mkdir -p` targets so a later `cd` into one resolves. The
+// policy rules still classify every path under the resulting working directory.
+const recordCreatedDirectories = (invocation: ShellInvocation, environment: Environment): void => {
+  if (invocation.head !== 'mkdir' || invocation.synthetic) {
+    return;
+  }
+  for (const operand of mkdirParentOperands(invocation) ?? []) {
+    if (operand.kind === 'literal' && !operand.value.split('/').includes('..')) {
+      const target = resolveShellPath(operand.value, invocation.cwd);
+      if (target !== null && canCreateDirectory(target)) {
+        environment.createdDirectories.add(target);
+      }
+    }
   }
 };
 
@@ -67,7 +149,9 @@ const changeDirectory = (invocation: ShellInvocation, environment: Environment):
     const target = args[0] ?? environment.bindings.get('HOME');
     const searched = target !== undefined && usesCdpath(target, environment);
     environment.cwd =
-      args.length <= 1 && !searched ? resolveDirectory(target, environment.cwd) : null;
+      args.length <= 1 && !searched
+        ? resolveDirectory(target, environment.cwd, environment.createdDirectories)
+        : null;
   }
   if (environment.cwd === null) {
     environment.directoryStack = [];
@@ -75,4 +159,4 @@ const changeDirectory = (invocation: ShellInvocation, environment: Environment):
   environment.bindings.delete('PWD');
 };
 
-export { changeDirectory, resolveDirectory, resolveShellPath };
+export { changeDirectory, recordCreatedDirectories, resolveDirectory, resolveShellPath };

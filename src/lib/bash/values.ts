@@ -15,6 +15,8 @@ interface Environment {
   cwd: string | null;
   startup: StartupState;
   directoryStack: (string | null)[];
+  /** Absolute literal `mkdir -p` targets made earlier on this path of the program. */
+  readonly createdDirectories: Set<string>;
   readonly aliases: Map<string, string>;
   backgroundPidAvailable: boolean;
   readonly bindings: Map<string, ShellWord>;
@@ -42,6 +44,7 @@ const emptyEnvironment = (): Environment => ({
   cwd: null,
   startup: { kind: 'direct' },
   directoryStack: [],
+  createdDirectories: new Set(),
   aliases: new Map(),
   backgroundPidAvailable: false,
   bindings: new Map(),
@@ -53,6 +56,7 @@ const cloneEnvironment = (environment: Environment): Environment => ({
   cwd: environment.cwd,
   startup: joinStartup(environment.startup),
   directoryStack: [...environment.directoryStack],
+  createdDirectories: new Set(environment.createdDirectories),
   aliases: new Map(environment.aliases),
   backgroundPidAvailable: environment.backgroundPidAvailable,
   bindings: new Map(environment.bindings),

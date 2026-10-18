@@ -22,11 +22,57 @@ const diffSignature: CallSignature = {
     lineterm: { kind: 'string', value: '\n' },
   },
 };
+// CSV format parameters are plain values. A dialect must also be inert data, so
+// a Dialect subclass with uninspected methods cannot pass.
+const csvSignature = (parameters: readonly string[]): CallSignature => ({
+  parameters,
+  defaults: Object.fromEntries(parameters.slice(1).map((name) => [name, data])),
+  options: Object.fromEntries(
+    [
+      'delimiter',
+      'doublequote',
+      'escapechar',
+      'lineterminator',
+      'quotechar',
+      'quoting',
+      'skipinitialspace',
+      'strict',
+    ].map((name) => [name, inert]),
+  ),
+});
 const pythonSignatures: Readonly<Record<string, CallSignature>> = {
   'glob.glob': { parameters: ['pathname'], options: { recursive: inert } },
   'glob.iglob': { parameters: ['pathname'], options: { recursive: inert } },
   'difflib.unified_diff': diffSignature,
   'difflib.context_diff': diffSignature,
+  'csv.reader': csvSignature(['csvfile', 'dialect']),
+  'csv.DictReader': csvSignature(['f', 'fieldnames', 'restkey', 'restval', 'dialect']),
+  'csv.writer': csvSignature(['csvfile', 'dialect']),
+  'csv.DictWriter': csvSignature(['f', 'fieldnames', 'restval', 'extrasaction', 'dialect']),
+};
+
+const isStream = (value: Value | undefined, names: readonly string[]): boolean =>
+  value?.kind === 'file' || (value?.kind === 'symbol' && names.includes(value.name));
+
+// CSV readers decode rows into inert data. Writers serialize inert rows to a
+// file handle whose open() call was already checked, or to standard output.
+const csvCall = (name: string, args: readonly Value[]): Value | null => {
+  const [stream, ...options] = args;
+  if (name === 'csv.reader' || name === 'csv.DictReader') {
+    if (stream === undefined) {
+      return failInspection('CSV input needs a known file, stdin, or inert lines.');
+    }
+    requireData(isStream(stream, ['sys.stdin']) ? options : args);
+    return data;
+  }
+  if (name === 'csv.writer' || name === 'csv.DictWriter') {
+    if (!isStream(stream, ['sys.stdout', 'sys.stderr'])) {
+      return failInspection('CSV output needs a known file handle or standard output.');
+    }
+    requireData(options);
+    return { kind: 'builtin', name: 'csv-writer' };
+  }
+  return null;
 };
 
 const pythonLibraryCall = (
@@ -98,7 +144,7 @@ const pythonLibraryCall = (
     requireData(args);
     return data;
   }
-  return null;
+  return csvCall(name, args);
 };
 
 export { pythonLibraryCall, pythonSignatures };

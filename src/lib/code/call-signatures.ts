@@ -12,7 +12,8 @@ const signatures: Readonly<Record<string, CallSignature>> = {
   ...pythonSignatures,
   'difflib.SequenceMatcher': { parameters: ['isjunk', 'a', 'b'], options: { autojunk: inert } },
   ...zipSignatures,
-  open: { parameters: ['file', 'mode'], options: { encoding: validateCodec } },
+  // The csv module documents newline='' for every file it reads or writes.
+  open: { parameters: ['file', 'mode'], options: { encoding: validateCodec, newline: inert } },
   'json.dump': { parameters: ['obj', 'fp'], options: { indent: inert } },
   'json.dumps': {
     parameters: ['obj'],

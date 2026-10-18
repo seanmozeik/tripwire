@@ -6,6 +6,7 @@ import { UNKNOWN_STARTUP } from '../lib/bash/startup';
 import { skipHeadRenamingPrefix } from '../lib/bash/wrappers';
 import { analyzeCode } from '../lib/code/analyze';
 import { interpreterInput } from '../lib/code/carriers';
+import { resolvePackageJsonModule } from '../lib/code/package-json-module';
 import type { CodeLanguage, CodeOperation } from '../lib/code/types';
 import type { SafePathsConfig } from '../lib/config';
 import { allow, deny, merge, type Decision } from '../lib/decision';
@@ -152,6 +153,19 @@ const safeDeletion = (target: string, policy: CodePolicy): boolean => {
 const quoteArgument = (argument: string): string =>
   `'${argument.replaceAll("'", String.raw`'\''`)}'`;
 
+// Node picks the loader from the real file name, so only a regular .json file loads as data.
+const jsonModuleDecision = (target: string): Decision => {
+  try {
+    const resolved = realpathSync(target);
+    if (path.extname(resolved) !== '.json' || !lstatSync(resolved).isFile()) {
+      return codeDeny('JSON imports must resolve to a regular .json file.');
+    }
+    return merge([readProtect({ file_path: target }), readProtect({ file_path: resolved })]);
+  } catch {
+    return codeDeny('JSON import target could not be verified.');
+  }
+};
+
 const operationDecision = (operation: CodeOperation, originalPolicy: CodePolicy): Decision => {
   const policy = { ...originalPolicy, cwd: operation.cwd };
   if (policy.cwd !== null && policy.cwd !== originalPolicy.cwd) {
@@ -177,21 +191,26 @@ const operationDecision = (operation: CodeOperation, originalPolicy: CodePolicy)
       operation.cwd,
     );
   }
+  if (operation.kind === 'json-package') {
+    // Node resolves inline-source requires from the interpreter's startup cwd,
+    // even after process.chdir.
+    const target =
+      originalPolicy.cwd === null
+        ? null
+        : resolvePackageJsonModule(operation.specifier, originalPolicy.cwd);
+    return target === null
+      ? codeDeny(
+          `Package JSON ${JSON.stringify(operation.specifier)} does not resolve to one local file through node_modules or an exact package export.`,
+        )
+      : jsonModuleDecision(target);
+  }
   if (policy.cwd === null && !path.isAbsolute(operation.path)) {
     return codeDeny('The operation has an unresolved working directory.');
   }
   const target =
     policy.cwd === null ? path.resolve(operation.path) : path.resolve(policy.cwd, operation.path);
   if (operation.kind === 'json-module') {
-    try {
-      const resolved = realpathSync(target);
-      if (path.extname(resolved) !== '.json' || !lstatSync(resolved).isFile()) {
-        return codeDeny('JSON imports must resolve to a regular .json file.');
-      }
-      return merge([readProtect({ file_path: target }), readProtect({ file_path: resolved })]);
-    } catch {
-      return codeDeny('JSON import target could not be verified.');
-    }
+    return jsonModuleDecision(target);
   }
   if (
     (operation.kind === 'delete' || operation.kind === 'truncate') &&

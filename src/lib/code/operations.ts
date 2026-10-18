@@ -16,7 +16,7 @@ const recordOperation = (context: OperationContext, ...operations: readonly Code
       let paths: readonly string[] = [];
       if (operation.kind === 'transfer') {
         paths = [...operation.sources, operation.destination];
-      } else if (operation.kind !== 'process') {
+      } else if (operation.kind !== 'process' && operation.kind !== 'json-package') {
         paths = [operation.path];
       }
       if (paths.length === 0 || paths.some((target) => !path.isAbsolute(target))) {

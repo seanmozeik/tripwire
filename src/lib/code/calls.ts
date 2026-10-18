@@ -8,6 +8,7 @@ import { callbackCall } from './callbacks';
 import { data, dataCall, dataMethod, isData, requireData, text } from './data';
 import { validateReadOptions, validateWriteOptions } from './file-options';
 import { recordOperation, recordProcess, type OperationContext } from './operations';
+import { isPackageJsonSpecifier } from './package-json-module';
 import { pythonLibraryCall } from './python-library';
 import { resolvePathCall } from './resolved-paths';
 import { failInspection } from './syntax';
@@ -406,6 +407,11 @@ const effectCall = (name: string, args: readonly Value[], context: CallContext):
     const target = valueString(args[0]);
     if (args.length === 1 && /^(?:\.{1,2}\/|\/).*\.json$/u.test(target)) {
       recordOperation(context, { kind: 'json-module', path: target, range: context.range });
+      return data;
+    }
+    // Only Node is modeled: Bun and tsx can remap bare specifiers through tsconfig paths.
+    if (args.length === 1 && context.language === 'javascript' && isPackageJsonSpecifier(target)) {
+      recordOperation(context, { kind: 'json-package', specifier: target, range: context.range });
       return data;
     }
     return symbol(moduleName(target, context.language));

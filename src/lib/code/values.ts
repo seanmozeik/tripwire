@@ -49,6 +49,7 @@ const PYTHON_MODULES = new Set([
   'pathlib',
   'subprocess',
   'json',
+  'csv',
   'math',
   'sys',
   're',

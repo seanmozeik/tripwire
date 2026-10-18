@@ -141,7 +141,11 @@ const optionValue = (
   }
   cursor.args.options.push({ name: flag ?? '', value: target.value });
   if (spec.cwdOptions?.includes(flag ?? '') === true) {
-    cursor.environment.cwd = resolveDirectory(target, cursor.environment.cwd);
+    cursor.environment.cwd = resolveDirectory(
+      target,
+      cursor.environment.cwd,
+      cursor.environment.createdDirectories,
+    );
   }
   if (!word.value.includes('=')) {
     cursor.index += 1;
@@ -207,7 +211,11 @@ const wrapperOperand = (
   cursor.args.operands.push(word.value);
   if (cursor.operands > 0) {
     if (spec.cwdOperand === (spec.operands ?? 0) - cursor.operands) {
-      cursor.environment.cwd = resolveDirectory(word, cursor.environment.cwd);
+      cursor.environment.cwd = resolveDirectory(
+        word,
+        cursor.environment.cwd,
+        cursor.environment.createdDirectories,
+      );
     }
     cursor.operands -= 1;
     return undefined;
