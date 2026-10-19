@@ -6,9 +6,10 @@ import {
   type ArithmeticExpression,
   type AssignmentPrefix,
   type Command,
-  type Node,
+  type CommandArgument,
+  type SyntaxNode,
   type ParsedScript,
-  type Redirect,
+  type Redirection,
   type Statement,
   type TestExpression,
   type Word,
@@ -33,6 +34,12 @@ import {
 } from './environment-merge';
 import { ExecutionInspector } from './execution';
 import { joinStartup } from './startup';
+import {
+  isDirectoryChange,
+  mayChangeDirectory,
+  mayChangeHome,
+  mayMutateHomeIndirectly,
+} from './state-effects';
 import type {
   BashAnalysisOptions,
   PipelinePosition,
@@ -84,12 +91,14 @@ const rangeOf = (node: { readonly pos: number; readonly end: number }): SourceRa
 
 const basename = (value: string): string => {
   const index = value.lastIndexOf('/');
+
   return index === -1 ? value : value.slice(index + 1);
 };
 
 const applyAssignment = (effect: AssignmentEffect, environment: Environment): void => {
   environment.temps.delete(effect.name);
   environment.bindings.delete(effect.name);
+
   if (effect.trustedTemp) {
     environment.temps.set(effect.name, { variable: effect.name });
   } else {
@@ -105,11 +114,11 @@ const isExactAssignmentBinding = (
   if (
     assignment.append === true ||
     assignment.index !== undefined ||
-    assignment.array !== undefined ||
-    assignment.value === undefined
+    assignment.value.type !== 'Word'
   ) {
     return false;
   }
+
   if (normalizedValue?.kind === 'literal') {
     return (
       wordIsStatic(assignment.value) ||
@@ -117,105 +126,11 @@ const isExactAssignmentBinding = (
       boundWord(assignment.value, environment) !== null
     );
   }
+
   return (
     normalizedValue?.kind === 'background-pid' &&
     backgroundPidWord(assignment.value, environment) !== null
   );
-};
-
-const mayChangeDirectory = (node: Node, environment: Environment): boolean => {
-  const pending: unknown[] = [node];
-  const seen = new Set<object>();
-  while (pending.length > 0) {
-    const value = pending.pop();
-    if (typeof value === 'object' && value !== null && !seen.has(value)) {
-      seen.add(value);
-      if ('type' in value && value.type === 'Command' && 'name' in value) {
-        const { name } = value;
-        if (
-          typeof name === 'object' &&
-          name !== null &&
-          'value' in name &&
-          typeof name.value === 'string' &&
-          (['cd', 'pushd', 'popd'].includes(name.value) ||
-            environment.functions.has(name.value) ||
-            environment.aliases.has(name.value))
-        ) {
-          return true;
-        }
-      }
-      const fields: unknown[] = Object.values(value);
-      pending.push(...fields);
-    }
-  }
-  return false;
-};
-
-// A plain cd, pushd, or popd that no function or alias shadows.
-const isDirectoryChange = (node: Node, environment: Environment): boolean =>
-  node.type === 'Command' &&
-  node.name !== undefined &&
-  wordIsStatic(node.name) &&
-  ['cd', 'pushd', 'popd'].includes(node.name.value) &&
-  !environment.functions.has(node.name.value) &&
-  !environment.aliases.has(node.name.value);
-
-const mayMutateHomeIndirectly = (invocation: ShellInvocation): boolean => {
-  if (['source', '.', 'eval', 'read', 'getopts', 'let'].includes(invocation.head)) {
-    return true;
-  }
-  if (invocation.head === 'printf' && variableWriteTargets(invocation) !== null) {
-    return true;
-  }
-  if (['export', 'readonly', 'declare', 'typeset', 'local', 'unset'].includes(invocation.head)) {
-    return (
-      invocation.words.slice(1).some((word) => word.kind !== 'literal') ||
-      invocation.flags.some((flag) => /^-[^-]*n/u.test(flag))
-    );
-  }
-  return false;
-};
-
-const HOME_MUTATION_WORDS = new Set([
-  'HOME',
-  'source',
-  '.',
-  'eval',
-  'read',
-  'getopts',
-  'let',
-  'printf',
-  'export',
-  'declare',
-  'typeset',
-  'unset',
-]);
-
-// Loops may revisit an operand after a later mutation. Invalidate before the
-// first visit unless the body cannot change the home binding.
-const mayChangeHome = (node: Node, environment: Environment): boolean => {
-  const pending: unknown[] = [node];
-  while (pending.length > 0) {
-    const value = pending.pop();
-    if (typeof value === 'object' && value !== null) {
-      if ('name' in value && value.name === 'HOME') {
-        return true;
-      }
-      if (
-        'value' in value &&
-        typeof value.value === 'string' &&
-        (HOME_MUTATION_WORDS.has(value.value) ||
-          value.value.startsWith('HOME=') ||
-          environment.functions.has(value.value) ||
-          environment.aliases.has(value.value))
-      ) {
-        return true;
-      }
-      const fields: unknown[] = Object.values(value);
-      pending.push(...fields);
-    }
-  }
-  return false;
 };
 
 class BashAnalyzer {
@@ -256,6 +171,7 @@ class BashAnalyzer {
   analyze(script: ParsedScript): ShellProgram {
     const environment = emptyEnvironment();
     environment.cwd = this.#options.cwd;
+
     const bindLiteral = (name: string, value: string): void => {
       environment.bindings.set(name, {
         source: value,
@@ -266,18 +182,23 @@ class BashAnalyzer {
         variable: name,
       });
     };
+
     bindLiteral('HOME', this.#options.home ?? homedir());
+
     if (environment.cwd !== null) {
       bindLiteral('PWD', environment.cwd);
     }
+
     for (const [index, value] of (this.#options.positionalArguments ?? []).entries()) {
       bindLiteral((index + 1).toString(), value);
     }
+
     this.#visitScript(script, environment, {
       inspectedPipelineInput: false,
       source: this.#source,
       pipeline: undefined,
     });
+
     return {
       source: this.#source,
       invocations: this.#invocations,
@@ -296,12 +217,16 @@ class BashAnalyzer {
     if (this.#activeScripts.has(script)) {
       return;
     }
+
     this.#activeScripts.add(script);
+
     try {
       const source = script.source ?? context.source;
+
       for (const error of script.errors ?? []) {
         this.#addDiagnostic('parse-error', error.message, { start: error.pos, end: error.pos });
       }
+
       this.#visitStatements(script.commands, environment, { ...context, source });
     } finally {
       this.#activeScripts.delete(script);
@@ -322,14 +247,14 @@ class BashAnalyzer {
     // Bash runs a background statement in a subshell, so its directory and
     // variable changes never reach the commands after it.
     const scope = statement.background === true ? cloneEnvironment(environment) : environment;
-    this.#visitRedirects(statement.redirects, scope, context);
     this.#visitNode(statement.command, scope, context);
+
     if (statement.background === true) {
       environment.backgroundPidAvailable = true;
     }
   }
 
-  #visitNode(node: Node, environment: Environment, context: VisitContext): void {
+  #visitNode(node: SyntaxNode, environment: Environment, context: VisitContext): void {
     if (
       this.#visitCommandStructure(node, environment, context) ||
       this.#visitControlFlow(node, environment, context) ||
@@ -337,30 +262,60 @@ class BashAnalyzer {
     ) {
       return;
     }
+
     this.#addDiagnostic('parse-error', `Unknown Bash AST node: ${node.type}`, rangeOf(node));
   }
 
-  #visitCommandStructure(node: Node, environment: Environment, context: VisitContext): boolean {
+  #visitCommandStructure(
+    node: SyntaxNode,
+    environment: Environment,
+    context: VisitContext,
+  ): boolean {
     if (node.type === 'Statement') {
       this.#visitStatement(node, environment, context);
+
       return true;
     }
+
     if (node.type === 'Command') {
       this.#visitCommand(node, environment, context);
+
       return true;
     }
+
+    if (node.type === 'Redirected') {
+      this.#visitRedirects(node.redirects, environment, context);
+      this.#visitNode(node.command, environment, context);
+
+      return true;
+    }
+
     if (node.type === 'CompoundList') {
       this.#visitStatements(node.commands, environment, context);
+
       return true;
     }
+
     if (node.type === 'Pipeline') {
+      if (node.commands.length === 1) {
+        const [command] = node.commands;
+
+        if (command !== undefined) {
+          this.#visitNode(command, environment, context);
+        }
+
+        return true;
+      }
+
       const pipelineId = this.#nextPipelineId;
       this.#nextPipelineId += 1;
+
       const inspectedInputs = this.#execution.inspectPipelineInputs(
         node.commands,
         environment,
         context,
       );
+
       for (const [index, command] of node.commands.entries()) {
         this.#visitNode(command, cloneEnvironment(environment), {
           ...context,
@@ -368,17 +323,21 @@ class BashAnalyzer {
           pipeline: { id: pipelineId, index },
         });
       }
+
       return true;
     }
+
     if (node.type === 'AndOr') {
       this.#visitAndOr(node, environment, context);
+
       return true;
     }
+
     return false;
   }
 
   #visitAndOr(
-    node: Extract<Node, { type: 'AndOr' }>,
+    node: Extract<SyntaxNode, { type: 'AndOr' }>,
     environment: Environment,
     context: VisitContext,
   ): void {
@@ -386,19 +345,24 @@ class BashAnalyzer {
     // Every state where the list can stop, and every state where it has succeeded so far.
     let outgoing: Environment | undefined;
     let succeeded: Environment | undefined;
+
     for (const [index, command] of node.commands.entries()) {
       const operator = node.operators[index - 1];
       let branch = working;
+
       if (operator === '||') {
         branch = environmentsAgree([environment, working]);
       } else if (operator === '&&' && succeeded !== undefined) {
         // A command after && runs only when the list before it succeeded.
         branch = cloneEnvironment(succeeded);
       }
+
       const directoryChange = isDirectoryChange(command, branch);
       this.#visitNode(command, branch, context);
+
       const exits =
         command.type === 'Command' && ['exit', 'return'].includes(command.name?.value ?? '');
+
       if (exits) {
         succeeded = operator === '||' ? succeeded : undefined;
       } else {
@@ -409,6 +373,7 @@ class BashAnalyzer {
         // The analysis already assumes that a resolved directory change
         // succeeds, so a following && command always runs after it.
         const continues = directoryChange && branch.cwd !== null && node.operators[index] === '&&';
+
         if (!continues) {
           outgoing =
             outgoing === undefined
@@ -416,39 +381,54 @@ class BashAnalyzer {
               : environmentsAgree([outgoing, branch]);
         }
       }
+
       replaceEnvironment(working, outgoing ?? branch);
     }
+
     replaceEnvironment(environment, outgoing ?? working);
   }
 
-  #visitControlFlow(node: Node, environment: Environment, context: VisitContext): boolean {
+  #visitControlFlow(node: SyntaxNode, environment: Environment, context: VisitContext): boolean {
     if (node.type === 'If') {
-      const clauseEnvironment = cloneEnvironment(environment);
-      this.#visitNode(node.clause, clauseEnvironment, context);
-      const thenEnvironment = cloneEnvironment(clauseEnvironment);
-      this.#visitNode(node.then, thenEnvironment, context);
-      const elseEnvironment = cloneEnvironment(clauseEnvironment);
-      if (node.else !== undefined) {
-        this.#visitNode(node.else, elseEnvironment, context);
+      const remaining = cloneEnvironment(environment);
+      const branches: Environment[] = [];
+
+      for (const branch of [node, ...node.elif]) {
+        this.#visitNode(branch.clause, remaining, context);
+        const taken = cloneEnvironment(remaining);
+        this.#visitNode(branch.then, taken, context);
+        branches.push(taken);
       }
-      replaceEnvironment(environment, environmentsAgree([thenEnvironment, elseEnvironment]));
+
+      if (node.else !== undefined) {
+        this.#visitNode(node.else, remaining, context);
+      }
+
+      branches.push(remaining);
+      replaceEnvironment(environment, environmentsAgree(branches));
+
       return true;
     }
+
     if (
       ['ArithmeticFor', 'While', 'For', 'Select'].includes(node.type) &&
       mayChangeHome(node, environment)
     ) {
       environment.bindings.delete('HOME');
     }
+
     if (node.type === 'For' || node.type === 'Select') {
       this.#visitFor(node, environment, context);
+
       return true;
     }
+
     if (node.type === 'ArithmeticFor') {
       if (mayChangeDirectory(node.body, environment)) {
         environment.cwd = null;
         environment.directoryStack = [];
       }
+
       this.#visitArithmetic(node.initialize, environment, context);
       this.#visitArithmetic(node.test, environment, context);
       const loopEnvironment = cloneEnvironment(environment);
@@ -458,48 +438,61 @@ class BashAnalyzer {
         this.#visitArithmetic(node.test, iteration, context);
       });
       propagateMap(environment.bindings, joinBindings([environment, loopEnvironment]), new Set());
+
       return true;
     }
+
     if (node.type === 'While') {
       const loopEnvironment = cloneEnvironment(environment);
+
       if (mayChangeDirectory(node, environment)) {
         loopEnvironment.cwd = null;
         loopEnvironment.directoryStack = [];
       }
+
       visitRepeatedBindings(loopEnvironment, (iteration) => {
         this.#visitNode(node.clause, iteration, context);
         this.#visitNode(node.body, iteration, context);
       });
       environment.cwd = environmentsAgree([environment, loopEnvironment]).cwd;
       propagateMap(environment.bindings, joinBindings([environment, loopEnvironment]), new Set());
+
       return true;
     }
+
     if (node.type === 'Function') {
       const name = this.#normalizeWord(node.name, environment, context);
+
       if (name.kind !== 'literal' || !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name.value)) {
         this.#addDiagnostic('function', 'The function name is not static.', rangeOf(node));
       } else {
         environment.functions.set(name.value, node);
       }
+
       return true;
     }
+
     return false;
   }
 
   #visitFor(
-    node: Extract<Node, { type: 'For' | 'Select' }>,
+    node: Extract<SyntaxNode, { type: 'For' | 'Select' }>,
     environment: Environment,
     context: VisitContext,
   ): void {
     const changesDirectory = mayChangeDirectory(node.body, environment);
+
     if (changesDirectory) {
       environment.cwd = null;
       environment.directoryStack = [];
     }
+
     const name = this.#normalizeWord(node.name, environment, context);
-    const values = node.wordlist.flatMap((word) =>
+
+    const values = (node.wordlist ?? []).flatMap((word) =>
       this.#normalizeWordMany(word, environment, context),
     );
+
     if (
       node.type === 'For' &&
       name.kind === 'literal' &&
@@ -526,83 +519,116 @@ class BashAnalyzer {
     }
   }
 
-  #visitCompoundStructure(node: Node, environment: Environment, context: VisitContext): boolean {
+  #visitCompoundStructure(
+    node: SyntaxNode,
+    environment: Environment,
+    context: VisitContext,
+  ): boolean {
     if (node.type === 'Subshell') {
       this.#visitNode(node.body, cloneEnvironment(environment), context);
+
       return true;
     }
+
     if (node.type === 'BraceGroup') {
       this.#visitNode(node.body, environment, context);
+
       return true;
     }
+
     if (node.type === 'Case') {
       this.#normalizeWord(node.word, environment, context);
       const branches: Environment[] = [cloneEnvironment(environment)];
+
       for (const item of node.items) {
         for (const pattern of item.pattern) {
           this.#normalizeWord(pattern, environment, context);
         }
+
         const branch = cloneEnvironment(environment);
         this.#visitNode(item.body, branch, context);
         branches.push(branch);
       }
+
       replaceEnvironment(environment, environmentsAgree(branches));
+
       return true;
     }
+
     if (node.type === 'Coproc') {
       if (node.name !== undefined) {
         this.#normalizeWord(node.name, environment, context);
       }
-      this.#visitRedirects(node.redirects, environment, context);
+
       this.#visitNode(node.body, cloneEnvironment(environment), context);
+
       return true;
     }
+
     if (node.type === 'TestCommand') {
       this.#visitTest(node.expression, environment, context);
+
       return true;
     }
+
     if (node.type === 'ArithmeticCommand') {
       this.#visitArithmetic(node.expression, environment, context);
+
       return true;
     }
+
     return false;
   }
 
   #visitCommand(command: Command, environment: Environment, context: VisitContext): void {
     const executionEnvironment =
       command.prefix.length === 0 ? environment : cloneEnvironment(environment);
+
     const assignmentEffects = command.prefix.flatMap((assignment) => {
-      const effect = this.#inspectAssignment(assignment, executionEnvironment, context);
-      if (effect !== null) {
-        applyAssignment(effect, executionEnvironment);
+      if (assignment.type !== 'Assignment') {
+        return [];
       }
-      return effect === null ? [] : [effect];
+
+      const effect = this.#inspectAssignment(assignment, executionEnvironment, context);
+      applyAssignment(effect, executionEnvironment);
+
+      return [effect];
     });
+
     if (command.name === undefined) {
       for (const effect of assignmentEffects) {
         applyAssignment(effect, environment);
       }
     }
+
     const operandEnvironment = assignmentEffects.some((effect) => effect.name === 'HOME')
       ? cloneEnvironment(environment)
       : environment;
+
     for (const effect of assignmentEffects) {
       if (effect.name === 'HOME') {
         applyAssignment(effect, operandEnvironment);
       }
     }
+
     const redirects = this.#visitRedirects(command.redirects, operandEnvironment, context);
+
     if (command.name === undefined) {
       return;
     }
+
     const name = this.#normalizeWord(command.name, environment, context);
-    const suffix = command.suffix.flatMap((word) =>
-      this.#normalizeWordMany(word, operandEnvironment, context),
+
+    const suffix = command.args.flatMap((word) =>
+      this.#normalizeArgument(word, operandEnvironment, context),
     );
+
     if (name.kind === 'literal' && environment.functions.has(name.value)) {
       this.#invokeFunction(name.value, suffix, assignmentEffects, environment, context);
+
       return;
     }
+
     if (name.kind === 'literal' && environment.aliases.has(name.value)) {
       this.#invokeAlias(name.value, suffix, executionEnvironment, context, rangeOf(command));
       propagateFunctionEffects(
@@ -610,8 +636,10 @@ class BashAnalyzer {
         executionEnvironment,
         new Set(assignmentEffects.map((effect) => effect.name)),
       );
+
       return;
     }
+
     const invocation = this.#emitInvocation(
       [name, ...suffix],
       redirects,
@@ -620,31 +648,40 @@ class BashAnalyzer {
       false,
       executionEnvironment,
     );
+
     if (invocation === null) {
       return;
     }
+
     if (invocation.head === 'alias') {
       this.#defineAliases(invocation, environment);
+
       return;
     }
+
     if (invocation.head === 'unalias') {
       this.#removeAliases(invocation, environment);
+
       return;
     }
+
     const inlineShellSource = this.#execution.inspectShellInput(
       invocation,
       command.redirects,
       executionEnvironment,
       context,
     );
+
     this.#execution.inspectWrapper(invocation, executionEnvironment, context, inlineShellSource);
     this.#applyVariableBuiltin(invocation, environment);
+
     if (
       assignmentEffects.some((effect) => effect.name === 'CDPATH') &&
       ['cd', 'pushd', 'command', 'builtin'].includes(invocation.head)
     ) {
       environment.cwd = null;
     }
+
     changeDirectory(invocation, environment);
     recordCreatedDirectories(invocation, environment);
   }
@@ -653,34 +690,38 @@ class BashAnalyzer {
     assignment: AssignmentPrefix,
     environment: Environment,
     context: VisitContext,
-  ): AssignmentEffect | null {
-    for (const part of assignment.indexParts ?? []) {
-      this.#visitWordPart(part, environment, context);
+  ): AssignmentEffect {
+    if (assignment.index !== undefined) {
+      this.#normalizeWord(assignment.index, environment, context);
     }
-    for (const word of assignment.array ?? []) {
-      this.#normalizeWord(word, environment, context);
+
+    if (assignment.value.type === 'ArrayValue') {
+      for (const word of assignment.value.elements) {
+        this.#normalizeWord(word, environment, context);
+      }
     }
+
     const normalizedValue =
-      assignment.value === undefined
-        ? undefined
-        : this.#normalizeWord(assignment.value, environment, context);
-    if (assignment.name === undefined) {
-      return null;
-    }
+      assignment.value.type === 'Word'
+        ? this.#normalizeWord(assignment.value, environment, context)
+        : undefined;
+
     this.#environmentAssignments.add(assignment.name);
+
     const trustedTemp =
       assignment.append !== true &&
       assignment.index === undefined &&
-      assignment.array === undefined &&
-      assignment.value !== undefined &&
+      assignment.value.type === 'Word' &&
       isTrustedMktemp(assignment.value, environment);
+
     const exactBinding = isExactAssignmentBinding(assignment, normalizedValue, environment);
+
     return {
       binding:
         normalizedValue !== undefined && (exactBinding || assignment.name === 'CDPATH')
           ? normalizedValue
           : dynamicBinding({
-              source: assignment.value?.text ?? assignment.name,
+              source: assignment.text,
               value: DYNAMIC_VALUE,
               kind: 'dynamic',
               range: rangeOf(assignment),
@@ -691,19 +732,50 @@ class BashAnalyzer {
     };
   }
 
+  #normalizeArgument(
+    argument: CommandArgument,
+    environment: Environment,
+    context: VisitContext,
+  ): ShellWord[] {
+    if (argument.type === 'Word') {
+      return this.#normalizeWordMany(argument, environment, context);
+    }
+
+    const effect = this.#inspectAssignment(argument, environment, context);
+    const value = effect.binding;
+
+    const exact =
+      argument.index === undefined && argument.append !== true && value.kind === 'literal';
+
+    return [
+      {
+        source: argument.text,
+        value: exact ? `${argument.name}=${value.value}` : DYNAMIC_VALUE,
+        kind: exact ? 'literal' : 'dynamic',
+        range: rangeOf(argument),
+        quoted: value.quoted,
+      },
+    ];
+  }
+
   #normalizeWordMany(word: Word, environment: Environment, context: VisitContext): ShellWord[] {
     const normalized = this.#normalizeWord(word, environment, context);
+
     if (normalized.kind !== 'literal' || normalized.quoted || !/[*?[]/u.test(normalized.value)) {
       return [normalized];
     }
+
     const cwd = path.isAbsolute(normalized.value)
       ? path.parse(normalized.value).root
       : environment.cwd;
+
     if (normalized.value.includes('**') || cwd === null) {
       return [{ ...normalized, kind: 'dynamic' }];
     }
+
     try {
       const matches: string[] = [];
+
       for (const match of new Bun.Glob(normalized.value).scanSync({
         cwd,
         onlyFiles: false,
@@ -712,12 +784,16 @@ class BashAnalyzer {
         if (matches.length === 128) {
           return [{ ...normalized, kind: 'dynamic' }];
         }
+
         matches.push(match);
       }
+
       if (matches.length === 0) {
         return [normalized];
       }
+
       const expanded: ShellWord[] = [];
+
       for (const value of matches) {
         expanded.push({
           source: normalized.source,
@@ -727,6 +803,7 @@ class BashAnalyzer {
           quoted: normalized.quoted,
         });
       }
+
       return expanded;
     } catch {
       return [{ ...normalized, kind: 'dynamic' }];
@@ -737,23 +814,32 @@ class BashAnalyzer {
     for (const part of word.parts ?? []) {
       this.#visitWordPart(part, environment, context);
     }
+
     const trusted = trustedTempWord(word, environment);
+
     if (trusted !== null) {
       return trusted;
     }
+
     const backgroundPid = backgroundPidWord(word, environment);
+
     if (backgroundPid !== null) {
       return backgroundPid;
     }
+
     const bound = boundWord(word, environment);
+
     if (bound !== null) {
       return bound;
     }
+
     if (wordIsStatic(word)) {
       if (word.text.startsWith('~')) {
         const home = environment.bindings.get('HOME');
+
         const known =
           /^(?:~$|~\/)/u.test(word.value) && home?.kind === 'literal' && home.value.startsWith('/');
+
         return {
           source: word.text,
           value: known ? home.value + word.value.slice(1) : DYNAMIC_VALUE,
@@ -762,6 +848,7 @@ class BashAnalyzer {
           quoted: (word.parts ?? []).some((part) => isQuotedPart(part)),
         };
       }
+
       return {
         source: word.text,
         value: word.value,
@@ -770,7 +857,9 @@ class BashAnalyzer {
         quoted: (word.parts ?? []).some((part) => isQuotedPart(part)),
       };
     }
+
     const generated = staticGeneratedValue(word, environment);
+
     if (generated !== null) {
       return {
         source: word.text,
@@ -780,6 +869,7 @@ class BashAnalyzer {
         quoted: true,
       };
     }
+
     return {
       source: word.text,
       value: word.value,
@@ -797,36 +887,55 @@ class BashAnalyzer {
       case 'SimpleExpansion': {
         return;
       }
+
       case 'DoubleQuoted':
       case 'LocaleString': {
         for (const child of part.parts) {
           this.#visitWordPart(child, environment, context);
         }
+
         return;
       }
+
       case 'ParameterExpansion': {
         this.#visitParameterExpansion(part, environment, context);
+
         return;
       }
+
       case 'CommandExpansion':
       case 'ProcessSubstitution': {
-        if (part.script !== undefined) {
+        if (part.script === undefined) {
+          this.#addDiagnostic(
+            'dynamic-shell-source',
+            'The nested shell source could not be parsed.',
+            rangeOf(part),
+          );
+        } else {
           this.#visitScript(part.script, cloneEnvironment(environment), context);
         }
+
         return;
       }
+
       case 'ArithmeticExpansion': {
         this.#visitArithmetic(part.expression, environment, context);
+
         return;
       }
+
       case 'ExtendedGlob':
-      case 'BraceExpansion': {
+      case 'BraceExpansion':
+      case 'Glob': {
         for (const child of part.parts ?? []) {
           this.#visitWordPart(child, environment, context);
         }
+
         break;
       }
+
       default: {
+        this.#addDiagnostic('parse-error', 'Unsupported Bash word part.', rangeOf(part));
         break;
       }
     }
@@ -837,38 +946,52 @@ class BashAnalyzer {
     environment: Environment,
     context: VisitContext,
   ): void {
+    const { operation } = part;
+
     if (
-      ['=', ':='].includes(part.operator ?? '') &&
+      operation?.type === 'Default' &&
+      ['=', ':='].includes(operation.operator) &&
       /^[A-Za-z_][A-Za-z0-9_]*$/u.test(part.parameter)
     ) {
       const binding = environment.bindings.get(part.parameter);
+
       if (part.parameter === 'HOME') {
         environment.bindings.delete('HOME');
-      } else if (binding?.kind !== 'literal' || (part.operator === ':=' && binding.value === '')) {
+      } else if (
+        binding?.kind !== 'literal' ||
+        (operation.operator === ':=' && binding.value === '')
+      ) {
         environment.bindings.set(part.parameter, {
           source: part.parameter,
           value: DYNAMIC_VALUE,
           kind: 'dynamic',
-          range: part.operand === undefined ? { start: 0, end: 0 } : rangeOf(part.operand),
+          range: rangeOf(operation.operand),
           quoted: false,
         });
       }
     }
-    for (const child of part.indexParts ?? []) {
-      this.#visitWordPart(child, environment, context);
+
+    if (part.index !== undefined) {
+      this.#normalizeWord(part.index, environment, context);
     }
-    if (part.operand !== undefined) {
-      this.#normalizeWord(part.operand, environment, context);
+
+    if (operation === undefined) {
+      return;
     }
-    if (part.slice !== undefined) {
-      this.#normalizeWord(part.slice.offset, environment, context);
-      if (part.slice.length !== undefined) {
-        this.#normalizeWord(part.slice.length, environment, context);
+
+    if ('operand' in operation && operation.operand !== undefined) {
+      this.#normalizeWord(operation.operand, environment, context);
+    } else if (operation.type === 'Slice') {
+      this.#normalizeWord(operation.offset, environment, context);
+
+      if (operation.length !== undefined) {
+        this.#normalizeWord(operation.length, environment, context);
       }
-    }
-    if (part.replace !== undefined) {
-      this.#normalizeWord(part.replace.pattern, environment, context);
-      this.#normalizeWord(part.replace.replacement, environment, context);
+    } else if (operation.type === 'Replace') {
+      this.#normalizeWord(operation.pattern, environment, context);
+      this.#normalizeWord(operation.replacement, environment, context);
+    } else if (operation.type === 'Unknown') {
+      this.#addDiagnostic('parse-error', 'Unresolved parameter operation.', rangeOf(operation));
     }
   }
 
@@ -880,48 +1003,87 @@ class BashAnalyzer {
     if (expression === undefined) {
       return;
     }
+
     if (JSON.stringify(expression).includes('HOME')) {
       environment.bindings.delete('HOME');
     }
+
     switch (expression.type) {
       case 'ArithmeticBinary': {
         if (/^(?:=|\+=|-=|\*=|\/=|%=|<<=|>>=|&=|\^=|\|=)$/u.test(expression.operator)) {
           this.#invalidateArithmeticTarget(expression.left, environment);
         }
+
         this.#visitArithmetic(expression.left, environment, context);
         this.#visitArithmetic(expression.right, environment, context);
+
         return;
       }
+
       case 'ArithmeticUnary': {
         if (expression.operator === '++' || expression.operator === '--') {
           this.#invalidateArithmeticTarget(expression.operand, environment);
         }
+
         this.#visitArithmetic(expression.operand, environment, context);
+
         return;
       }
+
       case 'ArithmeticTernary': {
         this.#visitArithmetic(expression.test, environment, context);
         this.#visitArithmetic(expression.consequent, environment, context);
         this.#visitArithmetic(expression.alternate, environment, context);
+
         return;
       }
+
       case 'ArithmeticGroup': {
         this.#visitArithmetic(expression.expression, environment, context);
+
         return;
       }
+
       case 'ArithmeticWord': {
-        for (const part of expression.parts ?? []) {
+        const { parts } = expression;
+
+        if (parts === undefined && /[^A-Za-z0-9_#@[\]]/u.test(expression.value)) {
+          this.#addDiagnostic(
+            'parse-error',
+            'The arithmetic source could not be fully inspected.',
+            rangeOf(expression),
+          );
+
+          return;
+        }
+
+        for (const part of parts ?? []) {
           this.#visitWordPart(part, environment, context);
         }
+
         return;
       }
+
       case 'ArithmeticCommandExpansion': {
-        if (expression.script !== undefined) {
+        if (expression.script === undefined) {
+          this.#addDiagnostic(
+            'dynamic-shell-source',
+            'The nested arithmetic command could not be parsed.',
+            rangeOf(expression),
+          );
+        } else {
           this.#visitScript(expression.script, cloneEnvironment(environment), context);
         }
+
         break;
       }
+
       default: {
+        this.#addDiagnostic(
+          'parse-error',
+          'Unsupported arithmetic expression.',
+          rangeOf(expression),
+        );
         break;
       }
     }
@@ -941,26 +1103,36 @@ class BashAnalyzer {
     switch (expression.type) {
       case 'TestUnary': {
         this.#normalizeWord(expression.operand, environment, context);
+
         return;
       }
+
       case 'TestBinary': {
         this.#normalizeWord(expression.left, environment, context);
         this.#normalizeWord(expression.right, environment, context);
+
         return;
       }
+
       case 'TestLogical': {
-        this.#visitTest(expression.left, environment, context);
-        this.#visitTest(expression.right, environment, context);
+        for (const operand of expression.operands) {
+          this.#visitTest(operand, environment, context);
+        }
+
         return;
       }
+
       case 'TestNot': {
         this.#visitTest(expression.operand, environment, context);
+
         return;
       }
+
       case 'TestGroup': {
         this.#visitTest(expression.expression, environment, context);
         break;
       }
+
       default: {
         break;
       }
@@ -968,35 +1140,47 @@ class BashAnalyzer {
   }
 
   #visitRedirects(
-    redirects: readonly Redirect[],
+    redirects: readonly Redirection[],
     environment: Environment,
     context: VisitContext,
   ): ShellRedirect[] {
     const normalized: ShellRedirect[] = [];
+
     for (const redirect of redirects) {
-      if (redirect.body !== undefined) {
+      if (redirect.type === 'HereDoc') {
         this.#heredocRanges.push(rangeOf(redirect.body));
-        this.#normalizeWord(redirect.body, environment, context);
-      } else if (redirect.content !== undefined) {
-        const contentStart = context.source.indexOf(redirect.content, redirect.end);
-        if (contentStart !== -1) {
-          this.#heredocRanges.push({
-            start: contentStart,
-            end: contentStart + redirect.content.length,
-          });
+
+        for (const part of redirect.body.parts ?? []) {
+          this.#visitWordPart(part, environment, context);
         }
       }
-      const target =
-        redirect.target === undefined
-          ? {
-              source: '',
-              value: DYNAMIC_VALUE,
-              kind: 'dynamic' as const,
-              range: rangeOf(redirect),
-              quoted: false,
-            }
-          : this.#normalizeWord(redirect.target, environment, context);
+
+      const word = redirect.type === 'HereDoc' ? redirect.delimiter : redirect.target;
+
+      let target: ShellWord;
+
+      if (word === undefined) {
+        target = {
+          source: '',
+          value: DYNAMIC_VALUE,
+          kind: 'dynamic',
+          range: rangeOf(redirect),
+          quoted: false,
+        };
+      } else if (word.type === 'HereDocDelimiter') {
+        target = {
+          source: word.text,
+          value: word.value,
+          kind: 'literal',
+          range: rangeOf(word),
+          quoted: word.quoted,
+        };
+      } else {
+        target = this.#normalizeWord(word, environment, context);
+      }
+
       let op: ShellRedirect['op'];
+
       if (redirect.operator === '<<-') {
         op = '<<';
       } else if (redirect.operator === '>|') {
@@ -1004,18 +1188,21 @@ class BashAnalyzer {
       } else {
         op = redirect.operator;
       }
+
       const shellRedirect: ShellRedirect = {
         op,
         target,
         cwd: environment.cwd,
         range: rangeOf(redirect),
-        ...(redirect.content !== undefined && {
-          heredoc: { content: redirect.content, quoted: redirect.heredocQuoted === true },
+        ...(redirect.type === 'HereDoc' && {
+          heredoc: { content: redirect.body.text, quoted: redirect.delimiter?.quoted === true },
         }),
       };
+
       normalized.push(shellRedirect);
       this.#redirects.push(shellRedirect);
     }
+
     return normalized;
   }
 
@@ -1028,21 +1215,26 @@ class BashAnalyzer {
     environment: Environment,
   ): ShellInvocation | null {
     const [executable] = words;
+
     if (executable === undefined) {
       return null;
     }
+
     if (executable.kind !== 'literal') {
       this.#addDiagnostic(
         'dynamic-executable',
         'The executable name is computed at runtime.',
         executable.range,
       );
+
       return null;
     }
+
     const tokens = words.map((word) => word.value);
     const flags = tokens.slice(1).filter((token) => token.startsWith('-') && token !== '-');
     const args = tokens.slice(1).filter((token) => !token.startsWith('-') || token === '-');
     const home = environment.bindings.get('HOME');
+
     const invocation: ShellInvocation = {
       bindings: new Map(environment.bindings),
       ...(home?.kind === 'literal' && { home: home.value }),
@@ -1062,11 +1254,14 @@ class BashAnalyzer {
       pipeline: context.pipeline,
       synthetic,
     };
+
     this.#nextInvocationId += 1;
     this.#invocations.push(invocation);
+
     if (invocation.head === 'eval') {
       this.#addDiagnostic('eval', '`eval` can turn computed data into shell syntax.', range);
     }
+
     return invocation;
   }
 
@@ -1078,38 +1273,48 @@ class BashAnalyzer {
     context: VisitContext,
   ): void {
     const definition = environment.functions.get(name);
+
     if (definition === undefined) {
       return;
     }
+
     if (this.#activeFunctions.has(name)) {
       this.#addDiagnostic('function', `Recursive function call: ${name}`, rangeOf(definition));
+
       return;
     }
+
     this.#activeFunctions.add(name);
     const callEnvironment = cloneEnvironment(environment);
     const prefixNames = new Set(assignments.map((assignment) => assignment.name));
+
     for (const assignment of assignments) {
       applyAssignment(assignment, callEnvironment);
     }
+
     for (const bindingName of callEnvironment.bindings.keys()) {
       if (/^[0-9]+$/u.test(bindingName)) {
         callEnvironment.bindings.delete(bindingName);
       }
     }
+
     for (const [index, word] of arguments_.entries()) {
       callEnvironment.bindings.set(String(index + 1), word);
     }
+
     const scope: FunctionScope = { localNames: new Set() };
     this.#functionScopes.push(scope);
+
     try {
-      this.#visitRedirects(definition.redirects, callEnvironment, context);
       this.#visitNode(definition.body, callEnvironment, context);
       const excludedVariables = new Set([...prefixNames, ...scope.localNames]);
+
       for (const bindingName of callEnvironment.bindings.keys()) {
         if (/^[0-9]+$/u.test(bindingName)) {
           excludedVariables.add(bindingName);
         }
       }
+
       propagateFunctionEffects(environment, callEnvironment, excludedVariables);
     } finally {
       this.#functionScopes.pop();
@@ -1125,23 +1330,28 @@ class BashAnalyzer {
     range: SourceRange,
   ): void {
     const replacement = environment.aliases.get(name);
+
     if (replacement === undefined) {
       return;
     }
+
     if (this.#activeAliases.has(name)) {
       this.#addDiagnostic('alias', `Recursive alias expansion: ${name}`, range);
+
       return;
     }
+
     this.#activeAliases.add(name);
+
     try {
       const script = parse(replacement);
       const [statement] = script.commands;
       const command = statement?.command;
+
       if (
         (script.errors?.length ?? 0) > 0 ||
         script.commands.length !== 1 ||
         statement?.background === true ||
-        statement?.redirects.length !== 0 ||
         command?.type !== 'Command' ||
         command.name === undefined ||
         command.prefix.length > 0 ||
@@ -1157,16 +1367,18 @@ class BashAnalyzer {
           `Alias ${name} has compound expansion whose call arguments cannot be bound safely.`,
           range,
         );
+
         return;
       }
+
       const aliasContext = { ...context, source: replacement };
+
       const words = [
         this.#normalizeWord(command.name, environment, aliasContext),
-        ...command.suffix.flatMap((word) =>
-          this.#normalizeWordMany(word, environment, aliasContext),
-        ),
+        ...command.args.flatMap((word) => this.#normalizeArgument(word, environment, aliasContext)),
         ...arguments_,
       ];
+
       const parent: ShellInvocation = {
         bindings: new Map(environment.bindings),
         startup: joinStartup(environment.startup),
@@ -1183,8 +1395,10 @@ class BashAnalyzer {
         pipeline: context.pipeline,
         synthetic: true,
       };
+
       this.#emitSynthetic(words, parent, environment, context);
       const [head] = words;
+
       if (head?.kind === 'literal') {
         changeDirectory({ ...parent, head: head.value, words }, environment);
       }
@@ -1197,8 +1411,10 @@ class BashAnalyzer {
     for (const word of invocation.words.slice(1)) {
       if (word.kind === 'literal') {
         const equalsIndex = word.value.indexOf('=');
+
         if (equalsIndex !== -1) {
           const name = word.value.slice(0, equalsIndex);
+
           if (/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name)) {
             environment.aliases.set(name, word.value.slice(equalsIndex + 1));
           } else {
@@ -1214,8 +1430,10 @@ class BashAnalyzer {
   #removeAliases(invocation: ShellInvocation, environment: Environment): void {
     if (invocation.tokens.includes('-a')) {
       environment.aliases.clear();
+
       return;
     }
+
     for (const word of invocation.words.slice(1)) {
       if (word.kind === 'literal') {
         environment.aliases.delete(word.value);
@@ -1238,6 +1456,7 @@ class BashAnalyzer {
       true,
       environment,
     );
+
     if (invocation !== null) {
       this.#applyVariableBuiltin(invocation, environment);
       this.#execution.inspectWrapper(
@@ -1260,8 +1479,10 @@ class BashAnalyzer {
         'A shell wrapper receives source that is computed at runtime.',
         word?.range ?? { start: 0, end: 0 },
       );
+
       return;
     }
+
     try {
       this.#visitScript(parse(word.value), cloneEnvironment(environment), {
         ...context,
@@ -1289,28 +1510,37 @@ class BashAnalyzer {
         invocation.range,
       );
     }
+
     if (['command', 'builtin'].includes(invocation.head)) {
       const words = invocation.words.slice(skipHeadRenamingPrefix(invocation));
       const [head] = words;
+
       if (head?.kind === 'literal') {
         this.#applyVariableBuiltin({ ...invocation, head: head.value, words }, environment);
       }
+
       return;
     }
+
     if (mayMutateHomeIndirectly(invocation)) {
       environment.bindings.delete('HOME');
     }
+
     if (invocation.head === 'let') {
       // The let builtin receives arithmetic source as data; the AST does not expose its destinations.
       for (const [name, word] of environment.bindings) {
         environment.bindings.set(name, dynamicBinding(word));
       }
+
       environment.temps.clear();
+
       return;
     }
+
     if (this.#applyVariableWrite(invocation, environment)) {
       return;
     }
+
     if (invocation.head === 'unset') {
       for (const word of invocation.words.slice(1)) {
         if (/^[A-Za-z_][A-Za-z0-9_]*$/u.test(word.value)) {
@@ -1318,14 +1548,19 @@ class BashAnalyzer {
           environment.bindings.delete(word.value);
         }
       }
+
       return;
     }
+
     if (!['export', 'readonly', 'declare', 'typeset', 'local'].includes(invocation.head)) {
       return;
     }
+
     const functionScope = this.#functionScopes.at(-1);
+
     for (const word of invocation.words.slice(1)) {
       const name = assignedNameOf(word);
+
       if (name === undefined && word.kind === 'dynamic') {
         this.#addDiagnostic(
           'dynamic-shell-source',
@@ -1333,11 +1568,14 @@ class BashAnalyzer {
           word.range,
         );
       }
+
       if (name !== undefined) {
         this.#environmentAssignments.add(name);
+
         if (invocation.head === 'local') {
           functionScope?.localNames.add(name);
         }
+
         const previous = environment.bindings.get(name);
         environment.temps.delete(name);
         environment.bindings.delete(name);
@@ -1348,11 +1586,14 @@ class BashAnalyzer {
 
   #applyVariableWrite(invocation: ShellInvocation, environment: Environment): boolean {
     const targets = variableWriteTargets(invocation);
+
     if (targets === null) {
       return false;
     }
+
     for (const target of targets) {
       const name = assignedNameOf(target);
+
       if (target.kind !== 'literal' || name !== target.value) {
         this.#addDiagnostic(
           'dynamic-shell-source',
@@ -1365,11 +1606,13 @@ class BashAnalyzer {
         this.#environmentAssignments.add(name);
       }
     }
+
     return true;
   }
 
   #findBypass(): boolean {
     const masked = this.#source.split('');
+
     for (const range of this.#heredocRanges) {
       for (let index = range.start; index < range.end && index < masked.length; index += 1) {
         if (masked[index] !== '\n' && masked[index] !== '\r') {
@@ -1377,6 +1620,7 @@ class BashAnalyzer {
         }
       }
     }
+
     return /(?<prefix>^|\s)#\s*tripwire-allow:[ \t]*\S[^\r\n]*/u.test(masked.join(''));
   }
 }

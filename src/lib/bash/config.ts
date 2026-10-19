@@ -14,8 +14,11 @@ const ShellConfigSchema = Schema.Struct({
 });
 
 type ExecutionCarrierAlias = typeof ExecutionCarrierAliasSchema.Type;
+
 type ExecutionCarrierKind = typeof ExecutionCarrierKindSchema.Type;
+
 type ShellConfig = typeof ShellConfigSchema.Type;
 
 export type { ExecutionCarrierAlias, ExecutionCarrierKind, ShellConfig };
+
 export { ExecutionCarrierAliasSchema, ExecutionCarrierKindSchema, ShellConfigSchema };

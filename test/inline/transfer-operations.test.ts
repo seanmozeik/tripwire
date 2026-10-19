@@ -13,6 +13,7 @@ bunTest.test('transfers carry paths directly, including option-shaped filenames'
     [],
     '/tmp',
   );
+
   bunTest.expect(report.gap).toBeNull();
   bunTest.expect(report.operations.map(({ range: _range, ...operation }) => operation)).toEqual([
     { kind: 'transfer', command: 'mv', sources: ['--'], destination: 'target', cwd: '/tmp' },
@@ -38,6 +39,7 @@ bunTest.test.each([
     [],
     '/tmp',
   );
+
   bunTest.expect(report.gap).toContain('Earlier filesystem effects');
 });
 
@@ -63,6 +65,7 @@ bunTest.test('unrelated transfers and literal transfer processes retain path res
 bunTest.test('unclassified subprocess effects invalidate later resolution', () => {
   const source =
     'from pathlib import Path; import subprocess; subprocess.run(["custom-tool"]); Path("c").resolve()';
+
   bunTest
     .expect(analyzeCode('python', source, [], '/tmp').gap)
     .toContain('Earlier filesystem effects');
@@ -88,6 +91,7 @@ const transfers: readonly [CodeLanguage, string, readonly CodeOperation['kind'][
   ['javascript', 'require("fs").mkdirSync("example")', ['write']],
   ['javascript', 'require("fs").symlinkSync("example-a","example-b")', ['transfer']],
 ];
+
 bunTest.test.each(transfers)('extracts %s file effects: %s', (language, source, kinds) => {
   const report = analyzeCode(language, source, [], '/tripwire-policy-fixture');
   bunTest.expect(report.gap).toBeNull();
@@ -96,9 +100,11 @@ bunTest.test.each(transfers)('extracts %s file effects: %s', (language, source, 
   bunTest
     .expect(decideBash(`${runner} ${quote(source)}`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
     .toBe('allow');
+
   const dangerous = source
     .replaceAll('example-b', '.env')
     .replaceAll('mkdirSync("example")', 'mkdirSync(".ssh/example")');
+
   bunTest
     .expect(
       decideBash(`${runner} ${quote(dangerous)}`, {}, { cwd: '/tripwire-policy-fixture' }).kind,

@@ -10,6 +10,7 @@ const rangeOf = (node: { readonly pos: number; readonly end: number }): SourceRa
 
 const basename = (value: string): string => {
   const index = value.lastIndexOf('/');
+
   return index === -1 ? value : value.slice(index + 1);
 };
 
@@ -19,23 +20,30 @@ const staticCommandWords = (command: Command): ShellWord[] | null => {
     command.prefix.length > 0 ||
     command.redirects.length > 0 ||
     !wordIsStatic(command.name) ||
-    command.suffix.some((word) => !wordIsStatic(word))
+    command.args.some((word) => word.type !== 'Word' || !wordIsStatic(word))
   ) {
     return null;
   }
-  return [command.name, ...command.suffix].map((word) => ({
-    source: word.text,
-    value: word.value,
-    kind: 'literal',
-    range: rangeOf(word),
-    quoted: (word.parts ?? []).some(
-      (part) =>
-        part.type === 'SingleQuoted' ||
-        part.type === 'DoubleQuoted' ||
-        part.type === 'AnsiCQuoted' ||
-        part.type === 'LocaleString',
-    ),
-  }));
+
+  return [command.name, ...command.args].flatMap((word) =>
+    word.type === 'Word'
+      ? [
+          {
+            source: word.text,
+            value: word.value,
+            kind: 'literal',
+            range: rangeOf(word),
+            quoted: (word.parts ?? []).some(
+              (part) =>
+                part.type === 'SingleQuoted' ||
+                part.type === 'DoubleQuoted' ||
+                part.type === 'AnsiCQuoted' ||
+                part.type === 'LocaleString',
+            ),
+          },
+        ]
+      : [],
+  );
 };
 
 export { basename, rangeOf, staticCommandWords };

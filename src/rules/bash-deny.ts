@@ -17,6 +17,7 @@ const argsJoined = (seg: ShellInvocation): string => seg.tokens.slice(1).join(' 
 
 const flagPresent = (seg: ShellInvocation, ...flags: readonly string[]): boolean => {
   const segmentFlags = new Set(seg.flags);
+
   return flags.some((flag) => segmentFlags.has(flag));
 };
 
@@ -53,15 +54,19 @@ const hasComputedPolicyDiscriminator = (seg: ShellInvocation): boolean => {
       .slice(1)
       .some((word) => word.kind === 'dynamic' && !word.source.startsWith('if='));
   }
+
   if (seg.head === 'rsync') {
     const separator = seg.words.findIndex((word) => word.value === '--');
     const optionEnd = separator === -1 ? seg.words.length : separator;
+
     return seg.words.slice(1, optionEnd).some((word) => word.kind === 'dynamic');
   }
+
   if (seg.head === 'gh' && seg.tokens[1] === 'api') {
     for (let index = 2; index < seg.words.length; index += 1) {
       const previous = seg.words[index - 1]?.value;
       const word = seg.words[index];
+
       if (
         word?.kind === 'dynamic' &&
         (previous === '--method' ||
@@ -72,12 +77,16 @@ const hasComputedPolicyDiscriminator = (seg: ShellInvocation): boolean => {
         return true;
       }
     }
+
     return false;
   }
+
   const depth = STATIC_SUBCOMMAND_DEPTH.get(seg.head);
+
   if (depth !== undefined) {
     return seg.words.slice(1, depth + 1).some((word) => word.kind === 'dynamic');
   }
+
   return (
     STATIC_POLICY_ARGUMENTS.has(seg.head) &&
     seg.words.slice(1).some((word) => word.kind === 'dynamic')
@@ -414,30 +423,38 @@ const bashDeny = (program: ShellProgram, ruleActions: RuleActions = {}): Decisio
   // A weaker `ask` on an early segment (e.g. the outer `sudo`) shadow a
   // `deny` on a later unwrapped segment (e.g. the interior `shutdown`).
   const hits: Decision[] = [];
+
   if (program.diagnostics.length > 0) {
     const reasons = [...new Set(program.diagnostics.map((diagnostic) => diagnostic.message))];
+
     const decision = deny(
       'unsupported-shell-structure',
       `Tripwire cannot inspect this shell program safely: ${reasons.join(' ')}`,
     );
+
     hits.push(applyShellBypass(program, decision));
   }
+
   for (const seg of program.invocations) {
     if (hasComputedPolicyDiscriminator(seg)) {
       const decision = deny(
         'unsupported-shell-structure',
         `Tripwire cannot classify computed policy arguments to \`${seg.head}\` safely.`,
       );
+
       hits.push(applyShellBypass(program, decision));
     } else {
       const spec = SPECS.find((candidate) => candidate.match(seg, program.source));
+
       if (spec !== undefined) {
         const decision =
           spec.action === 'deny' ? deny(spec.rule, spec.message) : ask(spec.rule, spec.message);
+
         hits.push(applyShellBypass(program, applyRuleAction(decision, ruleActions)));
       }
     }
   }
+
   return hits.length === 0 ? allow('bash-deny') : merge(hits);
 };
 

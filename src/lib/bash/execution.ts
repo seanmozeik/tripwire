@@ -1,4 +1,4 @@
-import type { Node, Redirect } from 'unbash';
+import type { SyntaxNode, Redirection } from 'unbash';
 
 import { ExecutionCarriers } from './carriers';
 import type { ExecutionContext, ExecutionHost } from './execution-types';
@@ -32,24 +32,31 @@ const applyEnvWord = (
 ): number => {
   if (word.value === '-u' || word.value === '--unset') {
     environment.bindings.delete(next?.value ?? '');
+
     return 1;
   }
+
   if (['-i', '--ignore-environment', '-'].includes(word.value)) {
     environment.bindings.clear();
   }
+
   const unset = /^--unset=(?<name>.*)$|^-u(?<shortName>.+)$/u.exec(word.value)?.groups;
+
   if (unset !== undefined) {
     environment.bindings.delete(unset['name'] ?? unset['shortName'] ?? '');
   }
+
   const name =
     /^(?<name>[A-Za-z_][A-Za-z0-9_]*)=/u.exec(word.value)?.groups?.['name'] ??
     /^['"]?(?<name>[A-Za-z_][A-Za-z0-9_]*)=/u.exec(word.source)?.groups?.['name'];
+
   if (name !== undefined) {
     environment.bindings.set(name, {
       ...word,
       value: word.kind === 'literal' ? word.value.slice(name.length + 1) : DYNAMIC_VALUE,
     });
   }
+
   return 0;
 };
 
@@ -59,9 +66,11 @@ const wrapperEnvironment = (
   start: number,
 ): Environment => {
   const child = cloneEnvironment(environment);
+
   if (invocation.head === 'env') {
     for (let index = 1; index < start; index += 1) {
       const word = invocation.words[index];
+
       if (word !== undefined) {
         index += applyEnvWord(word, invocation.words[index + 1], child);
       }
@@ -69,6 +78,7 @@ const wrapperEnvironment = (
   } else if (['sudo', 'su', 'doas'].includes(invocation.head)) {
     child.bindings.delete('HOME');
   }
+
   return child;
 };
 
@@ -85,29 +95,30 @@ class ExecutionInspector {
 
   inspectShellInput(
     invocation: ShellInvocation,
-    redirects: readonly Redirect[],
+    redirects: readonly Redirection[],
     environment: Environment,
     context: ExecutionContext,
   ): boolean {
     if (!SHELL_WRAPPER_HEADS.has(invocation.head)) {
       return false;
     }
+
     if (hasScriptOperand(invocation)) {
       return true;
     }
+
     let inspected = context.inspectedPipelineInput;
+
     for (const [index, redirect] of redirects.entries()) {
-      if (
-        (redirect.operator === '<<' || redirect.operator === '<<-') &&
-        redirect.content !== undefined
-      ) {
+      if (redirect.type === 'HereDoc') {
         const word: ShellWord = {
-          source: redirect.content,
-          value: redirect.content,
+          source: redirect.body.text,
+          value: redirect.body.text,
           kind: 'literal',
           range: rangeOf(redirect),
-          quoted: redirect.heredocQuoted === true,
+          quoted: redirect.delimiter?.quoted === true,
         };
+
         this.#host.inspectShellSource(word, environment, context);
         inspected = true;
       } else if (redirect.operator === '<<<') {
@@ -117,6 +128,7 @@ class ExecutionInspector {
         inspected ||= invocation.redirects[index]?.target.kind === 'literal';
       }
     }
+
     return inspected;
   }
 
@@ -135,11 +147,12 @@ class ExecutionInspector {
     ) {
       return;
     }
+
     this.#inspectExecutableWrapper(invocation, environment, context);
   }
 
   inspectPipelineInputs(
-    commands: readonly Node[],
+    commands: readonly SyntaxNode[],
     environment: Environment,
     context: ExecutionContext,
   ): ReadonlySet<number> {
@@ -155,20 +168,26 @@ class ExecutionInspector {
     if (!SHELL_WRAPPER_HEADS.has(invocation.head)) {
       return false;
     }
+
     if (hasScriptOperand(invocation)) {
       return true;
     }
+
     const scriptIndex = commandFlagValueIndex(invocation.words, 'c');
+
     if (scriptIndex !== null) {
       this.#host.inspectShellSource(invocation.words[scriptIndex], environment, context);
+
       return true;
     }
+
     const hasInspectionOnlyFlag =
       inlineShellSource ||
       invocation.tokens.includes('-n') ||
       invocation.tokens.includes('--noexec') ||
       invocation.tokens.includes('--help') ||
       invocation.tokens.includes('--version');
+
     if (!hasInspectionOnlyFlag) {
       this.#host.addDiagnostic(
         'dynamic-shell-source',
@@ -176,6 +195,7 @@ class ExecutionInspector {
         invocation.range,
       );
     }
+
     return true;
   }
 
@@ -187,23 +207,32 @@ class ExecutionInspector {
     switch (invocation.head) {
       case 'trap': {
         this.#inspectTrap(invocation, environment, context);
+
         return true;
       }
+
       case 'script': {
         const index = namedFlagValueIndex(invocation.words, new Set(['-c', '--command']));
+
         if (index !== null) {
           this.#host.inspectShellSource(invocation.words[index], environment, context);
         }
+
         return true;
       }
+
       case 'watch': {
         this.#inspectWatch(invocation, environment, context);
+
         return true;
       }
+
       case 'xargs': {
         this.#inspectXargs(invocation, environment, context);
+
         return true;
       }
+
       default: {
         return false;
       }
@@ -217,21 +246,27 @@ class ExecutionInspector {
   ): void {
     const start = skipHeadRenamingPrefix(invocation);
     const commandWords = invocation.words.slice(start);
+
     if (invocation.tokens.includes('-x') || invocation.tokens.includes('--exec')) {
       this.#host.emitSynthetic(commandWords, invocation, environment, context);
+
       return;
     }
+
     const [first] = commandWords;
     const last = commandWords.at(-1);
     const dynamic = commandWords.find((word) => word.kind === 'dynamic');
+
     if (dynamic !== undefined) {
       this.#host.addDiagnostic(
         'dynamic-shell-source',
         'watch receives command text that is computed at runtime.',
         dynamic.range,
       );
+
       return;
     }
+
     if (first !== undefined && last !== undefined) {
       const value = commandWords.map((word) => word.value).join(' ');
       this.#host.inspectShellSource(
@@ -271,6 +306,7 @@ class ExecutionInspector {
       const prefix = Object.hasOwn(PREFIX_WRAPPERS, invocation.head)
         ? PREFIX_WRAPPERS[invocation.head]
         : undefined;
+
       if (prefix !== undefined) {
         this.#inspectPrefixWrapper(invocation, prefix, environment, context);
       }
@@ -284,6 +320,7 @@ class ExecutionInspector {
   ): void {
     const [, firstArgument, secondArgument] = invocation.words;
     const action = firstArgument?.value === '--' ? secondArgument : firstArgument;
+
     if (
       action === undefined ||
       action.value === '' ||
@@ -293,6 +330,7 @@ class ExecutionInspector {
     ) {
       return;
     }
+
     this.#host.inspectShellSource(action, environment, context);
   }
 
@@ -303,6 +341,7 @@ class ExecutionInspector {
   ): void {
     const start = skipHeadRenamingPrefix(invocation);
     const commandWords = invocation.words.slice(start);
+
     const executable =
       commandWords[0] ??
       ({
@@ -312,6 +351,7 @@ class ExecutionInspector {
         source: 'echo',
         value: 'echo',
       } satisfies ShellWord);
+
     const generatedArgument: ShellWord = {
       kind: 'dynamic',
       quoted: false,
@@ -319,6 +359,7 @@ class ExecutionInspector {
       source: '<xargs-input>',
       value: DYNAMIC_VALUE,
     };
+
     this.#host.emitSynthetic(
       [executable, ...commandWords.slice(1), generatedArgument],
       invocation,
@@ -336,16 +377,21 @@ class ExecutionInspector {
   ): void {
     for (let index = 1; index < invocation.words.length; index += 1) {
       const current = invocation.words[index];
+
       if (current !== undefined && flags.has(current.value)) {
         const inner: ShellWord[] = [];
         const root = pickExecRoot(invocation.words, index, flags === FD_EXEC_FLAGS ? 'fd' : 'find');
+
         for (let cursor = index + 1; cursor < invocation.words.length; cursor += 1) {
           const word = invocation.words[cursor];
+
           if (word === undefined || word.value === ';' || word.value === '+') {
             break;
           }
+
           inner.push(placeholders.has(word.value) ? root : word);
         }
+
         this.#host.emitSynthetic(inner, invocation, environment, context);
       }
     }
@@ -357,26 +403,35 @@ class ExecutionInspector {
     context: ExecutionContext,
   ): void {
     let index = 1;
+
     while (invocation.words[index]?.value.startsWith('-') === true) {
       index += 1;
     }
+
     const subcommand = invocation.words[index]?.value;
+
     if (subcommand === undefined) {
       return;
     }
+
     if (RTK_WRAPPER_SUBCOMMANDS.has(subcommand)) {
       const commandIndex = namedFlagValueIndex(
         invocation.words,
         new Set(['-c', '--command']),
         index + 1,
       );
+
       if (commandIndex !== null) {
         this.#host.inspectShellSource(invocation.words[commandIndex], environment, context);
+
         return;
       }
+
       this.#host.emitSynthetic(invocation.words.slice(index + 1), invocation, environment, context);
+
       return;
     }
+
     this.#host.emitSynthetic(invocation.words.slice(index), invocation, environment, context);
   }
 
@@ -388,11 +443,14 @@ class ExecutionInspector {
   ): void {
     if (spec.shellFlag) {
       const commandIndex = namedFlagValueIndex(invocation.words, new Set(['-c', '--command']));
+
       if (commandIndex !== null) {
         this.#host.inspectShellSource(invocation.words[commandIndex], environment, context);
+
         return;
       }
     }
+
     let index = skipOptions(invocation.words, 1, spec.valueFlags);
     index += spec.skipPositionals;
     this.#host.emitSynthetic(invocation.words.slice(index), invocation, environment, context);
@@ -400,4 +458,5 @@ class ExecutionInspector {
 }
 
 export { ExecutionInspector };
+
 export type { ExecutionContext } from './execution-types';

@@ -3,15 +3,20 @@ import type { ShellInvocation, ShellWord } from './types';
 // Shell options stop at a script operand. Later -c arguments belong to the file.
 const hasScriptOperand = (invocation: Pick<ShellInvocation, 'words'>): boolean => {
   const values = new Set(['-o', '+o', '--rcfile', '--init-file']);
+
   for (let index = 1; index < invocation.words.length; index += 1) {
     const word = invocation.words[index];
+
     if (word?.kind !== 'literal') {
       return false;
     }
+
     if (word.value === '--') {
       const operand = invocation.words[index + 1];
+
       return operand?.kind === 'literal' && !['/dev/stdin', '/dev/fd/0'].includes(operand.value);
     }
+
     if (values.has(word.value)) {
       index += 1;
     } else if (/^-[^-]*[cs]/u.test(word.value)) {
@@ -20,6 +25,7 @@ const hasScriptOperand = (invocation: Pick<ShellInvocation, 'words'>): boolean =
       return !['/dev/stdin', '/dev/fd/0'].includes(word.value);
     }
   }
+
   return false;
 };
 
@@ -112,11 +118,14 @@ const skipOptions = (
   valueFlags: ReadonlySet<string>,
 ): number => {
   let index = start;
+
   while (index < words.length) {
     const value = words[index]?.value;
+
     if (value === undefined) {
       break;
     }
+
     if (valueFlags.has(value)) {
       index += 2;
     } else if (value.includes('=') && valueFlags.has(value.slice(0, value.indexOf('=')))) {
@@ -129,6 +138,7 @@ const skipOptions = (
       break;
     }
   }
+
   return index;
 };
 
@@ -136,7 +146,9 @@ const skipHeadRenamingPrefix = (invocation: ShellInvocation): number => {
   const valueFlags = Object.hasOwn(HEAD_RENAMING_VALUE_FLAGS, invocation.head)
     ? (HEAD_RENAMING_VALUE_FLAGS[invocation.head] ?? new Set<string>())
     : new Set<string>();
+
   let index = skipOptions(invocation.words, 1, valueFlags);
+
   // Command -v/-V reports names. Only options before the operand count;
   // `command -- node -v` still executes node.
   if (
@@ -147,17 +159,20 @@ const skipHeadRenamingPrefix = (invocation: ShellInvocation): number => {
   ) {
     return invocation.words.length;
   }
+
   if (invocation.head === 'env') {
     while (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(invocation.words[index]?.value ?? '')) {
       index += 1;
     }
   }
+
   return index;
 };
 
 const commandFlagValueIndex = (words: readonly ShellWord[], flag: string): number | null => {
   for (let index = 1; index < words.length - 1; index += 1) {
     const value = words[index]?.value;
+
     if (
       value !== undefined &&
       (value === `-${flag}` ||
@@ -166,6 +181,7 @@ const commandFlagValueIndex = (words: readonly ShellWord[], flag: string): numbe
       return index + 1;
     }
   }
+
   return null;
 };
 
@@ -176,10 +192,12 @@ const namedFlagValueIndex = (
 ): number | null => {
   for (let index = start; index < words.length; index += 1) {
     const value = words[index]?.value;
+
     if (value !== undefined) {
       if (flags.has(value)) {
         return index + 1 < words.length ? index + 1 : null;
       }
+
       for (const flag of flags) {
         if (value.startsWith(`${flag}=`)) {
           return index;
@@ -187,6 +205,7 @@ const namedFlagValueIndex = (
       }
     }
   }
+
   return null;
 };
 
@@ -237,21 +256,27 @@ const pathDanger = (value: string): number => {
   if (value === '/') {
     return 100;
   }
+
   if (value === '~' || /^\$\{?HOME\}?(?:\/|$)/u.test(value)) {
     return 90;
   }
+
   if (/^\/(?:etc|usr|bin|sbin|System|Library|var|boot|root|home)(?:\/|$)/u.test(value)) {
     return 80;
   }
+
   if (value.startsWith('/Users/')) {
     return 70;
   }
+
   if (value.startsWith('/')) {
     return 60;
   }
+
   if (value.startsWith('../')) {
     return 40;
   }
+
   return 10;
 };
 
@@ -261,8 +286,10 @@ const pickExecRoot = (
   kind: 'fd' | 'find',
 ): ShellWord => {
   const candidates: ShellWord[] = [];
+
   for (let index = 1; index < execFlagIndex; index += 1) {
     const word = words[index];
+
     if (word !== undefined && kind === 'fd' && FD_VALUE_FLAGS.has(word.value)) {
       index += 1;
     } else if (word?.value.startsWith('-') === true) {
@@ -273,7 +300,9 @@ const pickExecRoot = (
       candidates.push(word);
     }
   }
+
   candidates.sort((left, right) => pathDanger(right.value) - pathDanger(left.value));
+
   return (
     candidates[0] ?? {
       source: '.',
@@ -289,6 +318,7 @@ const FD_EXEC_FLAGS: ReadonlySet<string> = new Set(['-x', '-X', '--exec', '--exe
 const FD_PLACEHOLDERS: ReadonlySet<string> = new Set(['{}', '{/}', '{//}', '{.}', '{/.}']);
 const FIND_EXEC_FLAGS: ReadonlySet<string> = new Set(['-exec', '-execdir', '-ok', '-okdir']);
 const FIND_PLACEHOLDERS: ReadonlySet<string> = new Set(['{}']);
+
 const RTK_WRAPPER_SUBCOMMANDS: ReadonlySet<string> = new Set([
   'run',
   'proxy',
@@ -324,6 +354,7 @@ const PREFIX_WRAPPERS: Readonly<Record<string, PrefixWrapper>> = {
 };
 
 export type { PrefixWrapper };
+
 export {
   FD_EXEC_FLAGS,
   FD_PLACEHOLDERS,

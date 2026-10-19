@@ -10,6 +10,7 @@ const SHELL_HEADS: ReadonlySet<string> = new Set(['bash', 'sh', 'zsh', 'fish']);
 const isFetchPipedToShell = (program: ShellProgram): boolean => {
   for (const fetch of program.invocations) {
     const { pipeline } = fetch;
+
     if (FETCH_HEADS.has(fetch.head) && pipeline !== undefined) {
       const shell = program.invocations.find(
         (candidate) =>
@@ -17,11 +18,13 @@ const isFetchPipedToShell = (program: ShellProgram): boolean => {
           candidate.pipeline.index === pipeline.index + 1 &&
           SHELL_HEADS.has(candidate.head),
       );
+
       if (shell !== undefined) {
         return true;
       }
     }
   }
+
   return false;
 };
 
@@ -61,6 +64,7 @@ const bashNetworkInstall = (program: ShellProgram): Decision => {
       "Piping `curl` / `wget` directly into a shell runs whatever the remote URL serves. Refuse — download to a file, inspect, then run if appropriate. If you genuinely need this, append ` # tripwire-allow: <reason>` (and explain to the user what you're running).",
     );
   }
+
   for (const seg of program.invocations) {
     for (const s of INSTALL_SPECS) {
       if (seg.head === s.head && seg.tokens[1] === s.subcommand) {
@@ -68,6 +72,7 @@ const bashNetworkInstall = (program: ShellProgram): Decision => {
       }
     }
   }
+
   return allow('bash-network-install');
 };
 

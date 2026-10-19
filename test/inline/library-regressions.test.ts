@@ -10,6 +10,7 @@ const python = (source: string): string => `python3 - <<'PY'\n${source}\nPY`;
 
 bunTest.test('JSON imports verify the resolved regular file', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'tripwire-json-import-'));
+
   try {
     mkdirSync(path.join(root, 'directory.json'));
     writeFileSync(path.join(root, 'directory.json', 'index.js'), 'module.exports = 1;');
@@ -19,11 +20,13 @@ bunTest.test('JSON imports verify the resolved regular file', () => {
     symlinkSync('payload.js', path.join(root, 'script-link.json'));
     symlinkSync('data.json', path.join(root, 'data-link.json'));
     symlinkSync('secrets.json', path.join(root, 'secret-link.json'));
+
     for (const name of ['data.json', 'data-link.json']) {
       bunTest
         .expect(decideBash(`node -e 'console.log(require("./${name}"))'`, {}, { cwd: root }).kind)
         .toBe('allow');
     }
+
     for (const name of ['directory.json', 'script-link.json', 'secret-link.json', 'missing.json']) {
       bunTest
         .expect(decideBash(`node -e 'require("./${name}")'`, {}, { cwd: root }).kind)
@@ -94,14 +97,17 @@ bunTest.test('ZIP argument forms produce the same file operations', () => {
     [],
     '/tripwire-policy-fixture',
   );
+
   const keyword = analyzeCode(
     'python',
     'import zipfile; zipfile.ZipFile(mode="w", file="output.zip")',
     [],
     '/tripwire-policy-fixture',
   );
+
   bunTest.expect(positional.gap).toBeNull();
   bunTest.expect(keyword.gap).toBeNull();
+
   for (const report of [keyword, positional]) {
     bunTest.expect(report.operations).toHaveLength(1);
     bunTest.expect(report.operations[0]).toMatchObject({ kind: 'write', path: 'output.zip' });

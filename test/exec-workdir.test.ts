@@ -11,11 +11,13 @@ bunTest.test(
     const root = mkdtempSync(path.join(tmpdir(), 'tripwire-exec-workdir-'));
     const protectedDirectory = path.join(root, 'protected');
     const ordinaryDirectory = path.join(root, 'ordinary');
+
     try {
       mkdirSync(protectedDirectory);
       mkdirSync(ordinaryDirectory);
       writeFileSync(path.join(protectedDirectory, '.env'), 'fixture');
       symlinkSync('.env', path.join(protectedDirectory, 'output'));
+
       for (const toolName of ['exec_command', 'functions.exec_command']) {
         for (const fixture of [
           { cwd: ordinaryDirectory, workdir: protectedDirectory, expected: 'deny' },
@@ -32,6 +34,7 @@ bunTest.test(
               ...('workdir' in fixture && { workdir: fixture.workdir }),
             },
           });
+
           bunTest.expect(result.kind).toBe(fixture.expected);
         }
       }

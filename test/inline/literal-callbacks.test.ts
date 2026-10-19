@@ -10,6 +10,7 @@ bunTest.test.each(['map', 'filter', 'forEach', 'some', 'every', 'find', 'flatMap
   (method) => {
     const callback =
       method === 'reduce' ? '(a,p)=>{fs.unlinkSync(p);return a},0' : 'p=>fs.unlinkSync(p)';
+
     const source = `const fs=require("fs"); ["dist/a.txt","dist/b.txt"].${method}(${callback})`;
     bunTest
       .expect(decideBash(`node -e ${quote(source)}`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
@@ -69,6 +70,7 @@ bunTest.test.each([
 bunTest.test('reduce carries the accumulator between calls', () => {
   const source =
     'const fs=require("fs"); ["dist/a","dist/b"].reduce((a,p)=>{fs.unlinkSync(a);return p},"dist/initial")';
+
   bunTest
     .expect(decideBash(`node -e ${quote(source)}`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
     .toBe('allow');
@@ -96,6 +98,7 @@ bunTest.test('literal callback budget is bounded', () => {
 bunTest.test('known inner receiver retains unknown outer repetition', () => {
   const source =
     'const fs=require("fs"); let p="dist/a"; function f(){fs.unlinkSync(p);p="/"} for (const x of JSON.parse("[]")) [1].forEach(f)';
+
   bunTest
     .expect(decideBash(`node -e ${quote(source)}`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
     .toBe('deny');

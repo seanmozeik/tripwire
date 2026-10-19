@@ -13,6 +13,7 @@ const PiToolCallEventSchema = Schema.Struct({
   toolCallId: Schema.String,
   toolName: Schema.String,
 });
+
 type PiToolCallEvent = typeof PiToolCallEventSchema.Type;
 
 const PiToolResultEventSchema = Schema.Struct({
@@ -23,6 +24,7 @@ const PiToolResultEventSchema = Schema.Struct({
   details: Schema.Unknown,
   isError: Schema.Boolean,
 });
+
 type PiToolResultEvent = typeof PiToolResultEventSchema.Type;
 
 const PiEventSchema = Schema.Union([PiToolResultEventSchema, PiToolCallEventSchema]);
@@ -56,6 +58,7 @@ interface HookResult {
 }
 
 type TripwireProcessRunner = (command: RuntimeCommand, input: unknown) => Promise<HookResult>;
+
 type TripwireCommandInput = RuntimeCommand | string;
 
 const TIMEOUT_MS = 60_000;
@@ -66,11 +69,13 @@ const resolveShippedHookCommand = (
 ): RuntimeCommand => {
   const extensionPath = fileURLToPath(extensionUrl);
   let resolved = extensionPath;
+
   try {
     resolved = realpathSync(extensionPath);
   } catch {
     // Keep the unresolved path when the module is not on disk yet (unit tests).
   }
+
   return resolveTripwireCommand({ moduleUrl: pathToFileURL(resolved) });
 };
 
@@ -83,15 +88,18 @@ const requiredStringField = (
 ): string => {
   for (const name of names) {
     const field = value[name];
+
     if (typeof field === 'string') {
       return field;
     }
   }
+
   throw new Error(`Pi ${label} is missing`);
 };
 
 const stringArrayField = (value: Record<string, unknown>, name: string): string[] => {
   const field = value[name];
+
   return Array.isArray(field) ? field.filter((item) => typeof item === 'string') : [];
 };
 
@@ -99,23 +107,29 @@ const editStrings = (
   input: Record<string, unknown>,
 ): { old_string: string; new_string: string } => {
   const { edits } = input;
+
   if (Array.isArray(edits)) {
     const oldStrings: string[] = [];
     const newStrings: string[] = [];
+
     for (const edit of edits) {
       if (isRecord(edit)) {
         const oldText = stringField(edit, 'oldText') ?? stringField(edit, 'old_string');
         const newText = stringField(edit, 'newText') ?? stringField(edit, 'new_string');
+
         if (oldText !== undefined) {
           oldStrings.push(oldText);
         }
+
         if (newText !== undefined) {
           newStrings.push(newText);
         }
       }
     }
+
     return { old_string: oldStrings.join('\n'), new_string: newStrings.join('\n') };
   }
+
   return {
     old_string: stringField(input, 'oldText') ?? stringField(input, 'old_string') ?? '',
     new_string:
@@ -133,11 +147,13 @@ const recordPatchLine = (
   byPath: Map<string, { newLines: string[]; oldLines: string[] }>,
 ): void => {
   let linesKey: 'newLines' | 'oldLines' | undefined;
+
   if (line.startsWith('+')) {
     linesKey = 'newLines';
   } else if (line.startsWith('-')) {
     linesKey = 'oldLines';
   }
+
   if (linesKey !== undefined) {
     for (const path of paths) {
       byPath.get(path)?.[linesKey].push(line.slice(1));
@@ -154,15 +170,18 @@ const applyPatchInputs = (patch: string): readonly Record<string, unknown>[] => 
   const endMarker = '*** End Patch';
   const lines = patch.split(/\r?\n/u);
   const beginIndex = lines.findIndex((line) => line.trim() === beginMarker);
+
   if (beginIndex === -1) {
     return [];
   }
+
   const unboundedBody = lines.slice(beginIndex + 1);
   const endIndex = [...unboundedBody, endMarker].findIndex((line) => line.trim() === endMarker);
   const body = unboundedBody.slice(0, endIndex);
 
   const addCurrentPath = (filePath: string): void => {
     currentPaths.push(filePath);
+
     if (!byPath.has(filePath)) {
       byPath.set(filePath, { newLines: [], oldLines: [] });
     }
@@ -171,12 +190,14 @@ const applyPatchInputs = (patch: string): readonly Record<string, unknown>[] => 
   for (const line of body) {
     const fileMatch = fileHeader.exec(line);
     const filePath = fileMatch?.groups?.['path']?.trim();
+
     if (filePath !== undefined && filePath.length > 0) {
       currentPaths = [];
       addCurrentPath(filePath);
     } else if (currentPaths.length > 0) {
       const moveMatch = moveHeader.exec(line);
       const movePath = moveMatch?.groups?.['path']?.trim();
+
       if (movePath !== undefined && movePath.length > 0) {
         addCurrentPath(movePath);
       } else {
@@ -194,12 +215,15 @@ const applyPatchInputs = (patch: string): readonly Record<string, unknown>[] => 
 
 const normalizedToolInputs = (event: PiToolCallEvent): readonly Record<string, unknown>[] => {
   const { input, toolName } = event;
+
   if (toolName === 'bash' || toolName === 'powershell') {
     return [{ command: requiredStringField(input, ['command'], `${toolName} command`) }];
   }
+
   if (toolName === 'read') {
     return [{ file_path: requiredStringField(input, ['path', 'file_path'], 'read path') }];
   }
+
   if (toolName === 'write') {
     return [
       {
@@ -208,27 +232,36 @@ const normalizedToolInputs = (event: PiToolCallEvent): readonly Record<string, u
       },
     ];
   }
+
   if (toolName === 'edit') {
     const patchInputs = applyPatchInputs(stringField(input, 'input') ?? '');
+
     if (patchInputs.length > 0) {
       return patchInputs;
     }
+
     const directPath = stringField(input, 'path') ?? stringField(input, 'file_path');
     const paths = stringArrayField(input, 'paths');
     let targets = paths;
+
     if (targets.length === 0 && directPath !== undefined) {
       targets = [directPath];
     }
+
     if (targets.length === 0) {
       throw new Error('Pi edit path is missing');
     }
+
     const strings = editStrings(input);
     const inputs: Record<string, unknown>[] = [];
+
     for (const filePath of targets) {
       inputs.push({ file_path: filePath, ...strings });
     }
+
     return inputs;
   }
+
   return [input];
 };
 
@@ -236,26 +269,33 @@ const textFromContent = (content: unknown): string => {
   if (typeof content === 'string') {
     return content;
   }
+
   if (!Array.isArray(content)) {
     return '';
   }
+
   const texts: string[] = [];
+
   for (const item of content) {
     if (isRecord(item) && item['type'] === 'text' && typeof item['text'] === 'string') {
       texts.push(item['text']);
     }
   }
+
   return texts.join('\n');
 };
 
 const normalizedToolResponse = (event: PiToolResultEvent): Record<string, unknown> => {
   const text = textFromContent(event.content);
+
   if (event.toolName === 'bash' || event.toolName === 'powershell') {
     return { stdout: text, stderr: event.isError ? text : '', interrupted: event.isError };
   }
+
   if (event.toolName === 'read') {
     return { content: text };
   }
+
   return { content: text, details: event.details, isError: event.isError };
 };
 
@@ -265,16 +305,20 @@ const hookInputs = (
   cwd: string,
 ): readonly Record<string, unknown>[] => {
   const decoded = Schema.decodeUnknownResult(PiEventSchema)(event);
+
   if (Result.isFailure(decoded)) {
     throw new Error('Pi sent an invalid tool event');
   }
+
   const normalizedEvent = decoded.success;
+
   const base = {
     cwd,
     hook_event_name: hookEventName,
     tool_name: normalizedEvent.toolName,
     tool_use_id: normalizedEvent.toolCallId,
   };
+
   if ('content' in normalizedEvent) {
     return [
       {
@@ -284,19 +328,24 @@ const hookInputs = (
       },
     ];
   }
+
   const inputs: Record<string, unknown>[] = [];
+
   for (const toolInput of normalizedToolInputs(normalizedEvent)) {
     inputs.push({ ...base, tool_input: toolInput });
   }
+
   return inputs;
 };
 
 const readStream = async (stream: Readable): Promise<string> => {
   stream.setEncoding('utf8');
   let output = '';
+
   for await (const chunk of stream) {
     output += String(chunk);
   }
+
   return output;
 };
 
@@ -304,21 +353,27 @@ const runTripwire = async (command: RuntimeCommand, input: unknown): Promise<Hoo
   const child = spawn(command.executable, [...command.arguments, '--tripwire-hook'], {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
+
   const state = { timedOut: false };
+
   const timeout = setTimeout(() => {
     state.timedOut = true;
     child.kill('SIGKILL');
   }, TIMEOUT_MS);
+
   child.stdin.end(JSON.stringify(input));
+
   try {
     const [closed, stdout, stderr] = await Promise.all([
       once(child, 'close'),
       readStream(child.stdout),
       readStream(child.stderr),
     ]);
+
     if (state.timedOut) {
       throw new Error(`Tripwire exceeded its ${TIMEOUT_MS}ms timeout`);
     }
+
     return { exitCode: typeof closed[0] === 'number' ? closed[0] : 1, stderr, stdout };
   } finally {
     clearTimeout(timeout);
@@ -330,6 +385,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const stringField = (value: Record<string, unknown>, key: string): string | undefined => {
   const field = value[key];
+
   return typeof field === 'string' ? field : undefined;
 };
 
@@ -337,32 +393,41 @@ const tripwirePiDenialReason = (result: HookResult): string | undefined => {
   if (result.exitCode !== 0) {
     return result.stderr.trim() || `Tripwire exited ${result.exitCode}`;
   }
+
   if (result.stdout.trim().length === 0) {
     return 'Tripwire returned no decision';
   }
+
   try {
     const value: unknown = JSON.parse(result.stdout);
+
     if (!isRecord(value)) {
       return 'Tripwire returned invalid JSON';
     }
+
     const specific = isRecord(value['hookSpecificOutput'])
       ? value['hookSpecificOutput']
       : undefined;
+
     const decision =
       (specific === undefined ? undefined : stringField(specific, 'permissionDecision')) ??
       stringField(value, 'permissionDecision') ??
       stringField(value, 'permission');
+
     const reason =
       (specific === undefined ? undefined : stringField(specific, 'permissionDecisionReason')) ??
       stringField(value, 'permissionDecisionReason') ??
       stringField(value, 'reason') ??
       'Blocked by Tripwire';
+
     if (decision === 'deny' || decision === 'ask') {
       return reason;
     }
+
     if (stringField(value, 'decision') === 'block' || value['continue'] === false) {
       return reason;
     }
+
     return value['continue'] === true || decision === 'allow'
       ? undefined
       : 'Tripwire returned an unrecognized response';
@@ -379,18 +444,23 @@ const createTripwirePiExtension = (
     typeof commandInput === 'string'
       ? { arguments: [], executable: commandInput, kind: 'native' }
       : commandInput;
+
   return (pi: TripwirePiExtensionApi): void => {
     pi.on('tool_call', async (event, context) => {
       try {
         const inputs = hookInputs(event, 'PreToolUse', context.cwd);
         const input = inputs.length === 1 ? inputs[0] : inputs;
+
         if (input === undefined) {
           throw new Error('Tripwire could not normalize the Pi tool call');
         }
+
         const reason = tripwirePiDenialReason(await processRunner(command, input));
+
         if (reason !== undefined) {
           return { block: true, reason };
         }
+
         return {};
       } catch (error) {
         return {
@@ -403,10 +473,13 @@ const createTripwirePiExtension = (
     pi.on('tool_result', async (event, context) => {
       try {
         const [input] = hookInputs(event, 'PostToolUse', context.cwd);
+
         if (input === undefined) {
           throw new Error('Tripwire could not normalize the Pi tool result');
         }
+
         const reason = tripwirePiDenialReason(await processRunner(command, input));
+
         if (reason !== undefined) {
           context.ui.notify(`Tripwire stopped the session: ${reason}`, 'error');
           context.abort();

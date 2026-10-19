@@ -10,6 +10,7 @@ import { bashScopedRm } from '../src/rules/bash-scoped-rm';
 import { bashTarExplosion } from '../src/rules/bash-tar-explosion';
 
 const home = '/tripwire-home-fixture';
+
 const inspect = (command: string): string =>
   bashRedirect(analyzeBash(command, { home, cwd: '/tmp' })).kind;
 
@@ -67,6 +68,7 @@ bunTest.test('home expansion is shared by transfer, rm, redirect and cd operands
     home,
     cwd: '/tripwire-policy-fixture',
   });
+
   bunTest.expect(program.invocations[0]?.words.at(-1)?.value).toBe(`${home}/backup/`);
   bunTest.expect(program.invocations[1]?.words.at(-1)?.value).toBe(`${home}/backup/x`);
   bunTest.expect(program.redirects[0]?.target.value).toBe(`${home}/out`);
@@ -100,6 +102,7 @@ bunTest.test('resolved home retains catastrophic deletion and extraction protect
 
 bunTest.test('assigned home resolves symlink destinations and cd uses the same home', () => {
   const directory = mkdtempSync(path.join(tmpdir(), 'tripwire-home-fixture-'));
+
   try {
     mkdirSync(path.join(directory, '.ssh'));
     symlinkSync('.ssh', path.join(directory, 'alias'));

@@ -47,6 +47,7 @@ bunTest.describe('rule isolation', () => {
 
   bunTest.test('the production hook emits valid JSON after a deny', async () => {
     const home = await mkdtemp(path.join(tmpdir(), 'tripwire-runtime-'));
+
     try {
       const proc = Bun.spawnSync(
         [process.execPath, new URL('../src/dispatch.ts', import.meta.url).pathname],
@@ -89,6 +90,7 @@ bunTest.describe('PowerShell handling', () => {
   bunTest.test('post-tool calls fail closed when the scanner is missing', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'tripwire-missing-scanner-'));
     const fixture = 'SYNTHETIC_POWERSHELL_OUTPUT';
+
     try {
       const decision = decide(
         {

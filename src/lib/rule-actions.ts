@@ -31,6 +31,7 @@ const RuleActionsSchema = Schema.Struct({
 });
 
 type RuleAction = typeof RuleActionSchema.Type;
+
 type RuleActions = typeof RuleActionsSchema.Type;
 
 const isRuleActionId = (rule: string): rule is keyof RuleActions =>
@@ -38,20 +39,26 @@ const isRuleActionId = (rule: string): rule is keyof RuleActions =>
 
 const applyRuleAction = (decision: Decision, actions: RuleActions): Decision => {
   const configured = isRuleActionId(decision.rule) ? actions[decision.rule] : undefined;
+
   if (configured === undefined || configured === decision.kind) {
     return decision;
   }
+
   if (configured === 'allow') {
     return allow(decision.rule);
   }
+
   if (configured === 'warn') {
     return warn(decision.rule, decision.message);
   }
+
   if (configured === 'ask') {
     return ask(decision.rule, decision.message);
   }
+
   return deny(decision.rule, decision.message);
 };
 
 export type { RuleAction, RuleActions };
+
 export { applyRuleAction, RuleActionSchema, RuleActionsSchema };

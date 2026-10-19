@@ -15,15 +15,18 @@ const isExtractFlag = (flag: string): boolean =>
 const findChangeDir = (seg: ShellInvocation): string | null => {
   for (let i = 0; i < seg.tokens.length; i += 1) {
     const t = seg.tokens[i];
+
     if (t !== undefined) {
       if (t === '-C' || t === '--directory') {
         return seg.tokens[i + 1] ?? null;
       }
+
       if (t.startsWith('--directory=')) {
         return t.slice('--directory='.length);
       }
     }
   }
+
   return null;
 };
 
@@ -33,10 +36,13 @@ const isUnsafeExtractDest = (
   home: string | undefined,
 ): boolean => {
   const target = resolveShellPath(dest, cwd);
+
   if (target === null) {
     return true;
   }
+
   const resolved = resolveWritePath(target);
+
   return (
     resolved === '/' ||
     resolved === (home ?? homedir()) ||
@@ -46,6 +52,7 @@ const isUnsafeExtractDest = (
 
 const unzipDestination = (seg: ShellInvocation): string | undefined => {
   const destinationFlag = seg.tokens.indexOf('-d');
+
   return destinationFlag === -1 ? undefined : seg.tokens[destinationFlag + 1];
 };
 
@@ -53,13 +60,16 @@ const bashTarExplosion = (program: ShellProgram): Decision => {
   for (const seg of program.invocations) {
     if (seg.head === 'tar') {
       const [, legacyOptionWord] = seg.tokens;
+
       const extracting =
         seg.flags.some(isExtractFlag) ||
         seg.tokens.includes('--extract') ||
         (legacyOptionWord !== undefined &&
           /^[a-zA-Z]+$/u.test(legacyOptionWord) &&
           legacyOptionWord.includes('x'));
+
       const dest = extracting ? findChangeDir(seg) : null;
+
       if (dest !== null && isUnsafeExtractDest(dest, seg.cwd, seg.home)) {
         return deny(
           'tar-extract-to-root',
@@ -68,10 +78,12 @@ const bashTarExplosion = (program: ShellProgram): Decision => {
       }
     }
   }
+
   // Unzip with -d destination
   for (const seg of program.invocations) {
     if (seg.head === 'unzip') {
       const dest = unzipDestination(seg);
+
       if (dest !== undefined && isUnsafeExtractDest(dest, seg.cwd, seg.home)) {
         return deny(
           'unzip-to-root',
@@ -80,6 +92,7 @@ const bashTarExplosion = (program: ShellProgram): Decision => {
       }
     }
   }
+
   return allow('bash-tar-explosion');
 };
 

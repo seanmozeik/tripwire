@@ -4,6 +4,7 @@ interface CodeFixture {
   readonly command: string;
   readonly allowed: boolean;
 }
+
 const quote = (source: string): string => `'${source.replaceAll("'", String.raw`'\''`)}'`;
 const protectedPath = '/tripwire-policy-fixture/.ssh';
 

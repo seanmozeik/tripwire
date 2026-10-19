@@ -25,6 +25,7 @@ interface RuntimeCommandOptions {
 const executableFile = (candidate: string): string | undefined => {
   try {
     accessSync(candidate, constants.X_OK);
+
     return realpathSync(candidate);
   } catch {
     return undefined;
@@ -37,6 +38,7 @@ const resolveNativeExecutable = (
 ): string | undefined => {
   try {
     const candidate = resolver?.() ?? createRequire(moduleUrl).resolve(NATIVE_PACKAGE);
+
     return executableFile(candidate);
   } catch {
     return undefined;
@@ -46,11 +48,13 @@ const resolveNativeExecutable = (
 const portableExecutableFor = (moduleUrl: string | URL): string => {
   const modulePath = fileURLToPath(moduleUrl);
   let resolvedModulePath = modulePath;
+
   try {
     resolvedModulePath = realpathSync(modulePath);
   } catch {
     // Build-time imports do not have an output file yet. The sibling path is still deterministic.
   }
+
   return path.join(path.dirname(resolvedModulePath), 'tripwire.js');
 };
 
@@ -59,8 +63,10 @@ const resolveTripwireCommand = (options: RuntimeCommandOptions = {}): RuntimeCom
   const platform = options.platform ?? process.platform;
   const architecture = options.architecture ?? process.arch;
   const environment = readRuntimeEnvironment();
+
   if (!environment.forcePortable && platform === 'darwin' && architecture === 'arm64') {
     const executable = resolveNativeExecutable(moduleUrl, options.nativeResolver);
+
     if (executable !== undefined) {
       return { arguments: [], executable, kind: 'native' };
     }

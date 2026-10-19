@@ -84,6 +84,7 @@ const bashEvent = (command: string): HookEvent => ({
 
 const allRules = (cmd: string) => {
   const program = analyzeBash(cmd, { cwd: '/tripwire-policy-fixture' });
+
   return {
     deny: bashDeny(program),
     git: bashGit(program, defaultGitConfig),
@@ -102,7 +103,9 @@ const runDispatch = (event: HookEvent): unknown => {
     [process.execPath, new URL('../src/dispatch.ts', import.meta.url).pathname],
     { stdin: new TextEncoder().encode(JSON.stringify(event)), stdout: 'pipe', stderr: 'pipe' },
   );
+
   bunTest.expect(proc.exitCode).toBe(0);
+
   return JSON.parse(proc.stdout.toString()) as unknown;
 };
 
@@ -128,6 +131,7 @@ bunTest.describe('decide API', () => {
       blockedCommands: [{ pattern: 'tripwire-local-ok', message: 'blocked', action: 'deny' }],
       allowedCommands: [{ pattern: 'tripwire-local-ok', message: 'allowed', action: 'deny' }],
     };
+
     bunTest.expect(decide(bashEvent('tripwire-local-ok --flag'), config).kind).toBe('allow');
   });
 
@@ -136,6 +140,7 @@ bunTest.describe('decide API', () => {
       blockedCommands: [{ pattern: 'tripwire-local-block', message: 'blocked', action: 'deny' }],
       allowedCommands: [],
     };
+
     const decision = decide(bashEvent('tripwire-local-block --flag'), config);
     bunTest.expect(decision.kind).toBe('deny');
     bunTest.expect(decision.rule).toBe('config-custom');
@@ -428,12 +433,14 @@ bunTest.describe('bash-scoped-rm', () => {
   bunTest.test('fd-prefixed redirect does not become an rm target', () => {
     // The file descriptor in `2>&1` is not an rm target.
     const root = mkdtempSync(path.join(tmpdir(), 'redirect-glob-'));
+
     try {
       writeFileSync(path.join(root, 'foo-example'), 'fictional');
       bunTest.expect(allRules(`rm -rf ${root}/foo-* 2>&1`).rm.kind).toBe('allow');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+
     bunTest.expect(allRules('rm -rf /tmp/foo 2>/dev/null').rm.kind).toBe('allow');
     bunTest.expect(allRules('rm -rf /tmp/foo 1>&2').rm.kind).toBe('allow');
     bunTest.expect(allRules('rm -rf /tmp/foo 2>>log').rm.kind).toBe('allow');
@@ -667,6 +674,7 @@ bunTest.describe('config-custom', () => {
       'gog calendar create --attendees vb@openai.com --summary "Meet"',
       calendarInviteConfig,
     );
+
     bunTest.expect(decision.kind).toBe('deny');
     bunTest.expect(decision.rule).toBe('config-custom');
   });
@@ -733,6 +741,7 @@ bunTest.describe('config-custom', () => {
       ],
       allowedCommands: [],
     });
+
     bunTest.expect(decision.kind).toBe('deny');
   });
 
@@ -989,6 +998,7 @@ fix(daemon): reap orphans on restart
 Body explains the reasoning over multiple lines.
 EOF
 )"`;
+
       bunTest.expect(allRules(cmd).git.kind).toBe('allow');
     },
   );
@@ -999,6 +1009,7 @@ EOF
 wip update
 EOF
 )"`;
+
       bunTest.expect(allRules(cmd).git.kind).toBe('deny');
     },
   );
@@ -1015,6 +1026,7 @@ feat: refactor
 # tripwire-allow: smuggled
 EOF
 )" && rm -rf /etc/passwd`;
+
       bunTest.expect(allRules(cmd).rm.kind).toBe('deny');
     },
   );
@@ -1055,6 +1067,7 @@ bunTest.describe('lazy-code', () => {
       old_string: 'function bar() {}',
       new_string: 'function bar() { /* TODO: finish this */ }',
     });
+
     bunTest.expect(d.kind).toBe('warn');
   });
   bunTest.test('warns on fallback in added .ts line', () => {
@@ -1063,6 +1076,7 @@ bunTest.describe('lazy-code', () => {
       old_string: 'const x = 1;',
       new_string: 'const x = 1;\nconst fallback = "x";',
     });
+
     bunTest.expect(d.kind).toBe('warn');
   });
   bunTest.test('respects bypass marker on the line', () => {
@@ -1071,6 +1085,7 @@ bunTest.describe('lazy-code', () => {
       old_string: '',
       new_string: 'const placeholder = ""; // tripwire-allow: real product field name',
     });
+
     bunTest.expect(d.kind).toBe('allow');
   });
   bunTest.test('skips markdown', () => {
@@ -1079,6 +1094,7 @@ bunTest.describe('lazy-code', () => {
       old_string: '',
       new_string: '# TODO: ship this',
     });
+
     bunTest.expect(d.kind).toBe('allow');
   });
   bunTest.test('skips test files', () => {
@@ -1087,6 +1103,7 @@ bunTest.describe('lazy-code', () => {
       old_string: '',
       new_string: 'const placeholder = "x";',
     });
+
     bunTest.expect(d.kind).toBe('allow');
   });
   bunTest.test('does not warn on pre-existing markers', () => {
@@ -1095,6 +1112,7 @@ bunTest.describe('lazy-code', () => {
       old_string: '// TODO: old\nconst a = 1;',
       new_string: '// TODO: old\nconst a = 2;',
     });
+
     bunTest.expect(d.kind).toBe('allow');
   });
 });

@@ -15,16 +15,20 @@ interface BindingContext {
 const bindArrayPattern = (node: SyntaxNode, value: Value, context: BindingContext): void => {
   const parts = children(node).slice(1, -1);
   let position = 0;
+
   for (let index = 0; index < parts.length; index += 1) {
     const part = parts[index];
+
     if (part?.name === ',') {
       position += 1;
     } else if (part !== undefined) {
       if (part.name === 'Spread') {
         const target = parts[index + 1];
+
         if (target === undefined) {
           return failInspection('Missing rest binding.');
         }
+
         requireData([value]);
         bindPattern(
           target,
@@ -33,19 +37,25 @@ const bindArrayPattern = (node: SyntaxNode, value: Value, context: BindingContex
             : data,
           context,
         );
+
         return;
       }
+
       let item = indexedValue(value, { kind: 'number', value: position });
+
       if (parts[index + 1]?.name === 'Equals') {
         const fallback = parts[index + 2];
+
         if (fallback === undefined) {
           return failInspection('Missing binding default.');
         }
+
         const alternative = context.evaluate(fallback);
         requireData([item, alternative]);
         item = data;
         index += 2;
       }
+
       bindPattern(part, item, context);
     }
   }
@@ -54,29 +64,39 @@ const bindArrayPattern = (node: SyntaxNode, value: Value, context: BindingContex
 const bindPattern = (node: SyntaxNode, value: Value, context: BindingContext): void => {
   if (['VariableName', 'VariableDefinition', 'PropertyName'].includes(node.name)) {
     context.set(context.text(node), value);
+
     return;
   }
+
   if (node.name === 'ArrayPattern') {
     bindArrayPattern(node, value, context);
+
     return;
   }
+
   if (node.name === 'ObjectPattern') {
     for (const property of children(node).filter((part) => !['{', '}', ','].includes(part.name))) {
-      const [key, separator, target] = children(property);
-      if (key?.name !== 'PropertyName') {
+      const parts = children(property);
+      const [key, separator, target] = parts;
+
+      if (key === undefined || !['PropertyName', 'VariableDefinition'].includes(key.name)) {
         return failInspection('Computed binding requires a literal key.');
       }
+
       const member = namedMember(value, context.text(key), context.language);
+
       if (separator === undefined) {
         bindPattern(key, member, context);
-      } else if (separator.name === ':' && target !== undefined) {
+      } else if (parts.length === 3 && separator.name === ':' && target !== undefined) {
         bindPattern(target, member, context);
       } else {
         return failInspection('Object binding defaults require inspection.');
       }
     }
+
     return;
   }
+
   return failInspection('Unsupported binding pattern.');
 };
 

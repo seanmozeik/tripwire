@@ -61,10 +61,13 @@ const addConfigOverride = (
   const equals = assignment.indexOf('=');
   const key = (equals === -1 ? assignment : assignment.slice(0, equals)).toLowerCase();
   const value = equals === -1 ? '' : assignment.slice(equals + 1);
+
   if (!fromEnvironment) {
     overrides.set(key, value);
+
     return;
   }
+
   const binding = bindings.get(value);
   overrides.set(key, binding?.kind === 'literal' ? binding.value : null);
 };
@@ -106,14 +109,18 @@ const parseGit = (seg: ShellInvocation): GitInvocation | null => {
   if (seg.head !== 'git') {
     return null;
   }
+
   const toks = seg.tokens.slice(1);
   const configOverrides = new Map<string, string | null>();
   let i = 0;
+
   while (i < toks.length) {
     const t = toks[i];
+
     if (t === undefined) {
       break;
     }
+
     if (t === '-c' || t === '--config-env') {
       addConfigOverride(configOverrides, toks[i + 1] ?? '', seg.bindings, t === '--config-env');
       i += 2;
@@ -148,34 +155,43 @@ const parseGit = (seg: ShellInvocation): GitInvocation | null => {
       };
     }
   }
+
   return null;
 };
 
 const messageOf = (subArgs: readonly string[]): string | null => {
   for (let i = 0; i < subArgs.length; i += 1) {
     const t = subArgs[i];
+
     if (t === undefined) {
       break;
     }
+
     if (t === '-m' || t === '--message') {
       const raw = subArgs[i + 1];
+
       return raw ?? null;
     }
+
     if (t.startsWith('--message=')) {
       return t.slice('--message='.length);
     }
+
     // Combined short flags like `-am`, `-ma`, `-amS` carry the message
     // In the next positional arg — same as `-m` alone.
     if (/^-[a-zA-Z]*m[a-zA-Z]*$/u.test(t)) {
       const raw = subArgs[i + 1];
+
       return raw ?? null;
     }
   }
+
   return null;
 };
 
 const protectedBranchHit = (positional: readonly string[], config: GitConfig): string | null => {
   const branches = getProtectedBranches(config);
+
   for (const arg of positional) {
     for (const p of branches) {
       if (arg === p || arg.endsWith(`:${p}`) || arg.endsWith(`/${p}`)) {
@@ -183,6 +199,7 @@ const protectedBranchHit = (positional: readonly string[], config: GitConfig): s
       }
     }
   }
+
   return null;
 };
 
@@ -193,6 +210,7 @@ const flagsOf = (subArgs: readonly string[]): string[] => subArgs.filter((a) => 
 
 const has = (subArgs: readonly string[], ...needles: readonly string[]): boolean => {
   const argumentSet = new Set(subArgs);
+
   return needles.some((needle) => argumentSet.has(needle));
 };
 
@@ -214,13 +232,16 @@ const handleConfig: Handler = ({ subArgs, positional }) => {
       'Modifying global / system git config is off-limits — that is your personal identity. Read-only `git config --get` is fine.',
     );
   }
+
   const isRead = has(subArgs, '--get', '-l', '--list', '--get-all', '--get-regexp');
+
   if (!isRead && positional.length >= 2) {
     return deny(
       'git-config-write',
       'Local git config writes should be done explicitly. To read a value, use `git config --get <key>`.',
     );
   }
+
   return allow('bash-git');
 };
 
@@ -228,6 +249,7 @@ const handleRm: Handler = ({ subArgs }) => {
   if (has(subArgs, '--cached')) {
     return allow('bash-git');
   }
+
   return ask(
     'git-rm',
     '`git rm <path>` removes from the index AND the working tree. To untrack-only, use `git rm --cached <path>`. To delete the file separately, use `trash` / `rip`. Confirm intent.',
@@ -236,15 +258,18 @@ const handleRm: Handler = ({ subArgs }) => {
 
 const handleRestore: Handler = ({ subArgs, positional }) => {
   const stagedOnly = has(subArgs, '--staged', '-S') && !has(subArgs, '--worktree', '-W');
+
   if (stagedOnly) {
     return allow('bash-git');
   }
+
   if (positional.length > 0) {
     return deny(
       'git-restore-discard',
       '`git restore <path>` discards uncommitted changes in the working tree. Refuse — `git diff <path>` to inspect first, or `git stash push <path>` to preserve.',
     );
   }
+
   return allow('bash-git');
 };
 
@@ -252,19 +277,23 @@ const handleCheckout: Handler = ({ subArgs, positional }) => {
   if (has(subArgs, '-b', '-B')) {
     return allow('bash-git');
   }
+
   if (has(subArgs, '-f', '--force')) {
     return deny(
       'git-checkout-force',
       '`git checkout -f` overwrites the working tree without preserving uncommitted changes. Refuse.',
     );
   }
+
   if (subArgs.includes('--')) {
     return deny(
       'git-checkout-discard',
       '`git checkout -- <path>` discards uncommitted working-tree changes. Refuse — use `git stash push <path>` to preserve, or `git diff <path>` to inspect first.',
     );
   }
+
   const [target] = positional;
+
   if (
     target !== undefined &&
     positional.length === 1 &&
@@ -275,6 +304,7 @@ const handleCheckout: Handler = ({ subArgs, positional }) => {
       '`git checkout .` discards ALL uncommitted working-tree changes. Refuse — `git stash` to preserve, or `git diff` to inspect first.',
     );
   }
+
   return allow('bash-git');
 };
 
@@ -285,6 +315,7 @@ const handleSwitch: Handler = ({ subArgs }) => {
       '`git switch -f / --discard-changes` throws away uncommitted working-tree changes. Refuse.',
     );
   }
+
   return allow('bash-git');
 };
 
@@ -295,15 +326,18 @@ const handleReset: Handler = ({ subArgs, flags, positional }) => {
       '`git reset --hard` discards all uncommitted changes AND moves HEAD. Refuse — describe the intent in chat. If undoing a published commit, `git revert <sha>` is safer.',
     );
   }
+
   if (has(subArgs, '--keep')) {
     return ask(
       'git-reset-keep',
       '`git reset --keep` resets HEAD but preserves uncommitted local changes. Confirm intent.',
     );
   }
+
   if (positional.length === 0 && flags.length === 0) {
     return allow('bash-git');
   }
+
   return ask(
     'git-reset-mixed',
     '`git reset` moves HEAD. Confirm intent — if undoing a commit, `git revert` is usually safer.',
@@ -314,12 +348,14 @@ const handleClean: Handler = ({ subArgs, flags }) => {
   if (has(subArgs, '-n', '--dry-run') || flags.some((flag) => /^-[a-zA-Z]*n/u.test(flag))) {
     return allow('bash-git');
   }
+
   if (flags.some((f) => /^-[a-zA-Z]*[df]/u.test(f) || f === '--force')) {
     return deny(
       'git-clean-fd',
       '`git clean -fd` deletes untracked files (often your in-progress work). Refuse — inspect with `git clean -dn` (dry run) first. If genuinely needed, append ` # tripwire-allow: <reason>`.',
     );
   }
+
   return allow('bash-git');
 };
 
@@ -327,18 +363,23 @@ const editorOverride = (invocation: GitInvocation): Decision | null => {
   const safeValues = new Set(['true', ':', '']);
   const environmentKeys = ['GIT_EDITOR', 'GIT_SEQUENCE_EDITOR', 'VISUAL', 'EDITOR'];
   const configKeys = ['core.editor', 'sequence.editor', 'core.hookspath'];
+
   const unsafeEnvironment = environmentKeys.some((key) => {
     const word = invocation.bindings.get(key);
+
     return word !== undefined && (word.kind !== 'literal' || !safeValues.has(word.value));
   });
+
   const unsafeConfig = configKeys.some(
     (key) =>
       invocation.configOverrides.has(key) &&
       !safeValues.has(invocation.configOverrides.get(key) ?? '__unresolved__'),
   );
+
   const configEnvironment = [...invocation.bindings.keys()].some((key) =>
     /^(?:GIT_CONFIG_PARAMETERS|GIT_CONFIG_COUNT|GIT_CONFIG_(?:KEY|VALUE)_\d+)$/u.test(key),
   );
+
   return unsafeEnvironment || unsafeConfig || configEnvironment
     ? ask(
         'git-editor-override',
@@ -349,44 +390,55 @@ const editorOverride = (invocation: GitInvocation): Decision | null => {
 
 const handleRebase: Handler = ({ subArgs, config, invocation }) => {
   const args = parseRebaseArguments(subArgs);
+
   if (args.interactive) {
     return deny(
       'git-rebase-interactive',
       '`git rebase -i` rewrites history interactively. Refuse — too easy to lose commits in the agent loop. If this is genuinely required, do it manually outside the agent.',
     );
   }
+
   if (args.exec || invocation.configOverrides.has('rebase.instructionformat')) {
     return ask(
       'git-rebase-exec',
       '`git rebase --exec / -x` and a `rebase.instructionFormat` override can run uninspected shell commands after commits. Run checks separately, or confirm the override before rebasing.',
     );
   }
+
   const configuredUpdateRefs = invocation.configOverrides.get('rebase.updaterefs');
+
   const updateRefs =
     args.updateRefs ??
     (invocation.configOverrides.has('rebase.updaterefs') &&
       !new Set(['false', 'no', '0', 'off']).has(configuredUpdateRefs?.toLowerCase() ?? ''));
+
   if (updateRefs) {
     return ask(
       'git-rebase-update-refs',
       '`git rebase --update-refs` can also rewrite protected branch pointers outside the named targets. Use `--no-update-refs`, or confirm the additional branch updates.',
     );
   }
+
   const override = editorOverride(invocation);
+
   if (override !== null) {
     return override;
   }
+
   if (args.operation !== undefined) {
     return allow('bash-git');
   }
+
   const targets = [args.upstream, args.onto, args.branch].filter((target) => target !== undefined);
   const hit = protectedBranchHit(targets, config);
+
   if (hit !== null) {
     return ask(
       'git-rebase-onto-protected',
       `Rebasing onto protected branch \`${hit}\` rewrites history of the current branch. \`git merge ${hit}\` is usually safer. Confirm intent.`,
     );
   }
+
   return ask(
     'git-rebase',
     '`git rebase` rewrites commit history. `git merge` is usually safer. Confirm intent.',
@@ -395,12 +447,15 @@ const handleRebase: Handler = ({ subArgs, config, invocation }) => {
 
 const handleCherryPick: Handler = ({ subArgs, invocation }) => {
   const override = editorOverride(invocation);
+
   if (override !== null) {
     return override;
   }
+
   if (has(subArgs, '--abort', '--quit', '--continue', '--skip')) {
     return allow('bash-git');
   }
+
   return ask(
     'git-cherry-pick',
     '`git cherry-pick` applies commits onto the current branch and can create conflicts. Confirm intent.',
@@ -424,6 +479,7 @@ const MERGE_STRATEGY_CONFIG_KEYS = ['pull.twohead', 'pull.octopus'] as const;
 
 const mergeAutoEdit = (invocation: GitInvocation): boolean => {
   const word = invocation.bindings.get('GIT_MERGE_AUTOEDIT');
+
   return (
     word !== undefined &&
     (word.kind !== 'literal' || ['true', 'yes', 'on', '1'].includes(word.value.toLowerCase()))
@@ -432,19 +488,24 @@ const mergeAutoEdit = (invocation: GitInvocation): boolean => {
 
 const handleMerge: Handler = ({ subArgs, invocation }) => {
   const args = parseMergeArguments(subArgs);
+
   if (args.edit ?? (!args.message && mergeAutoEdit(invocation))) {
     return deny(
       'git-merge-edit',
       '`git merge -e / --edit` and `GIT_MERGE_AUTOEDIT` open an editor for the merge message, which hangs a non-interactive agent. Use `--no-edit`, or pass the message with `-m "<message>"`.',
     );
   }
+
   const override = editorOverride(invocation);
+
   if (override !== null) {
     return override;
   }
+
   if (args.operation !== undefined) {
     return allow('bash-git');
   }
+
   const strategies: readonly (string | null)[] =
     args.strategies.length > 0
       ? args.strategies
@@ -452,24 +513,30 @@ const handleMerge: Handler = ({ subArgs, invocation }) => {
           if (!invocation.configOverrides.has(key)) {
             return [];
           }
+
           return invocation.configOverrides.get(key)?.split(' ') ?? [null];
         });
+
   const external = strategies.find(
     (strategy) => strategy === null || !BUILT_IN_MERGE_STRATEGIES.has(strategy),
   );
+
   if (external !== undefined) {
     const strategy = external === null ? 'from an unresolved environment value' : `\`${external}\``;
+
     return ask(
       'git-merge-strategy',
       `Merge strategy ${strategy} is not built into Git, so Git runs an external \`git-merge-<strategy>\` program that Tripwire does not inspect. Use a built-in strategy such as \`ort\`, or confirm the program.`,
     );
   }
+
   if ([...invocation.configOverrides.keys()].some((key) => /^merge\..+\.driver$/u.test(key))) {
     return ask(
       'git-merge-driver',
       'A submitted `merge.<driver>.driver` override runs an uninspected command for each path that selects the driver. Merge without the override, or confirm the command.',
     );
   }
+
   return ask('git-merge', '`git merge <branch>` may create merge conflicts. Confirm intent.');
 };
 
@@ -480,15 +547,18 @@ const handleCommit: Handler = ({ subArgs, config }) => {
       '`git commit --amend` rewrites the last commit. If it has been pushed, this causes upstream divergence. Refuse — surface the intent.',
     );
   }
+
   const msg = messageOf(subArgs);
   const hasFile = has(subArgs, '-F', '--file', '-c', '-C', '--reuse-message', '--reedit-message');
   const hasNoEdit = has(subArgs, '--no-edit');
+
   if (msg === null && !hasFile && !hasNoEdit) {
     return deny(
       'git-commit-no-message',
       '`git commit` without `-m "..."` opens an editor and hangs the agent. Use `git commit -m "<conventional message>"`.',
     );
   }
+
   if (msg !== null && config.enforceConventionalCommits === true && !CONVENTIONAL_RE.test(msg)) {
     return deny(
       'git-commit-non-conventional',
@@ -504,12 +574,14 @@ const handleCommit: Handler = ({ subArgs, config }) => {
       ].join('\n'),
     );
   }
+
   if (has(subArgs, '-a', '--all') || subArgs.some((t) => /^-[a-zA-Z]*a[a-zA-Z]*$/u.test(t))) {
     return ask(
       'git-commit-auto-stage',
       '`git commit -a / --all` auto-stages every tracked change. Explicit `git add <files>` first is usually clearer about what is being committed. Confirm.',
     );
   }
+
   return allow('bash-git');
 };
 
@@ -520,19 +592,23 @@ const handlePush: Handler = ({ subArgs, flags, positional, config }) => {
       'Force push is forbidden. If a branch needs to be reset upstream, surface the intent — there is almost always a non-force path.',
     );
   }
+
   if (has(subArgs, '--delete', '--mirror') || subArgs.some((a) => a.startsWith(':'))) {
     return deny(
       'git-push-delete',
       'Refusing to delete a remote branch via push. If genuinely needed, surface the intent.',
     );
   }
+
   const hit = protectedBranchHit(positional, config);
+
   if (hit !== null) {
     return deny(
       'git-push-protected',
       `Refusing to push directly to protected branch \`${hit}\`. Open a PR instead: \`gh pr create\`.`,
     );
   }
+
   return allow('bash-git');
 };
 
@@ -545,27 +621,33 @@ const handleBranch: Handler = ({ subArgs, flags, positional, config }) => {
       /^-[a-zA-Z]*D/u.test(f) ||
       /^-[a-zA-Z]*d/u.test(f),
   );
+
   if (deleteFlag !== undefined) {
     const targets = positional;
     const branches = new Set(getProtectedBranches(config));
     const hit = targets.find((target) => branches.has(target));
+
     if (hit !== undefined) {
       return deny('git-branch-delete-protected', `Refusing to delete protected branch \`${hit}\`.`);
     }
+
     if (deleteFlag === '-D' || deleteFlag.includes('D')) {
       return deny(
         'git-branch-force-delete',
         `\`git branch -D ${targets.join(' ')}\` force-deletes branches even if unmerged (potential data loss). To delete a merged branch, use \`-d\`. To force, append \` # tripwire-allow: <reason>\`.`,
       );
     }
+
     return ask(
       'git-branch-delete',
       `\`git branch -d ${targets.join(' ')}\` deletes a branch (merged-only check). Confirm intent.`,
     );
   }
+
   if (has(subArgs, '-m', '-M', '--move')) {
     return ask('git-branch-move', 'Renaming a branch can confuse pushed remotes. Confirm intent.');
   }
+
   return allow('bash-git');
 };
 
@@ -573,17 +655,20 @@ const handleTag: Handler = ({ subArgs }) => {
   if (has(subArgs, '-d', '--delete')) {
     return deny('git-tag-delete', '`git tag -d` deletes a tag. Refuse — surface intent.');
   }
+
   return allow('bash-git');
 };
 
 const handleStash: Handler = ({ subArgs }) => {
   const sub = subArgs[0] ?? 'push';
+
   if (sub === 'drop' || sub === 'clear') {
     return deny(
       'git-stash-drop',
       `\`git stash ${sub}\` discards stashed work. Refuse — \`git stash list\` and \`git stash show\` to inspect first.`,
     );
   }
+
   return allow('bash-git');
 };
 
@@ -594,11 +679,13 @@ const handleGc: Handler = ({ flags }) => {
       '`git gc --prune=now` / `--aggressive` destroys reflog recovery options. Refuse.',
     );
   }
+
   return allow('bash-git');
 };
 
 const handleRemote: Handler = ({ subArgs }) => {
   const [sub] = subArgs;
+
   if (
     sub !== undefined &&
     [
@@ -618,6 +705,7 @@ const handleRemote: Handler = ({ subArgs }) => {
       `\`git remote ${sub}\` changes which remote you're pushing to. Confirm — accidentally pointing at the wrong remote is high blast-radius.`,
     );
   }
+
   return allow('bash-git');
 };
 
@@ -628,6 +716,7 @@ const handleCheckoutIndex: Handler = ({ subArgs }) => {
       '`git checkout-index --force` can overwrite working-tree files. Refuse.',
     );
   }
+
   return ask(
     'git-checkout-index',
     '`git checkout-index` writes files from the index into the working tree. Confirm the target and intent.',
@@ -637,12 +726,14 @@ const handleCheckoutIndex: Handler = ({ subArgs }) => {
 const handleSubmoduleOrWorktree: Handler = ({ subcommand, subArgs }) => {
   const sub = subArgs[0] ?? '';
   const mutating = ['add', 'remove', 'rm', 'deinit', 'sync', 'set-url'].includes(sub);
+
   if (mutating) {
     return ask(
       'git-submodule-worktree-mutate',
       `\`git ${subcommand} ${sub}\` modifies repo structure. Confirm intent.`,
     );
   }
+
   return allow('bash-git');
 };
 
@@ -719,19 +810,23 @@ const evalGit = (inv: GitInvocation, config: GitConfig): Decision => {
         "`git reflog expire` destroys git's recovery history. Refuse — surface the intent.",
       );
     }
+
     if (subcommand === 'symbolic-ref' && positional.length >= 2) {
       return deny(
         'git-symbolic-ref-write',
         '`git symbolic-ref <name> <ref>` rewrites a symbolic ref. Refuse.',
       );
     }
+
     return allow('bash-git');
   }
 
   const handler = HANDLERS.get(subcommand);
+
   if (handler !== undefined) {
     return handler({ subcommand, subArgs, flags, positional, config, invocation: inv });
   }
+
   return warn(
     'git-unknown-subcommand',
     `\`git ${subcommand}\` is not classified by tripwire. Allowing — flag if this looks like history-rewriting or data-loss territory.`,
@@ -742,8 +837,10 @@ const isReadOnlyInvocation = (invocation: GitInvocation): boolean => {
   if (READ_ONLY.has(invocation.subcommand)) {
     return true;
   }
+
   if (invocation.subcommand === 'branch') {
     const args = invocation.subArgs;
+
     const readFlags = new Set([
       '--show-current',
       '--list',
@@ -760,6 +857,7 @@ const isReadOnlyInvocation = (invocation: GitInvocation): boolean => {
       '--no-column',
       '--column',
     ]);
+
     const filters = new Set([
       '--contains',
       '--no-contains',
@@ -769,13 +867,17 @@ const isReadOnlyInvocation = (invocation: GitInvocation): boolean => {
       '--sort',
       '--format',
     ]);
+
     let listing = args.length === 0;
+
     for (let index = 0; index < args.length; index += 1) {
       const arg = args[index] ?? '';
+
       if (readFlags.has(arg) || /^-[avr]+$/u.test(arg)) {
         listing = true;
       } else if (filters.has(arg.split('=')[0] ?? '')) {
         listing = true;
+
         if (!arg.includes('=') && args[index + 1]?.startsWith('-') === false) {
           index += 1;
         }
@@ -786,12 +888,16 @@ const isReadOnlyInvocation = (invocation: GitInvocation): boolean => {
         return false;
       }
     }
+
     return listing;
   }
+
   if (invocation.subcommand !== 'remote') {
     return false;
   }
+
   const operation = invocation.subArgs.find((argument) => !argument.startsWith('-'));
+
   return operation === undefined || operation === 'get-url' || operation === 'show';
 };
 
@@ -801,16 +907,20 @@ const bashGit = (
   ruleActions: RuleActions = {},
 ): Decision => {
   let advisory = allow('bash-git');
+
   for (const seg of program.invocations) {
     const inv = parseGit(seg);
+
     if (inv !== null) {
       const subcommandWord = seg.words[inv.subcommandIndex];
+
       if (subcommandWord?.kind === 'dynamic') {
         return deny(
           'git-dynamic-subcommand',
           'Tripwire cannot classify a Git subcommand that is computed at runtime.',
         );
       }
+
       if (
         (!isReadOnlyInvocation(inv) ||
           (inv.subcommand === 'branch' &&
@@ -824,7 +934,9 @@ const bashGit = (
           `Tripwire cannot prove that computed arguments to \`git ${inv.subcommand}\` preserve Git safety policy.`,
         );
       }
+
       const decision = applyRuleAction(evalGit(inv, config), ruleActions);
+
       if (decision.kind === 'warn') {
         advisory = merge([advisory, decision]);
       } else if (decision.kind !== 'allow') {
@@ -832,6 +944,7 @@ const bashGit = (
       }
     }
   }
+
   return advisory;
 };
 

@@ -9,9 +9,11 @@ if (platformManifest.version !== packageManifest.version) {
 }
 
 const executable = path.join(import.meta.dir, '..', 'packages', 'darwin-arm64', 'bin', 'tripwire');
+
 accessSync(executable, constants.X_OK);
 
 const version = Bun.spawnSync([executable, '--version'], { stderr: 'inherit', stdout: 'pipe' });
+
 if (version.exitCode !== 0 || version.stdout.toString().trim() !== platformManifest.version) {
   throw new Error('Tripwire platform executable version does not match its package');
 }

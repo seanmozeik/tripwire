@@ -14,11 +14,13 @@ const matches = (segment: ShellInvocation, policy: ToolPolicy): boolean => {
 
   const commandArguments = segment.tokens.slice(1);
   const commandArgumentSet = new Set(commandArguments);
+
   if (
     !(policy.match?.argumentsIncludeAll ?? []).every((argument) => commandArgumentSet.has(argument))
   ) {
     return false;
   }
+
   if (
     !(policy.match?.argumentsStartWith ?? []).every(
       (argument, index) => commandArguments[index] === argument,
@@ -26,6 +28,7 @@ const matches = (segment: ShellInvocation, policy: ToolPolicy): boolean => {
   ) {
     return false;
   }
+
   return (policy.match?.shortFlagsIncludeAll ?? []).every((flag) =>
     hasShortFlag(segment.flags, flag),
   );
@@ -41,6 +44,7 @@ const toolPolicy = (program: ShellProgram, policies: readonly ToolPolicy[]): Dec
       }
     }
   }
+
   return allow('tool-policy');
 };
 

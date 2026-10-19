@@ -6,19 +6,25 @@ const release = String.raw`v?(?:[0-9]+|[xX*])(?:\.(?:[0-9]+|[xX*])){0,3}(?:-[0-9
 const exact = new RegExp(`^${release}$`, 'u');
 const comparator = new RegExp(String.raw`^(?:>=|<=|>|<|=|\^|~)?${release}$`, 'u');
 const operator = /^(?:>=|<=|>|<|=|\^|~)$/u;
+
 const trim = (source: string): string =>
   source.replaceAll(/^\p{White_Space}+|\p{White_Space}+$/gu, '');
+
 const stripBom = (source: string): string => source.replace(/^\uFEFF/u, '');
 
 const versionRange = (source: string): boolean => {
   const tokens = trim(source).split(/\p{White_Space}+/u);
+
   if (tokens.length === 3 && tokens[1] === '-') {
     return exact.test(tokens[0] ?? '') && exact.test(tokens[2] ?? '');
   }
+
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index] ?? '';
+
     if (operator.test(token)) {
       index += 1;
+
       if (!exact.test(tokens[index] ?? '')) {
         return false;
       }
@@ -26,6 +32,7 @@ const versionRange = (source: string): boolean => {
       return false;
     }
   }
+
   return true;
 };
 

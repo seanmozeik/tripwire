@@ -71,20 +71,25 @@ const isSafePathTarget = (
   if (raw === '' || raw === DYNAMIC_VALUE) {
     return false;
   }
+
   const target = stripLeadingDotSlash(raw);
+
   if (target === '..' || target.startsWith('../') || target.includes('/../')) {
     return false;
   }
+
   for (const absolute of [...SAFE_ABSOLUTE, ...extraAbsolute]) {
     if (target === absolute || target.startsWith(`${absolute}/`)) {
       return true;
     }
   }
+
   for (const relative of [...SAFE_RELATIVE, ...extraRelative]) {
     if (target === relative || target.startsWith(`${relative}/`)) {
       return true;
     }
   }
+
   return false;
 };
 
@@ -126,12 +131,15 @@ const safeScopesSummary = (
     iac: ['.terraform'],
     'bundler dev': ['.yarn/cache', '.yarn/install-state.gz', '.pnpm-store', '.bun'],
   };
+
   if (extraRelative.length > 0) {
     groups['custom relative'] = extraRelative;
   }
+
   if (extraAbsolute.length > 0) {
     groups['custom absolute'] = extraAbsolute;
   }
+
   return Object.entries(groups)
     .map(([name, values]) => `  ${name}: ${values.join(', ')}`)
     .join('\n');
@@ -153,6 +161,9 @@ export type {
   ShellWordKind,
   SourceRange,
 } from './types';
+
 export { analyzeBash } from './analyze';
+
 export { DYNAMIC_VALUE } from './values';
+
 export { hasBypass, isSafePathTarget, safeScopesSummary };

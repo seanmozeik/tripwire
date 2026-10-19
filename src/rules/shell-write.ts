@@ -42,9 +42,11 @@ const PROTECTED_TARGET_RE: readonly ProtectedPathSpec[] = [
 
 const checkShellWritePath = (target: string): Decision | null => {
   const protection = classifyProtectedPath(target, 'write', PROTECTED_TARGET_RE);
+
   if (protection !== null) {
     return deny(protection.rule, protection.message);
   }
+
   return null;
 };
 

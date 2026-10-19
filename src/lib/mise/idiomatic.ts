@@ -97,24 +97,31 @@ const PLAIN_FILES = new Set([
 
 const assertIdiomaticSource = (source: string, filename: string, tool: string): void => {
   const name = path.basename(filename);
+
   if (name === 'package.json') {
     assertPackageJson(source, filename, tool);
+
     return;
   }
+
   if (name === '.bazelversion') {
     // Registry/bazel.toml anchors its numeric capture to the first line.
     const version =
       /^[\t ]*v?(?<version>[0-9]+\.[0-9]+(?:\.[0-9]+)?[0-9A-Za-z.-]*)[\t ]*\r?$/u.exec(
         stripBom(source).split('\n')[0] ?? '',
       )?.groups?.['version'];
+
     assertVersionSelector(version, `${filename}: version for ${tool}`);
+
     return;
   }
+
   assertSafe(PLAIN_FILES.has(name), `${filename}: unsupported idiomatic file format for ${tool}.`);
   const lines = versionLines(source);
   // Core node/java consume lines; ruby/go consume the whole normalized body.
   // All other plain readers inherit backend/mod.rs's whitespace tokenization.
   let values: string[];
+
   if (tool === 'ruby' || tool === 'go') {
     const body = lines.join('\n');
     values =
@@ -126,6 +133,7 @@ const assertIdiomaticSource = (source: string, filename: string, tool: string): 
   } else {
     values = lines.flatMap((line) => line.split(/\p{White_Space}+/u));
   }
+
   for (const value of values) {
     assertVersionSelector(value, `${filename}: version for ${tool}`);
   }
@@ -137,16 +145,19 @@ const assertIdiomaticFiles = (
   plugins: string,
 ): void => {
   const installed = new Set(entries(plugins));
+
   for (const tool of tools) {
     assertSafe(
       coreTool(tool) || !installed.has(tool),
       `Unverified mise plugin ${path.join(plugins, tool)} for idiomatic version files.`,
     );
     const filenames = Object.hasOwn(IDIOMATIC_FILES, tool) ? (IDIOMATIC_FILES[tool] ?? []) : [];
+
     for (const parent of parents) {
       for (const name of filenames) {
         const filename = path.join(parent, name);
         const source = readOptional(filename);
+
         if (source !== null) {
           assertIdiomaticSource(source, filename, tool);
         }

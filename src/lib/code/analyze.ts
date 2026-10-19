@@ -27,6 +27,7 @@ import type { ClosureParameter, CodeLanguage, CodeOperation, CodeReport, Value }
 import { initialBindings, pythonJoin, textValue, unknown, valueString } from './values';
 
 const IGNORE = new Set(['Comment', 'LineComment', 'BlockComment', ';']);
+
 const TRY_PARTS = new Set([
   'try',
   'except',
@@ -76,11 +77,13 @@ class CodeAnalyzer {
     this.#source = source;
     this.#language = language;
     this.#bindings = this.#scopes.create(undefined, initialBindings(language));
+
     if (language === 'python') {
       for (const name of builtinExceptions) {
         this.#bindings.set(name, { kind: 'symbol', name });
       }
     }
+
     this.#cwd = cwd === null ? null : path.resolve(cwd);
   }
 
@@ -90,6 +93,7 @@ class CodeAnalyzer {
 
   inspect(root: SyntaxNode): void {
     this.#started = cpuUsage();
+
     for (const node of children(root)) {
       this.#statement(node);
     }
@@ -97,13 +101,17 @@ class CodeAnalyzer {
 
   #statement(node: SyntaxNode): void {
     this.#step();
+
     if (IGNORE.has(node.name)) {
       return;
     }
+
     const handler = this.#statementHandlers.get(node.name);
+
     if (handler === undefined) {
       return failInspection(`Unsupported executable syntax: ${node.name}.`);
     }
+
     handler(
       node,
       children(node).filter((part) => !IGNORE.has(part.name)),
@@ -135,10 +143,12 @@ class CodeAnalyzer {
       ['ImportStatement', 'ImportDeclaration'],
       (node, parts) => {
         const text = (part: SyntaxNode): string => this.#text(part);
+
         const bindings =
           node.name === 'ImportStatement'
             ? pythonImport(parts, text)
             : javascriptImport(parts, text, this.#language);
+
         for (const [name, value] of bindings) {
           this.#bindings.set(name, value);
         }
@@ -180,6 +190,7 @@ class CodeAnalyzer {
           closure: (node) => this.#closure(node),
           text: (node) => this.#text(node),
         });
+
         this.#bindings.set(name, value);
       },
     ],
@@ -189,6 +200,7 @@ class CodeAnalyzer {
         const name =
           parts.find((part) => ['VariableName', 'VariableDefinition'].includes(part.name)) ??
           failInspection('Missing function name.');
+
         this.#bindings.set(this.#text(name), this.#closure(node));
       },
     ],
@@ -213,6 +225,7 @@ class CodeAnalyzer {
           (candidate) => !['raise', 'throw'].includes(candidate.name),
         )) {
           const value = this.#eval(part);
+
           if (!isBuiltinException(value)) {
             requireData([value]);
           }
@@ -257,9 +270,11 @@ class CodeAnalyzer {
 
   #block(node: SyntaxNode, parts: readonly SyntaxNode[]): void {
     const outer = this.#bindings;
+
     if (node.name === 'Block') {
       this.#bindings = this.#scopes.create(outer);
     }
+
     try {
       for (const part of parts) {
         if (![':', '{', '}'].includes(part.name)) {
@@ -270,6 +285,7 @@ class CodeAnalyzer {
       if (this.#bindings !== outer) {
         this.#scopes.release(this.#bindings);
       }
+
       this.#bindings = outer;
     }
   }
@@ -278,20 +294,25 @@ class CodeAnalyzer {
     if (parts[0]?.name !== 'nonlocal') {
       return failInspection('Global rebinding requires inspection.');
     }
+
     for (const part of parts.filter((candidate) => candidate.name === 'VariableName')) {
       const name = this.#text(part);
+
       if (this.#bindings.parent?.get(name) === undefined) {
         return failInspection('Unbound nonlocal.');
       }
+
       this.#nonlocals.add(name);
     }
   }
 
   #update(parts: readonly SyntaxNode[]): void {
     const [target, , expression] = parts;
+
     if (target === undefined || expression === undefined) {
       return failInspection('Incomplete update.');
     }
+
     requireData([this.#eval(target), this.#eval(expression)]);
     this.#bindings.assign(this.#text(target), data);
   }
@@ -300,21 +321,26 @@ class CodeAnalyzer {
     if (!parts.some((part) => part.name === ',')) {
       return false;
     }
+
     {
       let start = 0;
+
       for (let index = 0; index <= parts.length; index += 1) {
         if (index === parts.length || parts[index]?.name === ',') {
           const [declaration] = parts;
+
           const prefix =
             start > 0 &&
             declaration !== undefined &&
             ['const', 'let', 'var'].includes(declaration.name)
               ? [declaration]
               : [];
+
           this.#assign([...prefix, ...parts.slice(start, index)]);
           start = index + 1;
         }
       }
+
       return true;
     }
   }
@@ -323,16 +349,20 @@ class CodeAnalyzer {
     if (this.#language !== 'python') {
       return this.#multipleDeclaration(parts);
     }
+
     if (parts.some((part) => part.name === ',')) {
       const at = parts.findIndex((part) => part.name === 'AssignOp');
       const targets = parts.slice(0, at).filter((part) => part.name !== ',');
       const expressions = parts.slice(at + 1).filter((part) => part.name !== ',');
+
       if (at === -1 || targets.some((part) => part.name !== 'VariableName')) {
         return failInspection('Unsupported tuple assignment.');
       }
+
       const values = expressions.map((part) => this.#eval(part));
       const [first] = values;
       let items: readonly Value[] = values;
+
       if (values.length === 1) {
         if (first?.kind === 'list' && first.opaque !== true) {
           ({ items } = first);
@@ -341,41 +371,55 @@ class CodeAnalyzer {
           items = targets.map(() => data);
         }
       }
+
       for (const [index, target] of targets.entries()) {
         const name = this.#text(target);
+
         if (this.#nonlocals.has(name)) {
           this.#bindings.parent?.assign(name, items[index] ?? data);
         } else {
           this.#bindings.set(name, items[index] ?? data);
         }
       }
+
       return true;
     }
+
     return false;
   }
 
   #mutate(target: SyntaxNode, expression: SyntaxNode): void {
     const [receiver, separator, key] = children(target);
+
     if (receiver === undefined || key === undefined) {
       return failInspection('Incomplete mutation.');
     }
+
     const container = this.#eval(receiver);
+
     if (container.kind === 'environment') {
       return failInspection('Runtime environment mutation can change interpreter startup.');
     }
+
     if (separator !== undefined && this.#text(separator) === '[') {
       requireData([this.#eval(key)]);
     }
+
     const value = this.#eval(expression);
+
     if (container.kind === 'instance' && separator?.name === '.') {
       if (this.#text(key).startsWith('_')) {
         return failInspection('Instance reflection is not inspected.');
       }
+
       requireData([value]);
       container.entries.set(this.#text(key), value);
+
       return;
     }
+
     requireData([container, value]);
+
     if (container.kind === 'list' || container.kind === 'object') {
       container.opaque = true;
     }
@@ -385,9 +429,11 @@ class CodeAnalyzer {
     if (this.#multipleAssignment(parts)) {
       return;
     }
+
     const equals = parts.findIndex((part) =>
       ['AssignOp', 'Equals', 'UpdateOp'].includes(part.name),
     );
+
     const target = parts.find((part) =>
       [
         'VariableName',
@@ -397,8 +443,10 @@ class CodeAnalyzer {
         'MemberExpression',
       ].includes(part.name),
     );
+
     const operator = parts[equals];
     const expression = parts[equals + 1];
+
     if (
       operator === undefined ||
       target === undefined ||
@@ -407,22 +455,30 @@ class CodeAnalyzer {
     ) {
       return failInspection('Unsupported binding or assignment.');
     }
+
     if (!['=', ':='].includes(this.#text(operator))) {
       if (target.name !== 'VariableName') {
         return failInspection('Unsupported compound assignment target.');
       }
+
       requireData([this.#eval(target), this.#eval(expression)]);
       this.#bindings.assign(this.#text(target), data);
+
       return;
     }
+
     if (target.name === 'MemberExpression') {
       this.#mutate(target, expression);
+
       return;
     }
+
     if (parts.slice(0, equals).some((part) => ['MemberExpression'].includes(part.name))) {
       return failInspection('Destructuring or object mutation is not inspected.');
     }
+
     const value = this.#eval(expression);
+
     if (['ObjectPattern', 'ArrayPattern'].includes(target.name)) {
       this.#destructure(
         target,
@@ -446,6 +502,7 @@ class CodeAnalyzer {
 
   #withFile(parts: readonly SyntaxNode[]): void {
     const [, expression, alias, target, body] = parts;
+
     if (
       parts.length !== 5 ||
       expression === undefined ||
@@ -455,10 +512,13 @@ class CodeAnalyzer {
     ) {
       return failInspection('Only a single known file context is inspected.');
     }
+
     const value = this.#eval(expression);
+
     if (value.kind !== 'file' && value.kind !== 'archive') {
       return failInspection('Context manager callbacks require review.');
     }
+
     this.#bindings.set(this.#text(target), value);
     this.#statement(body);
   }
@@ -481,30 +541,38 @@ class CodeAnalyzer {
   #eval(node: SyntaxNode): Value {
     this.#step();
     const result = this.#expression(node);
+
     const value =
       (result.kind === 'list' || result.kind === 'object') && result.opaque === true
         ? data
         : result;
+
     if (value.kind === 'string') {
       this.#evaluatedBytes += value.value.length;
     }
+
     if (value.kind === 'path' || value.kind === 'file') {
       this.#evaluatedBytes += value.path.length;
     }
+
     if (this.#evaluatedBytes > 1_048_576) {
       return failInspection('Code exceeds the resolved value budget.');
     }
+
     return value;
   }
 
   #step(): void {
     this.#steps += 1;
+
     if (this.#steps % 32 === 0) {
       const elapsed = cpuUsage(this.#started);
+
       if (elapsed.user + elapsed.system > 40_000) {
         failInspection('Code exceeds the evaluation CPU-time budget.');
       }
     }
+
     if (this.#steps > 12_000) {
       failInspection('Code exceeds the evaluation step budget.');
     }
@@ -528,8 +596,10 @@ class CodeAnalyzer {
 
   #repeat<Result>(body: SyntaxNode, visit: () => Result): Result {
     this.#iterations += 1;
+
     try {
       forgetLoopWrites(body, this.#control());
+
       return visit();
     } finally {
       this.#iterations -= 1;
@@ -562,37 +632,48 @@ class CodeAnalyzer {
     const parts = children(node).filter((part) => !['[', ']', '(', ')', ','].includes(part.name));
     const items: Value[] = [];
     let opaque = false;
+
     for (let index = 0; index < parts.length; index += 1) {
       const part = parts[index];
+
       if (part === undefined) {
         return failInspection('Missing array element.');
       }
+
       if (['Spread', '*'].includes(part.name)) {
         const next = parts[index + 1];
+
         if (next === undefined) {
           return failInspection('Missing spread operand.');
         }
+
         const value = this.#eval(next);
+
         if (value.kind === 'list' && value.opaque !== true) {
           items.push(...value.items);
         } else {
           requireData([value]);
           opaque = true;
         }
+
         index += 1;
       } else {
         items.push(this.#eval(part));
       }
     }
+
     if (opaque) {
       requireData(items);
+
       return data;
     }
+
     return { kind: 'list', items };
   }
 
   #expression(node: SyntaxNode): Value {
     const handler = this.#expressionHandlers.get(node.name);
+
     return handler === undefined
       ? failInspection(`Unsupported expression: ${node.name}.`)
       : handler(node, children(node));
@@ -691,15 +772,19 @@ class CodeAnalyzer {
       ['UnaryExpression'],
       (node) => {
         const parts = children(node).filter((part) => !IGNORE.has(part.name));
+
         const operator = parts.find((part) =>
           ['typeof', 'ArithOp', 'LogicOp', 'BitOp', 'UpdateOp', 'not', 'void', 'delete'].includes(
             part.name,
           ),
         );
+
         const operand = parts.find((part) => part !== operator);
+
         if (operand === undefined) {
           return failInspection('Missing unary operand.');
         }
+
         if (operator?.name === 'typeof') {
           if (
             operand.name !== 'VariableName' ||
@@ -707,15 +792,20 @@ class CodeAnalyzer {
           ) {
             this.#eval(operand);
           }
+
           return unknownText;
         }
+
         requireData([this.#eval(operand)]);
+
         if (operator !== undefined && ['++', '--'].includes(this.#text(operator))) {
           if (operand.name !== 'VariableName') {
             return failInspection('Computed update target.');
           }
+
           this.#bindings.assign(this.#text(operand), data);
         }
+
         return data;
       },
     ],
@@ -735,6 +825,7 @@ class CodeAnalyzer {
             requireData([this.#eval(part)]);
           }
         }
+
         return unknownText;
       },
     ],
@@ -743,6 +834,7 @@ class CodeAnalyzer {
       (node) => {
         CodeAnalyzer.#checkAssignmentScope(node);
         this.#assign(children(node));
+
         return data;
       },
     ],
@@ -750,6 +842,7 @@ class CodeAnalyzer {
       ['AssignmentExpression'],
       (node) => {
         this.#assign(children(node));
+
         return data;
       },
     ],
@@ -792,6 +885,7 @@ class CodeAnalyzer {
 
   #wrappedExpression(node: SyntaxNode): Value {
     const expression = children(node).find((part) => !['(', ')', 'await'].includes(part.name));
+
     return expression === undefined
       ? failInspection('Missing expression.')
       : this.#eval(expression);
@@ -799,10 +893,12 @@ class CodeAnalyzer {
 
   #conditional(node: SyntaxNode): Value {
     const fields = children(node);
+
     const [yes, keyword, condition, otherwise, no] =
       this.#language === 'python'
         ? fields
         : [fields[2], fields[1], fields[0], fields[3], fields[4]];
+
     if (
       (this.#language === 'python' && (keyword?.name !== 'if' || otherwise?.name !== 'else')) ||
       yes === undefined ||
@@ -811,6 +907,7 @@ class CodeAnalyzer {
     ) {
       return failInspection('Unsupported conditional expression.');
     }
+
     requireData([this.#eval(condition)]);
     const before = this.#snapshot();
     const a = this.#eval(yes);
@@ -818,9 +915,11 @@ class CodeAnalyzer {
     this.#restore(before);
     const b = this.#eval(no);
     this.#join([yesState, this.#snapshot()]);
+
     if (['string', 'text'].includes(a.kind) && ['string', 'text'].includes(b.kind)) {
       return unknownText;
     }
+
     return isData(a) && isData(b) ? data : unknown;
   }
 
@@ -828,26 +927,34 @@ class CodeAnalyzer {
     const fields = children(node);
     const [left, op] = fields;
     const right = fields.at(-1);
+
     if (left === undefined || op === undefined || right === undefined) {
       return failInspection('Incomplete binary expression.');
     }
+
     const a = this.#eval(left);
     const operator = this.#text(op);
     const before = ['&&', '||', '??', 'and', 'or'].includes(operator) ? this.#snapshot() : null;
     const b = this.#eval(right);
+
     if (before !== null) {
       this.#join([before, this.#snapshot()]);
     }
+
     if (a.kind === 'string' && b.kind === 'string' && operator === '+') {
       return textValue(a.value + b.value);
     }
+
     if (a.kind === 'opaque-path' && operator === '/') {
       requireData([b]);
+
       return a;
     }
+
     if (a.kind === 'path' && operator === '/') {
       return { kind: 'path', path: pythonJoin([a.path, valueString(b)]) };
     }
+
     if (
       a.kind === 'number' &&
       b.kind === 'number' &&
@@ -855,19 +962,24 @@ class CodeAnalyzer {
     ) {
       return data;
     }
+
     if (isData(a) && isData(b)) {
       return data;
     }
+
     return failInspection('Dynamic operators are not inspected.');
   }
 
   #member(node: SyntaxNode): Value {
     const parts = children(node);
     const [receiver, separator, property] = parts;
+
     if (receiver === undefined || property === undefined || separator === undefined) {
       return failInspection('Computed property access is not inspected.');
     }
+
     const value = this.#eval(receiver);
+
     if (
       this.#language === 'python' &&
       this.#text(separator) === '[' &&
@@ -875,11 +987,14 @@ class CodeAnalyzer {
     ) {
       const bounds = parts.slice(2, -1).filter((part) => part.name !== ':');
       requireData([value, ...bounds.map((part) => this.#eval(part))]);
+
       return value.kind === 'string' || value.kind === 'text' ? unknownText : data;
     }
+
     if (this.#text(separator) === '[' && parts.length === 4) {
       return indexedValue(value, this.#eval(property));
     }
+
     if (
       !['.', '?.'].includes(this.#text(separator)) ||
       property.name !== 'PropertyName' ||
@@ -887,6 +1002,7 @@ class CodeAnalyzer {
     ) {
       return failInspection('Unsupported property access.');
     }
+
     if (
       value.kind === 'symbol' &&
       ['sys', 'process'].includes(value.name) &&
@@ -894,6 +1010,7 @@ class CodeAnalyzer {
     ) {
       return this.#argv;
     }
+
     return namedMember(value, this.#text(property), this.#language);
   }
 
@@ -901,14 +1018,17 @@ class CodeAnalyzer {
     const fields = children(params).filter((part) => !['(', ')', ','].includes(part.name));
     const parameters: ClosureParameter[] = [];
     let keywordOnly = false;
+
     for (let index = 0; index < fields.length; index += 1) {
       let field = fields[index];
       let rest: ClosureParameter['rest'];
+
       if (field !== undefined && ['*', '**', 'Spread'].includes(field.name)) {
         rest = field.name === '**' ? 'keywords' : 'positional';
         index += 1;
         field = fields[index];
       }
+
       if (
         field === undefined ||
         !['VariableName', 'VariableDefinition', 'ArrayPattern', 'ObjectPattern'].includes(
@@ -917,20 +1037,27 @@ class CodeAnalyzer {
       ) {
         return failInspection('Unsupported function parameter.');
       }
+
       const name = this.#text(field);
+
       if (fields[index + 1]?.name === 'TypeDef') {
         this.#annotation(fields[index + 1]);
         index += 1;
       }
+
       let fallback: Value | undefined;
+
       if (['AssignOp', 'Equals'].includes(fields[index + 1]?.name ?? '')) {
         const expression = fields[index + 2];
+
         if (expression === undefined) {
           return failInspection('Missing parameter default.');
         }
+
         fallback = this.#eval(expression);
         index += 2;
       }
+
       parameters.push({
         name,
         keywordOnly,
@@ -940,6 +1067,7 @@ class CodeAnalyzer {
       });
       keywordOnly ||= this.#language === 'python' && rest !== undefined;
     }
+
     return parameters;
   }
 
@@ -947,13 +1075,17 @@ class CodeAnalyzer {
     const parts = children(node);
     const params = parts.find((part) => part.name === 'ParamList');
     const body = parts.at(-1);
+
     if (params === undefined || body === undefined) {
       return failInspection('Unsupported function shape.');
     }
+
     const parameters = this.#parameters(params);
+
     for (const part of parts.filter((candidate) => candidate.name === 'TypeDef')) {
       this.#annotation(part);
     }
+
     return {
       kind: 'closure',
       scope: this.#bindings,
@@ -981,6 +1113,7 @@ class CodeAnalyzer {
         return failInspection('Unknown closure keyword.');
       }
     }
+
     for (const [index, parameter] of fn.parameters.entries()) {
       if (
         parameter.keywordOnly !== true &&
@@ -989,7 +1122,9 @@ class CodeAnalyzer {
       ) {
         return failInspection('Duplicate closure argument.');
       }
+
       let value: Value;
+
       if (parameter.rest === 'positional') {
         value = { kind: 'list', items: args.positional.slice(index) };
       } else if (parameter.rest === 'keywords') {
@@ -1008,6 +1143,7 @@ class CodeAnalyzer {
           parameter.fallback ??
           data;
       }
+
       if (parameter.pattern === undefined) {
         this.#bindings.set(parameter.name, value);
       } else {
@@ -1022,15 +1158,18 @@ class CodeAnalyzer {
     repeated = this.#iterations > 0,
   ): Value {
     this.#depth += 1;
+
     if (this.#depth > 16) {
       return failInspection('Function recursion exceeds the inspection depth.');
     }
+
     if (
       args.positional.length > fn.parameters.length &&
       !fn.parameters.some((parameter) => parameter.rest === 'positional')
     ) {
       return failInspection('Too many closure arguments.');
     }
+
     const outer = this.#bindings;
     const returns = this.#returns;
     const nonlocals = this.#nonlocals;
@@ -1039,11 +1178,14 @@ class CodeAnalyzer {
     this.#bindings = this.#scopes.create(fn.scope);
     this.#returns = [];
     this.#returnStates = [];
+
     try {
       this.#bindClosureArguments(fn, args);
+
       if (fn.expression) {
         return repeated ? this.#repeat(fn.body, () => this.#eval(fn.body)) : this.#eval(fn.body);
       }
+
       if (repeated) {
         this.#repeat(fn.body, () => {
           this.#statement(fn.body);
@@ -1051,16 +1193,20 @@ class CodeAnalyzer {
       } else {
         this.#statement(fn.body);
       }
+
       this.#join([...this.#returnStates, this.#snapshot()]);
       const [first] = this.#returns;
+
       if (first !== undefined && this.#returns.every((value) => value === first)) {
         return first;
       }
+
       return this.#returns.every((value) => isData(value)) ? data : unknown;
     } finally {
       if (this.#bindings !== outer) {
         this.#scopes.release(this.#bindings);
       }
+
       this.#bindings = outer;
       this.#returns = returns;
       this.#nonlocals = nonlocals;
@@ -1077,6 +1223,7 @@ class CodeAnalyzer {
         repeated || this.#iterations > 0,
       );
     }
+
     return this.#resolve(fn, { positional: args, keywords: new Map() }, { start: 0, end: 0 });
   }
 
@@ -1086,36 +1233,44 @@ class CodeAnalyzer {
     // Exceptions can occur after any side effect; forget writes before handlers.
     forgetLoopWrites(node, this.#control());
     const parts = children(node);
+
     for (const [index, part] of parts.entries()) {
       if (part.name === 'Body' || part.name === 'Block') {
         forgetLoopWrites(node, this.#control());
         this.#statement(part);
         states.push(this.#snapshot());
       }
+
       if (part.name === 'CatchClause' || part.name === 'FinallyClause') {
         forgetLoopWrites(node, this.#control());
+
         for (const field of children(part)) {
           if (field.name === 'VariableDefinition') {
             this.#bindings.set(this.#text(field), data);
           }
+
           if (field.name === 'Block') {
             this.#statement(field);
           } else if (!['catch', 'finally', '(', ')', 'VariableDefinition'].includes(field.name)) {
             requireData([this.#eval(field)]);
           }
         }
+
         states.push(this.#snapshot());
       }
+
       if (part.name === 'VariableName' && parts[index - 1]?.name === 'as') {
         this.#bindings.set(this.#text(part), data);
       } else if (!TRY_PARTS.has(part.name)) {
         const value = this.#eval(part);
         const exceptionTypes = isBuiltinException(value);
+
         if (!exceptionTypes) {
           requireData([value]);
         }
       }
     }
+
     this.#join(states);
   }
 
@@ -1126,16 +1281,21 @@ class CodeAnalyzer {
     item: Value,
   ): void {
     const targets = parts.slice(forIndex + 1, inIndex).filter((part) => part.name !== ',');
+
     for (const [index, target] of targets.entries()) {
       if (target.name !== 'VariableName') {
         return failInspection('Unsupported comprehension binding.');
       }
+
       let value = item;
+
       if (targets.length !== 1) {
         value = item.kind === 'list' ? (item.items[index] ?? data) : data;
       }
+
       this.#bindings.set(this.#text(target), value);
     }
+
     for (const part of [...parts.slice(0, forIndex), ...parts.slice(inIndex + 2)].filter(
       (candidate) => ![':', 'if'].includes(candidate.name),
     )) {
@@ -1147,30 +1307,39 @@ class CodeAnalyzer {
     const parts = children(node).filter(
       (part) => !['{', '}', '(', ')', '[', ']'].includes(part.name),
     );
+
     const forIndex = parts.findIndex((part) => part.name === 'for');
     const inIndex = parts.findIndex((part) => part.name === 'in');
     const input = parts[inIndex + 1];
+
     if (forIndex < 1 || inIndex < forIndex || input === undefined) {
       return failInspection('Unsupported comprehension.');
     }
+
     const iterable = this.#eval(input);
     requireData([iterable]);
     const values = iterable.kind === 'list' && iterable.opaque !== true ? iterable.items : [data];
+
     if (values.length > 128) {
       return failInspection('Comprehension exceeds the bounded iteration limit.');
     }
+
     const before = this.#bindings;
     this.#bindings = this.#scopes.create(before);
+
     try {
       const visit = (): Value => {
         for (const item of values.length === 0 ? [data] : values) {
           this.#comprehensionItem(parts, forIndex, inIndex, item);
+
           if (iterable.kind === 'list' && iterable.opaque === true) {
             return failInspection('Mutation changes comprehension iteration bounds.');
           }
         }
+
         return data;
       };
+
       return iterable.kind === 'list' && iterable.opaque !== true
         ? visit()
         : this.#repeat(node, visit);
@@ -1196,20 +1365,25 @@ class CodeAnalyzer {
 
   #call(node: SyntaxNode): Value {
     const [callee, argsNode] = children(node).filter((part) => part.name !== 'new');
+
     if (callee === undefined || argsNode?.name !== 'ArgList') {
       return failInspection('Unsupported call syntax.');
     }
+
     const fn = this.#eval(callee);
     const parts = children(argsNode).filter((part) => !['(', ')', ','].includes(part.name));
+
     const args = parts.some((part) => part.name === 'for')
       ? {
           positional: [inspectComprehension(parts, this.#control())],
           keywords: new Map<string, Value>(),
         }
       : callArguments(parts, (part) => this.#eval(part), this.#source);
+
     if (args.positional.length + args.keywords.size > 128) {
       return failInspection('Call exceeds the argument count limit.');
     }
+
     if (fn.kind === 'class') {
       const receiver: Value = {
         kind: 'instance',
@@ -1217,25 +1391,32 @@ class CodeAnalyzer {
         ...(fn.contract !== undefined && { contract: fn.contract }),
         entries: new Scope(),
       };
+
       const init = fn.methods.get('__init__');
+
       if (init?.kind === 'closure') {
         this.#invokeClosure(init, { ...args, positional: [receiver, ...args.positional] });
       } else if (args.positional.length > 0 || args.keywords.size > 0) {
         return failInspection('Unexpected class constructor arguments.');
       }
+
       return receiver;
     }
+
     if (fn.kind === 'contract-method') {
       return invokeContract(fn.receiver, fn.name, args, (method, values) =>
         this.#callback(method, values),
       );
     }
+
     if (fn.kind === 'bound-method' && fn.fn.kind === 'closure') {
       return this.#invokeClosure(fn.fn, { ...args, positional: [fn.receiver, ...args.positional] });
     }
+
     if (fn.kind === 'closure') {
       return this.#invokeClosure(fn, args);
     }
+
     return this.#resolve(fn, args, { start: node.from, end: node.to });
   }
 }
@@ -1247,9 +1428,11 @@ const analyzeCode = (
   cwd: string | null,
 ): CodeReport => {
   let analyzer: CodeAnalyzer | undefined;
+
   try {
     analyzer = new CodeAnalyzer(source, language, argv, cwd);
     analyzer.inspect(parseCode(language, source));
+
     return { operations: analyzer.operations, gap: null };
   } catch (cause) {
     return {

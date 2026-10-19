@@ -22,17 +22,20 @@ bunTest.test(
   () => {
     const source =
       'import os,subprocess\nopen("a.txt").read()\nos.chdir("/tmp")\nsubprocess.run(["printf","example"],cwd="..")\nopen("b.txt","w").write(os.getcwd())';
+
     const report = analyzeCode('python', source, [], '/');
     bunTest.expect(report.gap).toBeNull();
     bunTest
       .expect(report.operations.map((operation) => operation.cwd))
       .toEqual(['/', '/', '/', '/tmp', '/tmp']);
+
     const nested = analyzeCode(
       'javascript',
       'process.chdir("/tmp"); [1].map(x=>require("fs").readFileSync("a.txt"));',
       [],
       '/',
     );
+
     bunTest.expect(nested.gap).toBeNull();
     bunTest.expect(nested.operations[0]?.cwd).toBe('/tmp');
     bunTest
@@ -80,6 +83,7 @@ bunTest.test.each([
     [],
     '/',
   );
+
   bunTest.expect(report.gap).toContain('working directory');
 });
 
@@ -98,6 +102,7 @@ bunTest.test('subprocess cwd reaches deletion policy', () => {
     )
     .toBe('deny');
 });
+
 bunTest.test.each([
   ['python3 -c', 'import os; os.chdir("/tmp"); os.remove("example.txt")'],
   ['node -e', 'process.chdir("/tmp"); require("fs").unlinkSync("example.txt")'],
@@ -124,9 +129,11 @@ bunTest.test.each([
     )
     .toBe('deny');
 });
+
 bunTest.test('branching cwd cannot authorize a later relative delete', () => {
   const source =
     'import os,json\nos.chdir("/tmp")\nif json.loads("true"): os.chdir("/")\nos.remove("example.txt")';
+
   bunTest
     .expect(decideBash(`python3 -c ${quote(source)}`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
     .toBe('deny');
@@ -135,6 +142,7 @@ bunTest.test('branching cwd cannot authorize a later relative delete', () => {
 bunTest.test('absolute operations preserve null cwd and keep their policy decisions', () => {
   const source =
     'import shutil,os\nopen("/tmp/fictional-input").read()\nopen("/tmp/fictional-output","w").write("x")\nshutil.copyfile("/tmp/fictional-input","/tmp/fictional-copy")\nos.remove("/tmp/fictional-old")';
+
   const report = analyzeCode('python', source, [], null);
   bunTest.expect(report.gap).toBeNull();
   bunTest
@@ -158,15 +166,18 @@ bunTest.test(
   () => {
     const source =
       'import os\nfrom pathlib import Path\nos.remove("/tmp/fictional-target")\nos.chdir("/tmp")\nPath("fictional-target").resolve()';
+
     const report = analyzeCode('python', source, [], null);
     bunTest.expect(report.operations[0]?.cwd).toBeNull();
     bunTest.expect(report.gap).toContain('Earlier filesystem effects');
+
     const unrelated = analyzeCode(
       'python',
       source.replace('Path("fictional-target")', 'Path("fictional-other")'),
       [],
       null,
     );
+
     bunTest.expect(unrelated.gap).toBeNull();
   },
 );

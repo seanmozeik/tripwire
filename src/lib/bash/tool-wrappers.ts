@@ -6,6 +6,7 @@ import type { ShellInvocation } from './types';
 import { cloneEnvironment, type Environment } from './values';
 
 type StartupResult = { readonly safe: true } | { readonly safe: false; readonly reason: string };
+
 interface WrapperArguments {
   readonly operands: string[];
   readonly options: { readonly name: string; readonly value: string }[];
@@ -129,17 +130,23 @@ const optionValue = (
   spec: WrapperSpec,
 ): boolean => {
   const word = invocation.words[cursor.index];
+
   if (word === undefined) {
     return false;
   }
+
   const [flag] = word.value.split('=');
+
   const target = word.value.includes('=')
     ? { ...word, value: word.value.slice(word.value.indexOf('=') + 1) }
     : invocation.words[cursor.index + 1];
+
   if (target?.kind !== 'literal') {
     return false;
   }
+
   cursor.args.options.push({ name: flag ?? '', value: target.value });
+
   if (spec.cwdOptions?.includes(flag ?? '') === true) {
     cursor.environment.cwd = resolveDirectory(
       target,
@@ -147,9 +154,11 @@ const optionValue = (
       cursor.environment.createdDirectories,
     );
   }
+
   if (!word.value.includes('=')) {
     cursor.index += 1;
   }
+
   return true;
 };
 
@@ -166,20 +175,26 @@ const wrapperCommand = (
     operands: spec.operands ?? 0,
     environment,
   };
+
   const subcommands = new Set(spec.subcommands);
   const ordinarySubcommands = new Set(spec.ordinarySubcommands);
   const values = new Set(spec.values);
   const flags = new Set(spec.flags);
   const delimiters = new Set(['--', ...(spec.extraDelimiters ?? [])]);
+
   for (; cursor.index < invocation.words.length; cursor.index += 1) {
     const word = invocation.words[cursor.index];
+
     if (word?.kind !== 'literal') {
       return null;
     }
+
     const { value } = word;
+
     if (!cursor.subcommand && ordinarySubcommands.has(value)) {
       return 'ordinary-command';
     }
+
     if (!cursor.subcommand && subcommands.has(value)) {
       cursor.subcommand = true;
     } else if (cursor.subcommand && delimiters.has(value)) {
@@ -192,11 +207,13 @@ const wrapperCommand = (
       // Known flags have no argument.
     } else {
       const result = wrapperOperand(spec, cursor, word);
+
       if (result !== undefined) {
         return result;
       }
     }
   }
+
   return null;
 };
 
@@ -208,7 +225,9 @@ const wrapperOperand = (
   if (word.value.startsWith('-') || !cursor.subcommand) {
     return null;
   }
+
   cursor.args.operands.push(word.value);
+
   if (cursor.operands > 0) {
     if (spec.cwdOperand === (spec.operands ?? 0) - cursor.operands) {
       cursor.environment.cwd = resolveDirectory(
@@ -217,9 +236,12 @@ const wrapperOperand = (
         cursor.environment.createdDirectories,
       );
     }
+
     cursor.operands -= 1;
+
     return undefined;
   }
+
   return spec.delimiter === true ? undefined : cursor.index;
 };
 
@@ -230,20 +252,25 @@ const inspectToolWrapper = (
   host: ExecutionHost,
 ): boolean => {
   const spec = Object.hasOwn(specs, invocation.head) ? specs[invocation.head] : undefined;
+
   if (spec === undefined) {
     return false;
   }
+
   const child = cloneEnvironment(environment);
 
   if (spec.startup === true) {
     child.startup = joinStartup(child.startup, { kind: 'unverified', reason: UNKNOWN_STARTUP });
     child.bindings.delete('HOME');
   }
+
   const args: WrapperArguments = { operands: [], options: [] };
   const index = wrapperCommand(invocation, spec, child, args);
+
   if (index === 'ordinary-command') {
     return false;
   }
+
   if (index !== null && spec.checkStartup !== undefined) {
     const result = spec.checkStartup(invocation, child, args);
     child.startup = joinStartup(
@@ -255,10 +282,12 @@ const inspectToolWrapper = (
             reason: `${invocation.head} exec startup blocked: ${result.reason}`,
           },
     );
+
     if (!result.safe) {
       child.bindings.delete('HOME');
     }
   }
+
   if (index === null || invocation.words[index] === undefined) {
     host.addDiagnostic(
       'dynamic-shell-source',
@@ -276,6 +305,7 @@ const inspectToolWrapper = (
   } else {
     host.emitSynthetic(invocation.words.slice(index), invocation, child, context);
   }
+
   return true;
 };
 

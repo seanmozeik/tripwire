@@ -17,9 +17,11 @@ const resolveWritePath = (absolutePath: string, seen: Set<string> = new Set<stri
   if (seen.has(absolutePath)) {
     return absolutePath;
   }
+
   seen.add(absolutePath);
 
   const existing = resolveExistingPath(absolutePath);
+
   if (existing !== null) {
     return existing;
   }
@@ -27,6 +29,7 @@ const resolveWritePath = (absolutePath: string, seen: Set<string> = new Set<stri
   try {
     if (lstatSync(absolutePath).isSymbolicLink()) {
       const target = readlinkSync(absolutePath);
+
       return resolveWritePath(path.resolve(path.dirname(absolutePath), target), seen);
     }
   } catch {
@@ -34,9 +37,11 @@ const resolveWritePath = (absolutePath: string, seen: Set<string> = new Set<stri
   }
 
   const parent = path.dirname(absolutePath);
+
   if (parent === absolutePath) {
     return absolutePath;
   }
+
   return path.join(resolveWritePath(parent, seen), path.basename(absolutePath));
 };
 

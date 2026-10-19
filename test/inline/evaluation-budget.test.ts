@@ -24,10 +24,12 @@ bunTest.test('returned closures retain state and released call frames do not acc
     expression: false,
   });
   scopes.release(captured);
+
   for (let index = 0; index < 1000; index += 1) {
     const frame = scopes.create(root);
     scopes.release(frame);
   }
+
   const snapshot = scopes.snapshot();
   bunTest.expect(snapshot.size).toBe(2);
   bunTest.expect(snapshot.has(captured)).toBe(true);

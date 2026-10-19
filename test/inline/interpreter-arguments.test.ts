@@ -38,6 +38,7 @@ bunTest.test('stdin argument binding preserves policy targets', () => {
     )
     .toBe('deny');
 });
+
 bunTest.test.each([
   [
     'python3 -c',
@@ -68,6 +69,7 @@ bunTest.test.each(['$VALUES', '"$@"', `"\${values[@]}"`])(
       .toBe('deny');
   },
 );
+
 bunTest.test('quoted scalar argv can be printed without authorizing a path', () => {
   bunTest
     .expect(

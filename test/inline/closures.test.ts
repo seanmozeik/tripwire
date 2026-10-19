@@ -37,6 +37,7 @@ bunTest.test.each([
 bunTest.test('keyword-only defaults cannot bind positional rest values', () => {
   const source =
     'import os\ndef f(*args, target="/srv/example/record.txt"):\n os.remove(target)\nf("/tmp/a", "/tmp/b")';
+
   bunTest
     .expect(decideBash(`python3 -c ${quote(source)}`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
     .toBe('deny');
@@ -50,16 +51,20 @@ bunTest.test('keyword-only defaults cannot bind positional rest values', () => {
     )
     .toBe('allow');
 });
+
 bunTest.test('multiple declarations keep block scope', () => {
   const source =
     'let target="/srv/example/record.txt"; {const n=1,target="/tmp/example"; console.log(n,target)} require("fs").unlinkSync(target)';
+
   bunTest
     .expect(decideBash(`node -e ${quote(source)}`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
     .toBe('deny');
 });
+
 bunTest.test('nonlocal tuple assignment invalidates the parent binding', () => {
   const source =
     'import os\ndef outer():\n target="/tmp/example"\n other=0\n def update():\n  nonlocal target,other\n  target,other="/srv/example/record.txt",1\n update()\n os.remove(target)\nouter()';
+
   bunTest
     .expect(decideBash(`python3 -c ${quote(source)}`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
     .toBe('deny');

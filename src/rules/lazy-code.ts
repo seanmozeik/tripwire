@@ -44,16 +44,19 @@ const matches = (line: string): boolean => {
   if (BYPASS_RE.test(line)) {
     return false;
   }
+
   for (const re of STUB_RE) {
     if (re.test(line)) {
       return true;
     }
   }
+
   return false;
 };
 
 const lazyCode = (input: EditInput | WriteInput): Decision => {
   const path = input.file_path;
+
   if (!CODE_EXT_RE.test(path) || TEST_PATH_RE.test(path)) {
     return allow('lazy-code');
   }
@@ -62,11 +65,13 @@ const lazyCode = (input: EditInput | WriteInput): Decision => {
   const prev = 'content' in input ? readFileOrEmpty(path) : input.old_string;
 
   const offenders: string[] = [];
+
   for (const line of addedLines(prev, next)) {
     if (matches(line)) {
       offenders.push(line.slice(0, 200));
     }
   }
+
   if (offenders.length === 0) {
     return allow('lazy-code');
   }
@@ -75,6 +80,7 @@ const lazyCode = (input: EditInput | WriteInput): Decision => {
     .slice(0, 3)
     .map((l) => `  • ${l}`)
     .join('\n');
+
   const more = offenders.length > 3 ? `\n  …and ${offenders.length - 3} more` : '';
 
   return warn(

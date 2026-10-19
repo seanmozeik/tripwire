@@ -72,4 +72,5 @@ const projectCommandFixtures = [
     allowed: false,
   })),
 ];
+
 export { projectCommandFixtures };

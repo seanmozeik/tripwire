@@ -23,6 +23,7 @@ const canonical = (token: string): string => ALIASES.get(token) ?? token;
 // bypass a configured rule.
 const basename = (token: string): string => {
   const idx = token.lastIndexOf('/');
+
   return idx === -1 ? token : token.slice(idx + 1);
 };
 
@@ -32,23 +33,28 @@ const flagPresent = (tokens: readonly string[], flag: string): boolean =>
 const flagValue = (tokens: readonly string[], flag: string): string | null => {
   for (let i = 0; i < tokens.length; i += 1) {
     const t = tokens[i];
+
     if (t !== undefined) {
       if (t === flag) {
         return tokens[i + 1] ?? '';
       }
+
       if (t.startsWith(`${flag}=`)) {
         return t.slice(flag.length + 1);
       }
     }
   }
+
   return null;
 };
 
 const subcommandTokens = (seg: ShellInvocation): string[] => {
   const out: string[] = [];
   const tokens = seg.tokens.slice(1);
+
   for (let i = 0; i < tokens.length; i += 1) {
     const t = tokens[i];
+
     if (t?.startsWith('-') === true) {
       // Without per-CLI flag metadata, we conservatively treat
       // `--flag value` / `-f value` as one option pair and `--flag=value`
@@ -56,6 +62,7 @@ const subcommandTokens = (seg: ShellInvocation): string[] => {
       // Out of the subcommand path, at the cost of not distinguishing
       // Boolean flags that precede positional args.
       const nextToken = tokens[i + 1];
+
       if (!t.includes('=') && nextToken !== undefined && !nextToken.startsWith('-')) {
         i += 1;
       }
@@ -63,6 +70,7 @@ const subcommandTokens = (seg: ShellInvocation): string[] => {
       out.push(t);
     }
   }
+
   return out;
 };
 
@@ -72,15 +80,19 @@ const subcommandTokens = (seg: ShellInvocation): string[] => {
 const matchPattern = (program: ShellProgram, rule: BlockRule): boolean => {
   const { pattern } = rule;
   const patternProgram = analyzeBash(pattern, { cwd: null });
+
   if (patternProgram.diagnostics.length > 0 || patternProgram.invocations.length === 0) {
     return false;
   }
 
   const [patternSegment] = patternProgram.invocations;
+
   if (patternSegment === undefined) {
     return false;
   }
+
   const [patternHead, ...patternSubcommands] = patternSegment.tokens;
+
   if (patternHead === undefined) {
     return false;
   }
@@ -89,19 +101,25 @@ const matchPattern = (program: ShellProgram, rule: BlockRule): boolean => {
     if (basename(segment.head) !== basename(patternHead)) {
       return false;
     }
+
     const actualSubcommands = subcommandTokens(segment);
+
     const subcommandsMatch = patternSubcommands.every(
       (part, index) =>
         actualSubcommands[index] !== undefined &&
         canonical(actualSubcommands[index]) === canonical(part),
     );
+
     const requiredFlagsMatch = (rule.requiresFlags ?? []).every((flag) =>
       flagPresent(segment.tokens, flag),
     );
+
     const forbiddenValuesMatch = (rule.forbidsFlagValues ?? []).every((check) => {
       const value = flagValue(segment.tokens, check.flag);
+
       return value !== null && check.values.includes(value);
     });
+
     return subcommandsMatch && requiredFlagsMatch && forbiddenValuesMatch;
   });
 };
@@ -124,6 +142,7 @@ export const configCustom = (
       const message = blockRule.message.includes('tripwire-allow')
         ? blockRule.message
         : `${blockRule.message} ${BYPASS_HELP}`;
+
       return blockRule.action === 'ask'
         ? ask('config-custom', message)
         : deny('config-custom', message);

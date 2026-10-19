@@ -17,7 +17,9 @@ const runCursorDispatch = (eventName: string, input: unknown): unknown => {
     ],
     { stdin: new TextEncoder().encode(JSON.stringify(input)), stdout: 'pipe', stderr: 'pipe' },
   );
+
   bunTest.expect(processResult.exitCode).toBe(0);
+
   return JSON.parse(processResult.stdout.toString()) as unknown;
 };
 
@@ -164,6 +166,7 @@ bunTest.describe('Cursor hook installation', () => {
     'uses the injected home, preserves unknown fields, and is byte-idempotent',
     async () => {
       const homeDirectory = await mkdtemp(pathModule.join(tmpdir(), 'tripwire-cursor-'));
+
       try {
         const configDirectory = pathModule.join(homeDirectory, '.cursor');
         const configPath = pathModule.join(configDirectory, 'hooks.json');

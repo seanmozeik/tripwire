@@ -35,6 +35,7 @@ bunTest.describe('uv dependency setup guidance', () => {
   ])('gives a complete setup path: %s', (command) => {
     const result = decideBash(command, {}, { cwd: '/tripwire-policy-fixture' });
     bunTest.expect(result.kind).toBe('deny');
+
     for (const step of [
       'pyproject.toml',
       'uv sync',

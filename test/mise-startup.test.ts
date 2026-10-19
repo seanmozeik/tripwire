@@ -10,11 +10,13 @@ import { miseStartupSafe } from '../src/lib/mise/startup';
 
 let root = '';
 let previous: Record<string, string | undefined> = {};
+
 const write = (name: string, source: string): void => {
   const filename = path.join(root, name);
   mkdirSync(path.dirname(filename), { recursive: true });
   writeFileSync(filename, source);
 };
+
 const inspect = (wrapper = 'mise exec --', code = 'print(1)'): string =>
   decideBash(`${wrapper} python3 -c '${code}'`, {}, { cwd: path.join(root, 'project/child') }).kind;
 
@@ -28,12 +30,14 @@ bunTest.beforeEach(() => {
   process.env['MISE_DATA_DIR'] = path.join(root, 'data');
   process.env['MISE_CEILING_PATHS'] = root;
 });
+
 bunTest.afterEach(() => {
   for (const name of Object.keys(process.env)) {
     if (!(name in previous)) {
       Reflect.deleteProperty(process.env, name);
     }
   }
+
   Object.assign(process.env, previous);
   rmSync(root, { recursive: true, force: true });
 });
@@ -223,6 +227,7 @@ bunTest.test.each(['MISE_OVERRIDE_TOOL_VERSIONS_FILENAMES', 'MISE_DEFAULT_TOOL_V
 bunTest.test('separate mise commands do not change a bare interpreter context', () => {
   const command =
     "python3 -c 'print(1)'; mise exec -- printf fictional > example.txt; python3 -c 'print(2)'";
+
   bunTest.expect(decideBash(command, {}, { cwd: root }).kind).toBe('allow');
   bunTest
     .expect(
@@ -279,11 +284,13 @@ bunTest.test.each([
   write(filename, safe);
   bunTest.expect(inspect()).toBe('allow');
   write(filename, unsafe);
+
   const decision = decideBash(
     "mise exec -- python3 -c 'print(1)'",
     {},
     { cwd: path.join(root, 'project') },
   );
+
   bunTest.expect(decision.kind).toBe('deny');
   bunTest.expect(decision.message).toContain(filename);
   bunTest.expect(decision.message).toContain('python');
@@ -300,11 +307,13 @@ bunTest.test.each([
   ['[env', 'TOML parse error'],
 ])('mise denial identifies config and key or parser: %s', (config, reason) => {
   write('project/mise.toml', config);
+
   const decision = decideBash(
     "mise exec -- python3 -c 'print(1)'",
     {},
     { cwd: path.join(root, 'project') },
   );
+
   bunTest.expect(decision.kind).toBe('deny');
   bunTest.expect(decision.message).toContain(path.join(root, 'project/mise.toml'));
   bunTest.expect(decision.message).toContain(reason);
@@ -314,6 +323,7 @@ bunTest.test.each(['zsh', 'bash', 'fish', 'nu', 'elvish', 'pwsh', 'xonsh'])(
   'inherited %s activation bookkeeping does not add startup effects',
   (shell) => {
     process.env['MISE_SHELL'] = shell;
+
     for (const name of [
       '__MISE_DIFF',
       '__MISE_ORIG_PATH',
@@ -331,6 +341,7 @@ bunTest.test.each(['zsh', 'bash', 'fish', 'nu', 'elvish', 'pwsh', 'xonsh'])(
     ]) {
       process.env[name] = 'fictional';
     }
+
     process.env['PYTHONPATH'] = 'inherited';
     write('project/mise.toml', '[tools]\npython="3.13"');
     bunTest.expect(inspect()).toBe('allow');
@@ -389,11 +400,13 @@ bunTest.test.each([
   write(`project/${filename}`, ' 3.13.1\n');
   bunTest.expect(inspect()).toBe('allow');
   write(`project/${filename}`, '$(echo fictional)');
+
   const decision = decideBash(
     "mise exec -- python3 -c 'print(1)'",
     {},
     { cwd: path.join(root, 'project/child') },
   );
+
   bunTest.expect(decision.kind).toBe('deny');
   bunTest.expect(decision.message).toContain(filename);
 });
@@ -453,14 +466,18 @@ bunTest.test.each([
 
 bunTest.test('unexpected inspector exceptions fail closed without exception text', () => {
   const [invocation] = analyzeBash('mise exec -- python3', { cwd: root }).invocations;
+
   if (invocation === undefined) {
     throw new Error('Missing fixture invocation');
   }
+
   const environment = emptyEnvironment();
   environment.cwd = root;
+
   const spy = bunTest.spyOn(environment.bindings, 'get').mockImplementation(() => {
     throw new TypeError('private bug details');
   });
+
   try {
     bunTest
       .expect(miseStartupSafe(invocation, environment, { operands: [], options: [] }))
@@ -472,15 +489,18 @@ bunTest.test('unexpected inspector exceptions fail closed without exception text
 
 bunTest.test('a programming error inside config inspection is not a policy reason', () => {
   write('project/mise.toml', '[tools]\npython="3.13"');
+
   const spy = bunTest.spyOn(Bun.TOML, 'parse').mockImplementation(() => {
     throw new TypeError('private config details');
   });
+
   try {
     const decision = decideBash(
       "mise exec -- python3 -c 'print(1)'",
       {},
       { cwd: path.join(root, 'project/child') },
     );
+
     bunTest.expect(decision.kind).toBe('deny');
     bunTest.expect(decision.message).toContain('Internal mise inspector error.');
     bunTest.expect(decision.message).not.toContain('private config details');
@@ -492,11 +512,13 @@ bunTest.test('a programming error inside config inspection is not a policy reaso
 bunTest.test('an unreadable idiomatic file identifies its filename', () => {
   write('global/config.toml', '[settings]\nidiomatic_version_file_enable_tools=["python"]');
   mkdirSync(path.join(root, 'project/.python-version'));
+
   const decision = decideBash(
     "mise exec -- python3 -c 'print(1)'",
     {},
     { cwd: path.join(root, 'project/child') },
   );
+
   bunTest.expect(decision.kind).toBe('deny');
   bunTest.expect(decision.message).toContain('.python-version');
 });

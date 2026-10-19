@@ -39,6 +39,7 @@ const checkedStartupContextChanged = (program: ShellProgram): boolean => {
   ) {
     return true;
   }
+
   if (
     program.environmentAssignments?.some(
       (name) =>
@@ -50,7 +51,9 @@ const checkedStartupContextChanged = (program: ShellProgram): boolean => {
   ) {
     return true;
   }
+
   let sources = 0;
+
   for (const command of program.invocations) {
     if (interpreterInput(command).kind === 'source') {
       sources += 1;
@@ -59,6 +62,7 @@ const checkedStartupContextChanged = (program: ShellProgram): boolean => {
       return true;
     }
   }
+
   return sources > 1;
 };
 
@@ -66,10 +70,12 @@ const uncertainContext = (program: ShellProgram, policy: CodePolicy): boolean =>
   if (program.environmentAssignments?.some((name) => STARTUP_VARIABLES.has(name)) === true) {
     return true;
   }
+
   return program.invocations.some((command) => {
     if (['chroot'].includes(command.head) || policy.remoteHeads.has(command.head)) {
       return true;
     }
+
     if (
       ['env', 'sudo'].includes(command.head) &&
       command.tokens
@@ -78,6 +84,7 @@ const uncertainContext = (program: ShellProgram, policy: CodePolicy): boolean =>
     ) {
       return true;
     }
+
     return (
       command.head === 'env' &&
       command.tokens.some((word) => STARTUP_VARIABLES.has(word.split('=')[0] ?? ''))
@@ -94,6 +101,7 @@ const codeDeny = (message: string): Decision =>
 const canonicalPath = (target: string): string | null => {
   let current = target;
   const suffix: string[] = [];
+
   for (let depth = 0; depth < 256; depth += 1) {
     try {
       return path.join(realpathSync(current), ...suffix.toReversed());
@@ -102,6 +110,7 @@ const canonicalPath = (target: string): string | null => {
         return null;
       }
     }
+
     try {
       if (lstatSync(current).isSymbolicLink()) {
         return null;
@@ -111,13 +120,17 @@ const canonicalPath = (target: string): string | null => {
         return null;
       }
     }
+
     const parent = path.dirname(current);
+
     if (parent === current) {
       return null;
     }
+
     suffix.push(path.basename(current));
     current = parent;
   }
+
   return null;
 };
 
@@ -125,10 +138,13 @@ const safeDeletion = (target: string, policy: CodePolicy): boolean => {
   if ((policy.cwd === null && !path.isAbsolute(target)) || target === '' || target.includes('\0')) {
     return false;
   }
+
   const resolved = canonicalPath(
     policy.cwd === null ? path.resolve(target) : path.resolve(policy.cwd, target),
   );
+
   const base = policy.cwd === null ? null : canonicalPath(policy.cwd);
+
   if (
     resolved === null ||
     (policy.cwd !== null && base === null) ||
@@ -137,14 +153,18 @@ const safeDeletion = (target: string, policy: CodePolicy): boolean => {
   ) {
     return false;
   }
+
   // Classify the real target in the same absolute/relative scope as the submitted path.
   if (!path.isAbsolute(target) && base === null) {
     return false;
   }
+
   const actual =
     base === null || path.isAbsolute(target) ? resolved : path.relative(base, resolved);
+
   const relativeScope =
     !path.isAbsolute(target) && isSafePathTarget(target, policy.safePaths.relative, []);
+
   return relativeScope
     ? isSafePathTarget(actual, policy.safePaths.relative, [])
     : isSafePathTarget(resolved, [], policy.safePaths.absolute);
@@ -157,9 +177,11 @@ const quoteArgument = (argument: string): string =>
 const jsonModuleDecision = (target: string): Decision => {
   try {
     const resolved = realpathSync(target);
+
     if (path.extname(resolved) !== '.json' || !lstatSync(resolved).isFile()) {
       return codeDeny('JSON imports must resolve to a regular .json file.');
     }
+
     return merge([readProtect({ file_path: target }), readProtect({ file_path: resolved })]);
   } catch {
     return codeDeny('JSON import target could not be verified.');
@@ -168,6 +190,7 @@ const jsonModuleDecision = (target: string): Decision => {
 
 const operationDecision = (operation: CodeOperation, originalPolicy: CodePolicy): Decision => {
   const policy = { ...originalPolicy, cwd: operation.cwd };
+
   if (policy.cwd !== null && policy.cwd !== originalPolicy.cwd) {
     try {
       if (!statSync(policy.cwd).isDirectory()) {
@@ -177,12 +200,15 @@ const operationDecision = (operation: CodeOperation, originalPolicy: CodePolicy)
       return codeDeny('The operation has an unresolved working directory.');
     }
   }
+
   if (operation.kind === 'process') {
     if (policy.cwd === null) {
       return codeDeny('The process has an unresolved working directory.');
     }
+
     return policy.inspectCommand(operation.argv.map(quoteArgument).join(' '), policy.cwd);
   }
+
   if (operation.kind === 'transfer') {
     return transferDecision(
       operation.command,
@@ -191,6 +217,7 @@ const operationDecision = (operation: CodeOperation, originalPolicy: CodePolicy)
       operation.cwd,
     );
   }
+
   if (operation.kind === 'json-package') {
     // Node resolves inline-source requires from the interpreter's startup cwd,
     // even after process.chdir.
@@ -198,20 +225,25 @@ const operationDecision = (operation: CodeOperation, originalPolicy: CodePolicy)
       originalPolicy.cwd === null
         ? null
         : resolvePackageJsonModule(operation.specifier, originalPolicy.cwd);
+
     return target === null
       ? codeDeny(
           `Package JSON ${JSON.stringify(operation.specifier)} does not resolve to one local file through node_modules or an exact package export.`,
         )
       : jsonModuleDecision(target);
   }
+
   if (policy.cwd === null && !path.isAbsolute(operation.path)) {
     return codeDeny('The operation has an unresolved working directory.');
   }
+
   const target =
     policy.cwd === null ? path.resolve(operation.path) : path.resolve(policy.cwd, operation.path);
+
   if (operation.kind === 'json-module') {
     return jsonModuleDecision(target);
   }
+
   if (
     (operation.kind === 'delete' || operation.kind === 'truncate') &&
     !safeDeletion(operation.path, policy)
@@ -221,6 +253,7 @@ const operationDecision = (operation: CodeOperation, originalPolicy: CodePolicy)
       `${operation.kind} outside a verified safe scope: ${JSON.stringify(operation.path)}. Use a recoverable deletion tool or limit the target to a verified build, cache, or temporary path.`,
     );
   }
+
   return operation.kind === 'read'
     ? readProtect({ file_path: target })
     : pathProtect({ file_path: target, content: '' });
@@ -233,43 +266,55 @@ const inspectCode = (
   argv?: readonly (string | null)[],
 ): Decision => {
   const report = analyzeCode(language, source, argv ?? [], policy.cwd);
+
   if (report.gap !== null) {
     return codeDeny(report.gap);
   }
+
   return merge(report.operations.map((operation) => operationDecision(operation, policy)));
 };
 
 const embeddedCode = (program: ShellProgram, policy: CodePolicy): Decision => {
   const decisions: Decision[] = [];
+
   for (const invocation of program.invocations) {
     const input = interpreterInput(invocation);
     const localPolicy = { ...policy, cwd: invocation.cwd };
+
     if (input.kind === 'blocked') {
       decisions.push(applyShellBypass(program, codeDeny(input.reason)));
     }
+
     if (input.kind === 'command') {
       if (uncertainContext(program, policy) && input.requiresContext) {
         return codeDeny('The forwarded command has an unverified execution context.');
       }
+
       decisions.push(policy.inspectCommand(input.command, localPolicy.cwd));
     }
+
     if (input.kind === 'source') {
       if (invocation.startup.kind === 'unverified') {
         return codeDeny(invocation.startup.reason);
       }
+
       if (invocation.startup.kind === 'checked' && checkedStartupContextChanged(program)) {
         return codeDeny(
           'mise exec startup blocked: earlier commands, redirects, or environment assignments can change the inspected configuration.',
         );
       }
+
       if (uncertainContext(program, policy)) {
         return codeDeny(UNKNOWN_STARTUP);
       }
+
       decisions.push(inspectCode(input.language, input.source, localPolicy, input.argv));
     }
   }
+
   return decisions.length === 0 ? allow('embedded-code') : merge(decisions);
 };
 
 export { codeDeny, embeddedCode, inspectCode };
+
 export type { CodePolicy };

@@ -23,17 +23,23 @@ const scannerFailureMessage = (category: ScanFailureCategory): string =>
 
 const postSecretScrub = (input: PostInput): Decision => {
   const text = extractResponseText(input.toolName, input.response);
+
   if (text.length === 0) {
     return allow('post-secret-scrub');
   }
+
   const result = scanAndRedact(text, input.secretScanner, input.scannerRunner);
+
   if (!result.ok) {
     return deny('secret-scanner-failed', scannerFailureMessage(result.category));
   }
+
   if (result.hits.length === 0) {
     return allow('post-secret-scrub');
   }
+
   const summary = result.hits.map((hit) => `${hit.rule}×${hit.count}`).join(', ');
+
   return deny(
     'secrets-in-output',
     [
@@ -46,4 +52,5 @@ const postSecretScrub = (input: PostInput): Decision => {
 };
 
 export type { PostInput };
+
 export { postSecretScrub };

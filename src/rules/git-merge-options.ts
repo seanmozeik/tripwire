@@ -18,6 +18,7 @@ const VALUE_OPTIONS = new Set([
   '--into-name',
   '--cleanup',
 ]);
+
 const LONG_OPTIONS = [
   ...VALUE_OPTIONS,
   '--stat',
@@ -45,7 +46,9 @@ const LONG_OPTIONS = [
   '--no-verify',
   '--verify',
 ] as const;
+
 const OPERATIONS = new Set(['--abort', '--quit', '--continue']);
+
 const SHORT_VALUES: ReadonlyMap<string, string> = new Map([
   ['s', '--strategy'],
   ['X', '--strategy-option'],
@@ -57,10 +60,13 @@ const longOption = (argument: string): string => {
   if (LONG_OPTIONS.includes(argument)) {
     return argument;
   }
+
   if (argument.startsWith('--no-')) {
     return `--no-${longOption(`--${argument.slice('--no-'.length)}`).slice(2)}`;
   }
+
   const matches = LONG_OPTIONS.filter((option) => option.startsWith(argument));
+
   return matches.length === 1 ? (matches[0] ?? argument) : argument;
 };
 
@@ -74,35 +80,46 @@ const shortOptions = (
   next: string | undefined,
 ): { readonly options: readonly MergeOption[]; readonly consumesNext: boolean } => {
   const options: MergeOption[] = [];
+
   for (let offset = 1; offset < argument.length; offset += 1) {
     const short = argument[offset] ?? '';
+
     if (short === 'e') {
       options.push({ name: '--edit', value: undefined });
     }
+
     const valueOption = SHORT_VALUES.get(short);
+
     if (valueOption !== undefined) {
       const attached = argument.slice(offset + 1);
       const consumesNext = attached === '';
       options.push({ name: valueOption, value: consumesNext ? next : attached });
+
       return { options, consumesNext };
     }
+
     if (short === 'S') {
       break;
     }
   }
+
   return { options, consumesNext: false };
 };
 
 const parseMergeArguments = (args: readonly string[]): MergeArguments => {
   const options: MergeOption[] = [];
+
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index] ?? '';
+
     if (argument === '--') {
       break;
     }
+
     if (argument.startsWith('--')) {
       const equals = argument.indexOf('=');
       const option = longOption(equals === -1 ? argument : argument.slice(0, equals));
+
       if (VALUE_OPTIONS.has(option) && equals === -1) {
         index += 1;
         options.push({ name: option, value: args[index] });
@@ -118,13 +135,15 @@ const parseMergeArguments = (args: readonly string[]): MergeArguments => {
       index += parsed.consumesNext ? 1 : 0;
     }
   }
+
   const edit = options.findLast((option) => ['--edit', '--no-edit'].includes(option.name));
+
   return {
     edit: edit === undefined ? undefined : edit.name === '--edit',
     message: options.some((option) => ['--message', '--file'].includes(option.name)),
-    strategies: options
-      .filter((option) => option.name === '--strategy')
-      .map((option) => option.value ?? ''),
+    strategies: options.flatMap((option) =>
+      option.name === '--strategy' ? [option.value ?? ''] : [],
+    ),
     operation: options.findLast((option) => OPERATIONS.has(option.name))?.name,
   };
 };

@@ -11,6 +11,7 @@ bunTest.test('recursive globs stay unresolved without scanning the filesystem', 
     home: '/fictional-home',
     cwd: '/tripwire-policy-fixture',
   });
+
   const word = program.invocations[0]?.words[1];
   bunTest.expect(word?.source).toBe('~/dev/**/package.json');
   bunTest.expect(word?.kind).toBe('dynamic');
@@ -55,10 +56,12 @@ bunTest.test(
   'single-level globs expand up to 128 matches and retain the original above the limit',
   () => {
     const root = mkdtempSync(path.join(tmpdir(), 'example-glob-'));
+
     try {
       for (let index = 0; index < 128; index += 1) {
         writeFileSync(path.join(root, `entry-${index}`), 'example');
       }
+
       const before = analyzeBash('ls entry-*', { cwd: root });
       bunTest.expect(before.invocations[0]?.args.length).toBe(128);
       writeFileSync(path.join(root, 'entry-128'), 'example');

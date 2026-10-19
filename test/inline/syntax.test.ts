@@ -47,6 +47,7 @@ const pythonCases = [
     'def outer():\n n=0\n def f():\n  nonlocal n\n  n+=1\n  return n\n print(f())\nouter()',
   ],
 ];
+
 const javascriptCases = [
   ['typeof', 'console.log(typeof MissingFeature, typeof Bun.file("report.txt").image)'],
   ['destructured callback', 'console.log([[1,2]].map(([,v])=>v))'],
@@ -71,6 +72,7 @@ const javascriptCases = [
     'process.once("SIGINT",()=>process.exit(0)); setInterval(()=>console.log("example"),1000)',
   ],
 ];
+
 const quote = (source: string): string => `'${source.replaceAll("'", String.raw`'\''`)}'`;
 
 bunTest.test.each(pythonCases)('Python %s and dangerous twin', (_, source) => {
@@ -87,6 +89,7 @@ bunTest.test.each(pythonCases)('Python %s and dangerous twin', (_, source) => {
     )
     .toBe('deny');
 });
+
 bunTest.test.each(javascriptCases)('JS %s and dangerous twin', (_, source) => {
   bunTest
     .expect(decideBash(`bun -e ${quote(source)}`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
@@ -101,6 +104,30 @@ bunTest.test.each(javascriptCases)('JS %s and dangerous twin', (_, source) => {
     )
     .toBe('deny');
 });
+
+for (const language of ['javascript', 'typescript'] as const) {
+  bunTest.test(`${language} shorthand bindings retain destructive function tracking`, () => {
+    const report = analyzeCode(
+      language,
+      'const {unlinkSync}=require("node:fs"); unlinkSync("/srv/example/record.txt")',
+      [],
+      '/tripwire-policy-fixture',
+    );
+
+    bunTest.expect(report.gap).toBeNull();
+    bunTest.expect(report.operations.some((operation) => operation.kind === 'delete')).toBe(true);
+  });
+
+  bunTest.test.each([
+    'const {value=require("node:fs").unlinkSync("/srv/example/record.txt")}={}',
+    'const {value:alias=require("node:fs").unlinkSync("/srv/example/record.txt")}={}',
+    'const {[require("node:fs").unlinkSync("/srv/example/record.txt")]:value}={}',
+  ])(`${language} uninspected object binding effects stay denied: %s`, (source) => {
+    bunTest
+      .expect(analyzeCode(language, source, [], '/tripwire-policy-fixture').gap)
+      .not.toBeNull();
+  });
+}
 
 bunTest.test('invalid code stays closed without rejecting complete objects', () => {
   bunTest
@@ -123,6 +150,7 @@ bunTest.test('invalid code stays closed without rejecting complete objects', () 
 bunTest.test('tuple iteration binds each static operand', () => {
   const source =
     'from pathlib import Path\nfor source,target in [("a.txt","b.txt")]:\n Path(source).rename(target)';
+
   bunTest
     .expect(decideBash(`python3 -c ${quote(source)}`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
     .toBe('allow');
@@ -140,6 +168,7 @@ bunTest.test('tuple iteration binds each static operand', () => {
 bunTest.test('exception tuples and builtin type names remain inert', () => {
   const source =
     'try:\n print(1)\nexcept (ValueError,TypeError) as error:\n print(type(error).__name__)';
+
   bunTest
     .expect(decideBash(`python3 -c ${quote(source)}`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
     .toBe('allow');
@@ -157,6 +186,7 @@ bunTest.test('exception tuples and builtin type names remain inert', () => {
 bunTest.test('bounded dictionary comprehensions preserve inspected module names', () => {
   const source =
     'import importlib.util; print({name:importlib.util.find_spec(name) is not None for name in ["example","other"]})';
+
   bunTest
     .expect(decideBash(`python3 -c ${quote(source)}`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
     .toBe('allow');
@@ -170,9 +200,11 @@ bunTest.test('bounded dictionary comprehensions preserve inspected module names'
     )
     .toBe('deny');
 });
+
 bunTest.test('walrus in a comprehension cannot conceal outer rebinding', () => {
   const source =
     'import os\np="/tmp/example"\n[(p:="/srv/example/record.txt") for x in [1]]\nos.remove(p)';
+
   bunTest
     .expect(decideBash(`python3 -c ${quote(source)}`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
     .toBe('deny');
@@ -181,6 +213,7 @@ bunTest.test('walrus in a comprehension cannot conceal outer rebinding', () => {
 bunTest.test('grouping inspects callbacks over inert directory names', () => {
   const source =
     'const fs=require("node:fs"); const groups=Map.groupBy(fs.readdirSync(".").filter(name=>name.endsWith(".sql")),name=>name.split("_")[0]); console.log([...groups].filter(([,values])=>values.length>1))';
+
   bunTest
     .expect(decideBash(`node -e ${quote(source)}`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
     .toBe('allow');

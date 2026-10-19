@@ -25,22 +25,27 @@ class Scope extends Map<string, Value> {
 
 const joinValues = (values: readonly Value[]): Value => {
   const [first] = values;
+
   if (first !== undefined && values.every((value) => value === first)) {
     return first;
   }
+
   if (values.every((value) => value.kind === 'text' || value.kind === 'string')) {
     return text;
   }
+
   return values.every((value) => isData(value)) ? data : unknown;
 };
 
 type ScopeSnapshot = ReadonlyMap<Scope, ReadonlyMap<string, Value>>;
+
 class Scopes {
   readonly #scopes = new Set<Scope>();
 
   create(parent?: Scope, values?: ReadonlyMap<string, Value>): Scope {
     const scope = new Scope(parent, values);
     this.#scopes.add(scope);
+
     return scope;
   }
 
@@ -51,13 +56,17 @@ class Scopes {
   snapshot(): ScopeSnapshot {
     const scopes = new Map<Scope, ReadonlyMap<string, Value>>();
     const values = new Set<Value>();
+
     const visitValue = (value: Value): void => {
       if (values.has(value)) {
         return;
       }
+
       values.add(value);
+
       if (value.kind === 'closure') {
         visitScope(value.scope);
+
         for (const parameter of value.parameters) {
           if (parameter.fallback !== undefined) {
             visitValue(parameter.fallback);
@@ -67,6 +76,7 @@ class Scopes {
         for (const method of value.methods.values()) {
           visitValue(method);
         }
+
         if (value.kind === 'instance' && value.entries instanceof Scope) {
           visitScope(value.entries);
         }
@@ -87,27 +97,34 @@ class Scopes {
         }
       }
     };
+
     const visitScope = (scope: Scope): void => {
       if (scopes.has(scope)) {
         return;
       }
+
       scopes.set(scope, new Map(scope));
+
       if (scope.parent !== undefined) {
         visitScope(scope.parent);
       }
+
       for (const value of scope.values()) {
         visitValue(value);
       }
     };
+
     for (const scope of this.#scopes) {
       visitScope(scope);
     }
+
     return scopes;
   }
 
   static restore(snapshot: ScopeSnapshot): void {
     for (const [scope, values] of snapshot) {
       scope.clear();
+
       for (const [name, value] of values) {
         scope.set(name, value);
       }
@@ -119,6 +136,7 @@ class Scopes {
       const maps = states.map((state) => state.get(scope) ?? new Map<string, Value>());
       const names = new Set(maps.flatMap((map) => [...map.keys()]));
       scope.clear();
+
       for (const name of names) {
         scope.set(name, joinValues(maps.map((map) => map.get(name) ?? unknown)));
       }
@@ -127,4 +145,5 @@ class Scopes {
 }
 
 export { Scope, Scopes };
+
 export type { ScopeSnapshot };

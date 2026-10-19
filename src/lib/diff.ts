@@ -9,6 +9,7 @@ const addedLines = (prev: string, next: string): string[] => {
       .map((l) => l.trim())
       .filter((l) => l.length > 0),
   );
+
   return next
     .split('\n')
     .filter((l) => l.trim().length > 0)
@@ -22,6 +23,7 @@ const readFileOrEmpty = (path: string): string => {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
       return '';
     }
+
     throw error;
   }
 };

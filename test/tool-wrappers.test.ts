@@ -30,6 +30,7 @@ const wrappers = [
   'volta run',
   'caffeinate -i',
 ];
+
 bunTest.test.each(wrappers)('unwraps %s for policy', (wrapper) => {
   bunTest
     .expect(decideBash(`${wrapper} rm -rf /`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
@@ -50,6 +51,7 @@ bunTest.test.each(wrappers)('unwraps %s for policy', (wrapper) => {
     )
     .toBe('deny');
 });
+
 bunTest.test('shell text wrapper and unknown flags', () => {
   bunTest
     .expect(decideBash('nix-shell --run "rm -rf /"', {}, { cwd: '/tripwire-policy-fixture' }).kind)

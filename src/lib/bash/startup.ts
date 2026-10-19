@@ -11,4 +11,5 @@ const UNKNOWN_STARTUP =
   'Interpreter startup, working directory, or remote filesystem state is not verified.';
 
 export { joinStartup, UNKNOWN_STARTUP };
+
 export type { StartupState };

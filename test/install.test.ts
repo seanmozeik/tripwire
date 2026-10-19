@@ -27,6 +27,19 @@ const hooksIn = (group: Record<string, unknown>) => recordArrayField(group, 'hoo
 const hookCommands = (groups: readonly Record<string, unknown>[]): readonly unknown[] =>
   groups.flatMap((group) => hooksIn(group)).map((hook) => hook['command']);
 
+const createCodexFiles = async (hooks: unknown, toml: string): Promise<[string, string]> => {
+  const configDirectory = pathModule.join(homeDirectory, '.codex');
+  const hooksPath = pathModule.join(configDirectory, 'hooks.json');
+  const tomlPath = pathModule.join(configDirectory, 'config.toml');
+  await mkdir(configDirectory, { recursive: true });
+  await Promise.all([
+    writeFile(hooksPath, `${JSON.stringify(hooks, null, 2)}\n`),
+    writeFile(tomlPath, toml),
+  ]);
+
+  return [hooksPath, tomlPath];
+};
+
 bunTest.beforeEach(async () => {
   homeDirectory = await mkdtemp(pathModule.join(tmpdir(), 'tripwire-install-'));
 });
@@ -44,6 +57,7 @@ bunTest.describe('atomic settings replacement', () => {
       await writeFile(targetPath, 'original\n');
 
       let failure: unknown;
+
       try {
         await replaceTextAtomically(targetPath, 'replacement\n', {
           beforeRename: () => {
@@ -55,9 +69,11 @@ bunTest.describe('atomic settings replacement', () => {
       }
 
       bunTest.expect(failure).toBeInstanceOf(Error);
+
       if (!(failure instanceof Error)) {
         throw new Error('Expected replaceTextAtomically to throw an Error');
       }
+
       bunTest.expect(failure.message).toBe('forced pre-rename failure');
       bunTest.expect(await readFile(targetPath, 'utf8')).toBe('original\n');
       bunTest.expect(await Bun.file(pendingPath).exists()).toBe(false);
@@ -145,23 +161,12 @@ bunTest.describe('Claude installation', () => {
 });
 
 bunTest.describe('Codex installation', () => {
-  const createCodexFiles = async (hooks: unknown, toml: string): Promise<[string, string]> => {
-    const configDirectory = pathModule.join(homeDirectory, '.codex');
-    const hooksPath = pathModule.join(configDirectory, 'hooks.json');
-    const tomlPath = pathModule.join(configDirectory, 'config.toml');
-    await mkdir(configDirectory, { recursive: true });
-    await Promise.all([
-      writeFile(hooksPath, `${JSON.stringify(hooks, null, 2)}\n`),
-      writeFile(tomlPath, toml),
-    ]);
-    return [hooksPath, tomlPath];
-  };
-
   bunTest.test('prevalidates malformed TOML before writing hooks.json', async () => {
     const [hooksPath, tomlPath] = await createCodexFiles(
       { preserved: 'yes' },
       '[features]\nhooks = = false\n',
     );
+
     const beforeHooks = await readFile(hooksPath, 'utf8');
     const beforeToml = await readFile(tomlPath, 'utf8');
 
@@ -176,8 +181,10 @@ bunTest.describe('Codex installation', () => {
 
   bunTest.test('preserves unknown JSON fields and TOML bytes outside the hook value', async () => {
     const nativeCommand = '/opt/tripwire/bin/tripwire --tripwire-hook';
+
     const originalToml =
       '# leading comment\r\n[features] # keep section comment\r\nother = true\r\nhooks = false # keep value comment\r\n\r\n[notice]\r\nhide = false\r\n';
+
     const [hooksPath, tomlPath] = await createCodexFiles(
       {
         hooks: {

@@ -16,6 +16,7 @@ const STANDARD_CODECS = new Set([
 
 const validateCodec = (value: Value): void => {
   const encoding = valueString(value).toLowerCase().replaceAll(/[-_]/gu, '');
+
   if (!STANDARD_CODECS.has(encoding)) {
     failInspection('Custom Python codecs require review.');
   }

@@ -42,6 +42,7 @@ class PiHandlerCollector implements TripwirePiExtensionApi {
     if (this.toolCall === undefined) {
       throw new Error('Pi extension did not register a tool_call handler');
     }
+
     return this.toolCall;
   }
 
@@ -49,9 +50,11 @@ class PiHandlerCollector implements TripwirePiExtensionApi {
     if (this.toolResult === undefined) {
       throw new Error('Pi extension did not register a tool_result handler');
     }
+
     return this.toolResult;
   }
 }
 
 export { isPiExtension, PiHandlerCollector };
+
 export type { PiExtension, ToolCallHandler, ToolResultHandler };

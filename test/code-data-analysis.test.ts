@@ -10,6 +10,7 @@ bunTest.describe('bounded abstract data analysis', () => {
       [],
       '/tripwire-policy-fixture',
     );
+
     bunTest.expect(report.gap).toBeNull();
     bunTest
       .expect(
@@ -29,6 +30,7 @@ bunTest.describe('bounded abstract data analysis', () => {
       [],
       '/tripwire-policy-fixture',
     );
+
     bunTest.expect(report.gap).toBeNull();
     bunTest
       .expect(
@@ -43,6 +45,7 @@ bunTest.describe('bounded abstract data analysis', () => {
       [],
       '/tripwire-policy-fixture',
     );
+
     bunTest.expect(report.gap).toBeNull();
     bunTest
       .expect(
@@ -57,6 +60,7 @@ bunTest.describe('bounded abstract data analysis', () => {
       [],
       '/tripwire-policy-fixture',
     );
+
     bunTest.expect(report.gap).toContain('unresolved path');
   });
   bunTest.test('shared data does not cause exponential inspection', () => {
@@ -66,12 +70,14 @@ bunTest.describe('bounded abstract data analysis', () => {
   });
   bunTest.test('nested literal iterations stop at the evaluation budget', () => {
     const values = `[${Array.from({ length: 100 }, () => '1').join(',')}]`;
+
     const report = analyzeCode(
       'python',
       `for a in ${values}:\n for b in ${values}:\n  print(a+b)`,
       [],
       '/tripwire-policy-fixture',
     );
+
     bunTest.expect(report.gap).toContain('budget');
   });
 });

@@ -15,6 +15,7 @@ bunTest.describe('rollout compatibility and paired attacks (inert policy data)',
       bunTest.expect(decision.kind, `${pair.source}: ${decision.message}`).toBe('deny');
     });
   }
+
   bunTest.test.each([...compatibilityAttacks])('negative control: %s', (command) => {
     bunTest.expect(decideBash(command, {}, { cwd: '/tripwire-policy-fixture' }).kind).toBe('deny');
   });

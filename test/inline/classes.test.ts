@@ -31,6 +31,7 @@ bunTest.test.each([
 bunTest.test('HTML parser subclasses inspect their event handlers', () => {
   const source =
     'from html.parser import HTMLParser\nclass Parser(HTMLParser):\n def handle_data(self,text): print(text)\nParser().feed("<p>example</p>")';
+
   bunTest
     .expect(decideBash(`python3 -c ${quote(source)}`, {}, { cwd: '/tripwire-policy-fixture' }).kind)
     .toBe('allow');

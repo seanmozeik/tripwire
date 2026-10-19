@@ -10,6 +10,7 @@ import { checkShellWritePath } from './shell-write';
 
 const checkWord = (word: ShellWord, cwd: string | null): Decision | null => {
   const target = resolveShellPath(word.value, cwd);
+
   return word.kind === 'dynamic' || word.kind === 'background-pid' || target === null
     ? deny(
         'redirect-dynamic-target',
@@ -27,28 +28,35 @@ const bashRedirect = (program: ShellProgram): Decision => {
       redirect.op === '&>>'
     ) {
       const decision = checkWord(redirect.target, redirect.cwd);
+
       if (decision !== null) {
         return decision;
       }
     }
   }
+
   for (const seg of program.invocations) {
     const argumentWords = seg.words.slice(1).filter((word) => !word.value.startsWith('-'));
+
     if (seg.head === 'tee') {
       for (const word of argumentWords) {
         const decision = checkWord(word, seg.cwd);
+
         if (decision !== null) {
           return decision;
         }
       }
     }
+
     if (['cp', 'mv', 'ln', 'rsync', 'install'].includes(seg.head)) {
       const decision = fileTransfer(seg);
+
       if (decision.kind !== 'allow') {
         return decision;
       }
     }
   }
+
   return allow('bash-redirect');
 };
 

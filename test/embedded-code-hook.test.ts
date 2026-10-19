@@ -19,8 +19,10 @@ bunTest.test.each([
   },
 ])('Pi/OMP $toolName event reaches the production hook and blocks', ({ toolName, input }) => {
   const home = mkdtempSync(path.join(tmpdir(), 'tripwire-code-hook-'));
+
   try {
     const payload = hookInputs({ toolName, input, toolCallId: 'code-fixture' }, 'PreToolUse', home);
+
     // This runs Tripwire only; payload code is JSON data on stdin.
     const result = Bun.spawnSync(
       [process.execPath, new URL('../src/main.ts', import.meta.url).pathname, '--tripwire-hook'],
@@ -32,6 +34,7 @@ bunTest.test.each([
         timeout: 10_000,
       },
     );
+
     bunTest.expect(result.exitCode).toBe(0);
     bunTest
       .expect(

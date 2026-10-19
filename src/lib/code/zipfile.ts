@@ -12,6 +12,7 @@ const zipSignatures: Readonly<Record<string, CallSignature>> = {
   },
   'zipfile.is_zipfile': { parameters: ['filename'] },
 };
+
 const archiveSignatures: Readonly<Record<string, CallSignature>> = {
   read: { parameters: ['name'] },
   write: { parameters: ['filename', 'arcname'] },
@@ -22,12 +23,15 @@ const openArchive = (args: readonly Value[], context: OperationContext): Value =
   if (args.length < 1 || args.length > 3) {
     return failInspection('ZIP constructor options are not inspected.');
   }
+
   const [file, modeValue, compression] = args;
   const target = valueString(file);
   const mode = modeValue === undefined ? 'r' : valueString(modeValue);
+
   if (!['r', 'w', 'x', 'a'].includes(mode)) {
     return failInspection('ZIP open mode must be r, w, x, or a.');
   }
+
   if (
     compression !== undefined &&
     compression.kind !== 'number' &&
@@ -38,11 +42,13 @@ const openArchive = (args: readonly Value[], context: OperationContext): Value =
   ) {
     return failInspection('ZIP compression must be a standard constant.');
   }
+
   recordOperation(context, {
     kind: mode === 'r' ? 'read' : 'write',
     path: target,
     range: context.range,
   });
+
   return { kind: 'archive', path: target };
 };
 
@@ -53,32 +59,41 @@ const archiveCall = (
   context: OperationContext,
 ): Value => {
   requireData(args);
+
   if (member === 'infolist' && args.length === 0) {
     return { kind: 'sequence', item: { kind: 'builtin', name: 'zip-info' } };
   }
+
   if (['close', 'namelist', 'testzip', 'printdir'].includes(member) && args.length === 0) {
     return data;
   }
+
   if (member === 'read' && args.length === 1) {
     return text;
   }
+
   if (member === 'write' && args.length >= 1 && args.length <= 2) {
     recordOperation(
       context,
       { kind: 'read', path: valueString(args[0]), range: context.range },
       { kind: 'write', path: archive.path, range: context.range },
     );
+
     return data;
   }
+
   if (member === 'writestr' && args.length === 2) {
     recordOperation(context, { kind: 'write', path: archive.path, range: context.range });
+
     return data;
   }
+
   if (member === 'extract' || member === 'extractall') {
     return failInspection(
       'ZIP extraction needs verified member destinations. Read named members and write them to explicit paths.',
     );
   }
+
   return failInspection(`Unsupported ZIP method: ${member}.`);
 };
 

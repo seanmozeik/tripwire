@@ -10,6 +10,7 @@ bunTest.test('tracked cwd reaches inline code, redirects, copies, and deletion',
   const root = mkdtempSync(path.join(tmpdir(), 'example-cwd-'));
   const safe = path.join(root, 'ordinary');
   const protectedDirectory = path.join(root, 'protected');
+
   try {
     mkdirSync(safe);
     mkdirSync(path.join(root, '~'));
@@ -19,6 +20,7 @@ bunTest.test('tracked cwd reaches inline code, redirects, copies, and deletion',
     writeFileSync(path.join(protectedDirectory, '.env'), 'example');
     symlinkSync('.env', path.join(protectedDirectory, 'output'));
     symlinkSync('/', path.join(protectedDirectory, 'dist'));
+
     const inspect = (command: string): string =>
       decide({
         hook_event_name: 'PreToolUse',
@@ -26,6 +28,7 @@ bunTest.test('tracked cwd reaches inline code, redirects, copies, and deletion',
         cwd: root,
         tool_input: { command },
       }).kind;
+
     for (const command of [
       'python3 -c \'open("output","w").write("example")\'',
       'echo example > output',
@@ -37,6 +40,7 @@ bunTest.test('tracked cwd reaches inline code, redirects, copies, and deletion',
       bunTest.expect(inspect(`(cd protected); cd ordinary; ${command}`)).toBe('allow');
       bunTest.expect(inspect(`cd "$DIR"; ${command}`)).toBe('deny');
     }
+
     bunTest.expect(inspect('cd protected; rm -rf dist')).toBe('allow');
     bunTest.expect(inspect('cd protected; rm -rf dist/')).toBe('deny');
     bunTest.expect(inspect('cd protected; rm -rf dist/etc')).toBe('deny');
@@ -61,10 +65,12 @@ bunTest.test('tracked cwd reaches inline code, redirects, copies, and deletion',
     bunTest.expect(inspect('pushd protected; popd; echo example > output')).toBe('allow');
     bunTest.expect(inspect('direnv exec protected tee output')).toBe('deny');
     bunTest.expect(inspect('mise -C protected exec -- tee output')).toBe('deny');
+
     const directories = analyzeBash(
       "cd '~'; printf literal; cd ~; printf home; cd ~/..; printf parent",
       { cwd: root, home },
     );
+
     bunTest
       .expect(
         directories.invocations
@@ -80,9 +86,11 @@ bunTest.test('tracked cwd reaches inline code, redirects, copies, and deletion',
         inspect('pushd ordinary; pushd ../protected; pushd missing; popd; echo example > output'),
       )
       .toBe('deny');
+
     const program = analyzeBash('cd ordinary; (cd ..; printf inside); printf outside', {
       cwd: root,
     });
+
     bunTest
       .expect(
         program.invocations
@@ -100,8 +108,10 @@ const inspect = (command: string, cwd: string): string =>
 
 bunTest.test('relative deletion follows the resolved cwd and symlink target', () => {
   const cwd = mkdtempSync(path.join(tmpdir(), 'example-delete-'));
+
   try {
     symlinkSync('/', path.join(cwd, 'escape'));
+
     for (const command of [
       'rm x.log',
       'python3 -c \'import os; os.remove("x.log")\'',
@@ -127,10 +137,15 @@ const fixtureRoot = realpathSync(mkdtempSync(path.join(tmpdir(), 'example-resolu
 const project = path.join(fixtureRoot, 'work/project');
 const scratch = path.join(fixtureRoot, 'scratch/run-1');
 const session = path.join(fixtureRoot, 'session');
+
 mkdirSync(path.join(project, 'app'), { recursive: true });
+
 mkdirSync(scratch, { recursive: true });
+
 mkdirSync(session);
+
 writeFileSync(path.join(project, 'package.json'), '{"name":"example-project"}');
+
 writeFileSync(path.join(fixtureRoot, 'blocker'), 'example');
 
 bunTest.afterAll(() => {
@@ -142,6 +157,7 @@ const decideIn = (
   cwd = session,
 ): { readonly kind: string; readonly rule: string } => {
   const { kind, rule } = decideBash(command, {}, { cwd });
+
   return { kind, rule };
 };
 
@@ -171,9 +187,11 @@ bunTest.describe('static assignments in && lists', () => {
     ]) {
       expectPermitted(command);
     }
+
     const [redirect] = analyzeBash(`cd ${project} && S=${scratch} && git status > $S/a.txt`, {
       cwd: session,
     }).redirects;
+
     bunTest.expect(redirect?.target.kind).toBe('literal');
     bunTest.expect(redirect?.target.value).toBe(`${scratch}/a.txt`);
     bunTest.expect(redirect?.cwd).toBe(project);
@@ -229,6 +247,7 @@ bunTest.describe('directories made by mkdir -p in the same program', () => {
     ]) {
       expectPermitted(command);
     }
+
     bunTest
       .expect(
         invocationCwd(`mkdir -p ${scratch}/newdir && cd ${scratch}/newdir && printf x`, 'printf'),
@@ -270,12 +289,14 @@ bunTest.test('background statements keep their directory and variable changes', 
   bunTest
     .expect(decideIn('cd /tmp & rm -rf src', '/work/project'))
     .toEqual({ kind: 'deny', rule: 'destructive-outside-safe-paths' });
+
   for (const command of [
     `S=${scratch} & printf x > $S/a.txt`,
     `mkdir -p ${scratch}/bg & cd ${scratch}/bg && printf x > a.txt`,
   ]) {
     bunTest.expect(decideIn(command)).toEqual(unresolvedRedirect);
   }
+
   bunTest
     .expect(invocationCwd(`cd ${project} && printf one & printf two`, 'printf'))
     .toEqual([project, session]);

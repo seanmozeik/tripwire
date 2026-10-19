@@ -13,6 +13,7 @@ bunTest.test('mise startup in a real process with an activated shell and global 
   const config = path.join(home, '.config/mise/config.toml');
   mkdirSync(path.dirname(config), { recursive: true });
   cpSync(new URL('fixtures/mise-idiomatic', import.meta.url), project, { recursive: true });
+
   const searchPath = [
     path.join(home, '.local/share/mise/installs/python/3.13/bin'),
     path.join(home, '.local/share/mise/shims'),
@@ -22,6 +23,7 @@ bunTest.test('mise startup in a real process with an activated shell and global 
     '/usr/bin',
     '/bin',
   ].join(path.delimiter);
+
   const env = {
     HOME: home,
     PATH: searchPath,
@@ -39,6 +41,7 @@ bunTest.test('mise startup in a real process with an activated shell and global 
     // Inherited startup state is also inherited by a plain interpreter.
     PYTHONPATH: 'inherited',
   };
+
   const run = (code: string): string => {
     const child = Bun.spawnSync([process.execPath, entry, '--tripwire-hook'], {
       cwd,
@@ -54,9 +57,12 @@ bunTest.test('mise startup in a real process with an activated shell and global 
       stdout: 'pipe',
       stderr: 'pipe',
     });
+
     bunTest.expect(child.exitCode).toBe(0);
+
     return child.stdout.toString();
   };
+
   try {
     const backend = path.join(home, '.local/share/mise/installs/python/.mise.backend.toml');
     mkdirSync(path.dirname(backend), { recursive: true });
@@ -67,6 +73,7 @@ bunTest.test('mise startup in a real process with an activated shell and global 
     );
     bunTest.expect(run('print(1)').trim()).toBe('{"continue": true}');
     bunTest.expect(run('import os; os.remove("/")')).toContain('"deny"');
+
     for (const value of [
       'path:./payload',
       'https://example.invalid/node',
@@ -78,6 +85,7 @@ bunTest.test('mise startup in a real process with an activated shell and global 
       bunTest.expect(deniedVersion).toContain('"deny"');
       bunTest.expect(deniedVersion).toContain('.nvmrc');
     }
+
     writeFileSync(path.join(cwd, '.nvmrc'), 'lts/*');
     writeFileSync(path.join(cwd, 'package.json'), '{"packageManager":"pnpm@file:./payload"}');
     const deniedPackage = run('print(1)');

@@ -11,6 +11,7 @@ import { openArchive } from './zipfile';
 const inert = (value: Value): void => {
   requireData([value]);
 };
+
 const diffSignature: CallSignature = {
   parameters: ['a', 'b', 'fromfile', 'tofile', 'fromfiledate', 'tofiledate', 'n', 'lineterm'],
   defaults: {
@@ -22,6 +23,7 @@ const diffSignature: CallSignature = {
     lineterm: { kind: 'string', value: '\n' },
   },
 };
+
 // CSV format parameters are plain values. A dialect must also be inert data, so
 // a Dialect subclass with uninspected methods cannot pass.
 const csvSignature = (parameters: readonly string[]): CallSignature => ({
@@ -40,6 +42,7 @@ const csvSignature = (parameters: readonly string[]): CallSignature => ({
     ].map((name) => [name, inert]),
   ),
 });
+
 const pythonSignatures: Readonly<Record<string, CallSignature>> = {
   'glob.glob': { parameters: ['pathname'], options: { recursive: inert } },
   'glob.iglob': { parameters: ['pathname'], options: { recursive: inert } },
@@ -58,20 +61,27 @@ const isStream = (value: Value | undefined, names: readonly string[]): boolean =
 // file handle whose open() call was already checked, or to standard output.
 const csvCall = (name: string, args: readonly Value[]): Value | null => {
   const [stream, ...options] = args;
+
   if (name === 'csv.reader' || name === 'csv.DictReader') {
     if (stream === undefined) {
       return failInspection('CSV input needs a known file, stdin, or inert lines.');
     }
+
     requireData(isStream(stream, ['sys.stdin']) ? options : args);
+
     return data;
   }
+
   if (name === 'csv.writer' || name === 'csv.DictWriter') {
     if (!isStream(stream, ['sys.stdout', 'sys.stderr'])) {
       return failInspection('CSV output needs a known file handle or standard output.');
     }
+
     requireData(options);
+
     return { kind: 'builtin', name: 'csv-writer' };
   }
+
   return null;
 };
 
@@ -86,20 +96,27 @@ const pythonLibraryCall = (
     )
   ) {
     requireData(args);
+
     if (args.length > (name === 'hashlib.new' ? 2 : 1)) {
       return failInspection('Unsupported hash constructor options.');
     }
+
     return { kind: 'hash' };
   }
+
   if (name === 'collections.Counter') {
     requireData(args);
+
     if (args.length > 1) {
       return failInspection('Counter accepts at most one data input.');
     }
+
     return { kind: 'counter' };
   }
+
   if (name === 'collections.defaultdict') {
     const [factory, ...initial] = args;
+
     if (
       args.length > 2 ||
       factory?.kind !== 'symbol' ||
@@ -107,13 +124,17 @@ const pythonLibraryCall = (
     ) {
       return failInspection('defaultdict needs a known inert built-in factory.');
     }
+
     requireData(initial);
+
     return data;
   }
+
   if (['glob.glob', 'glob.iglob'].includes(name)) {
     if (args.length !== 1) {
       return failInspection('Globbing needs a literal pattern.');
     }
+
     const pattern = valueString(args[0]);
     const prefix = pattern.split(/[?*[]/u)[0] ?? '';
     recordOperation(context, {
@@ -121,18 +142,24 @@ const pythonLibraryCall = (
       path: path.posix.dirname(prefix),
       range: context.range,
     });
+
     return data;
   }
+
   if (name === 'zipfile.ZipFile') {
     return openArchive(args, context);
   }
+
   if (name === 'zipfile.is_zipfile') {
     if (args.length !== 1) {
       return failInspection('ZIP inspection needs one file path.');
     }
+
     recordOperation(context, { kind: 'read', path: valueString(args[0]), range: context.range });
+
     return data;
   }
+
   if (
     [
       'difflib.unified_diff',
@@ -142,8 +169,10 @@ const pythonLibraryCall = (
     ].includes(name)
   ) {
     requireData(args);
+
     return data;
   }
+
   return csvCall(name, args);
 };
 

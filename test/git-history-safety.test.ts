@@ -212,6 +212,7 @@ bunTest.describe('Git history safety invariants', () => {
       'GIT_EDITOR=vim command git status; env GIT_EDITOR=true git status; git status',
       { cwd: '/work/example.git.feature' },
     );
+
     const invocations = program.invocations.filter((invocation) => invocation.head === 'git');
     bunTest
       .expect(invocations.map((invocation) => invocation.bindings.get('GIT_EDITOR')?.value))
@@ -233,11 +234,14 @@ bunTest.describe('Git history safety invariants', () => {
 
   bunTest.test('transient bindings do not swallow alias directory changes', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'example-git-history-'));
+
     try {
       mkdirSync(path.join(root, 'other'));
+
       const program = analyzeBash("alias enter='cd other'; GIT_EDITOR=true enter; git status", {
         cwd: root,
       });
+
       const invocation = program.invocations.find((value) => value.head === 'git');
       bunTest.expect(invocation?.cwd).toBe(path.join(root, 'other'));
       bunTest.expect(invocation?.bindings.has('GIT_EDITOR')).toBeFalse();

@@ -22,8 +22,10 @@ bunTest.describe('scanAndRedact', () => {
   bunTest.test('uses stdin mode and passes the configured executable and timeout', () => {
     const fixture = 'SYNTHETIC_SCANNER_INPUT';
     let invocation: Parameters<ScannerRunner>[0] | undefined;
+
     const runner: ScannerRunner = (value) => {
       invocation = value;
+
       return { status: 0, stdout: '[]' };
     };
 
@@ -83,6 +85,7 @@ bunTest.describe('scanAndRedact', () => {
   bunTest.test('classifies a missing executable without exposing process details', () => {
     const fixture = 'SYNTHETIC_MISSING_EXECUTABLE_INPUT';
     const error = Object.assign(new Error(`do not expose ${fixture}`), { code: 'ENOENT' });
+
     const result = scanAndRedact(fixture, scannerConfig, () => ({
       status: null,
       stdout: fixture,
@@ -96,6 +99,7 @@ bunTest.describe('scanAndRedact', () => {
   bunTest.test('classifies a timeout without exposing process details', () => {
     const fixture = 'SYNTHETIC_TIMEOUT_INPUT';
     const error = Object.assign(new Error(`do not expose ${fixture}`), { code: 'ETIMEDOUT' });
+
     const result = scanAndRedact(fixture, scannerConfig, () => ({
       status: null,
       stdout: fixture,
@@ -116,6 +120,7 @@ bunTest.describe('scanAndRedact', () => {
 
   bunTest.test('classifies invalid JSON without exposing scanner output', () => {
     const fixture = 'SYNTHETIC_INVALID_JSON_INPUT';
+
     const result = scanAndRedact(fixture, scannerConfig, () => ({
       status: 0,
       stdout: `{${fixture}`,
@@ -139,6 +144,7 @@ bunTest.describe('scanAndRedact', () => {
 bunTest.describe('postSecretScrub', () => {
   bunTest.test('blocks scanner failure without exposing the source output', () => {
     const fixture = 'SYNTHETIC_POST_FAILURE_INPUT';
+
     const decision = postSecretScrub({
       toolName: 'Bash',
       response: { stdout: fixture },
@@ -154,6 +160,7 @@ bunTest.describe('postSecretScrub', () => {
 
   bunTest.test('blocks malformed scanner output without exposing the source output', () => {
     const fixture = 'SYNTHETIC_POST_MALFORMED_INPUT';
+
     const decision = postSecretScrub({
       toolName: 'Bash',
       response: { stdout: fixture },
@@ -168,6 +175,7 @@ bunTest.describe('postSecretScrub', () => {
 
   bunTest.test('blocks a finding with only the exact redacted output', () => {
     const secret = 'SYNTHETIC_POST_SECRET';
+
     const decision = postSecretScrub({
       toolName: 'Bash',
       response: { stdout: `value=${secret}` },

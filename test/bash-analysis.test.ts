@@ -183,6 +183,7 @@ bunTest.describe('rollout shell corpus', () => {
         'trap -p',
         String.raw`printf "safe\n" | xargs printf "%s\n"`,
       ];
+
       for (const command of safe) {
         bunTest.expect(shellDecision(command).kind, command).toBe('allow');
       }
@@ -227,6 +228,7 @@ bunTest.describe('rollout shell corpus', () => {
       'src=$(pwd); dst=$(mktemp -d); rsync -- "$src" "$dst"',
       'sha=$(git rev-parse HEAD); gh api "repos/example/repository/commits/$sha"',
     ];
+
     for (const command of safe) {
       bunTest.expect(shellDecision(command).kind, command).toBe('allow');
     }
@@ -244,6 +246,7 @@ bunTest.describe('rollout shell corpus', () => {
       'git reset --hard HEAD~1 # tripwire-allow: approved',
       'gh api --method POST repos/example/repository/git/blobs --input - # tripwire-allow: approved',
     ];
+
     for (const command of hardDenials) {
       bunTest.expect(shellDecision(command).kind, command).toBe('deny');
     }
@@ -261,6 +264,7 @@ bunTest.describe('rollout shell corpus', () => {
       ['ssh -Q cipher', {}],
       ['just tailnet ssh build-host git status', tailnetCarrierConfig],
     ] as const;
+
     for (const [command, config] of safe) {
       bunTest.expect(shellDecision(command, config).kind, command).toBe('allow');
     }
@@ -273,6 +277,7 @@ bunTest.describe('rollout shell corpus', () => {
       'printf "%s" "$(rm -rf /)"',
       'tmp=/tmp/safe; tmp=/; rm -rf "$tmp"',
     ];
+
     for (const nested of dangerous) {
       bunTest.expect(shellDecision(`ssh build-host '${nested}'`).kind, nested).toBe('deny');
       bunTest
@@ -292,9 +297,11 @@ bunTest.describe('rollout shell corpus', () => {
       .toBe('deny');
     bunTest.expect(shellDecision('ssh -F custom.conf build-host git status').kind).toBe('deny');
     bunTest.expect(shellDecision('ssh -Fcustom.conf build-host git status').kind).toBe('deny');
+
     const secretRead = analyzeBash("ssh build-host 'cat .env'", {
       cwd: '/tripwire-policy-fixture',
     });
+
     bunTest
       .expect(
         secretRead.invocations.some((invocation) => invocation.tokens.join(' ') === 'cat .env'),
@@ -321,6 +328,7 @@ bunTest.describe('rollout shell corpus', () => {
       'printf "%s" "$(rm -rf /)"',
       'tmp=$(mktemp -d); tmp=/; rm -rf "$tmp"',
     ];
+
     for (const source of dangerous) {
       bunTest.expect(shellDecision(base64Shell(source)).kind, source).toBe('deny');
     }
@@ -356,6 +364,7 @@ bunTest.describe('rollout shell corpus', () => {
       'scratch=/private/tmp/tripwire-static; printf safe > $scratch/output.log',
       'root=dist; rm -r "$root/output"',
     ];
+
     for (const command of safe) {
       bunTest.expect(shellDecision(command).kind, command).toBe('allow');
     }
@@ -366,6 +375,7 @@ bunTest.describe('rollout shell corpus', () => {
       "scratch='/private/tmp/a b'; printf unsafe > $scratch/output.log",
       'scratch=/private/tmp/safe; scratch="$scratch/../.ssh"; printf unsafe > "$scratch/key"',
     ];
+
     for (const command of dangerous) {
       bunTest.expect(shellDecision(command).kind, command).toBe('deny');
     }
@@ -376,6 +386,7 @@ bunTest.describe('rollout shell corpus', () => {
       tool_input: { command: 'printf safe > $PWD/output.log' },
       tool_name: 'Bash',
     });
+
     bunTest.expect(cwdDecision.kind).toBe('allow');
   });
 
@@ -385,11 +396,13 @@ bunTest.describe('rollout shell corpus', () => {
         shellDecision('for subcommand in status diff-tree; do git "$subcommand" --help; done').kind,
       )
       .toBe('allow');
+
     const dangerous = [
       'for subcommand in status reset; do git "$subcommand" --hard HEAD~1; done',
       'for executable in printf rm; do "$executable" -rf /; done',
       'for verb in GET POST; do gh api --method "$verb" repos/example/repository; done',
     ];
+
     for (const command of dangerous) {
       bunTest.expect(shellDecision(command).kind, command).toBe('deny');
     }
@@ -397,6 +410,7 @@ bunTest.describe('rollout shell corpus', () => {
     const inventory = analyzeBash('for file in README.md .env; do cat "$file"; done', {
       cwd: '/tripwire-policy-fixture',
     });
+
     bunTest
       .expect(
         inventory.invocations.some((invocation) => invocation.tokens.join(' ') === 'cat .env'),
@@ -406,6 +420,7 @@ bunTest.describe('rollout shell corpus', () => {
 
   bunTest.test('trusts only the current program background PID as a kill target', () => {
     const safe = ['sleep 1 & kill $!', 'sleep 1 & worker_pid=$!; kill "$worker_pid"'];
+
     for (const command of safe) {
       bunTest.expect(shellDecision(command).kind, command).toBe('allow');
     }
@@ -415,6 +430,7 @@ bunTest.describe('rollout shell corpus', () => {
       ['sleep 1 & worker_pid=$!; worker_pid="', '$', '{worker_pid}1"; kill "$worker_pid"'].join(''),
       'sleep 1 & worker_pid=$!; worker_pid=-1; kill -9 "$worker_pid"',
     ];
+
     for (const command of dangerous) {
       bunTest.expect(shellDecision(command).kind, command).toBe('deny');
     }
@@ -427,6 +443,7 @@ bunTest.describe('rollout shell corpus', () => {
       'git diff-tree --no-commit-id --name-only -r HEAD',
       'git write-tree',
     ];
+
     for (const command of safe) {
       bunTest.expect(shellDecision(command).kind, command).toBe('allow');
     }

@@ -72,10 +72,12 @@ const defaultScannerRunner: ScannerRunner = ({ executable, args, input, timeoutM
     stdio: ['pipe', 'pipe', 'ignore'],
     timeout: timeoutMs,
   });
+
   const processResult: ScannerProcessResult = {
     status: result.status,
     stdout: typeof result.stdout === 'string' ? result.stdout : '',
   };
+
   return result.error === undefined ? processResult : { ...processResult, error: result.error };
 };
 
@@ -83,17 +85,21 @@ const errorCode = (cause: unknown): string | undefined => {
   if (typeof cause !== 'object' || cause === null || !('code' in cause)) {
     return undefined;
   }
+
   return typeof cause.code === 'string' ? cause.code : undefined;
 };
 
 const classifyExecutionFailure = (cause: unknown): ScanFailureCategory => {
   const code = errorCode(cause);
+
   if (code === 'ENOENT') {
     return 'missing-executable';
   }
+
   if (code === 'ETIMEDOUT') {
     return 'timeout';
   }
+
   return 'non-zero-exit';
 };
 
@@ -101,9 +107,11 @@ const summarizeHits = (
   findings: readonly BetterleaksFinding[],
 ): readonly { rule: string; count: number }[] => {
   const counts = new Map<string, number>();
+
   for (const finding of findings) {
     counts.set(finding.RuleID, (counts.get(finding.RuleID) ?? 0) + 1);
   }
+
   return [...counts.entries()].map(([rule, count]) => ({ rule, count }));
 };
 
@@ -116,11 +124,13 @@ const redactWith = (input: string, findings: readonly BetterleaksFinding[]): str
   // Sort by length descending so shorter matches that are substrings of
   // Longer ones do not fire first and break the longer match.
   const sorted = [...findings].toSorted((a, b) => b.Secret.length - a.Secret.length);
+
   for (const finding of sorted) {
     if (finding.Secret !== '') {
       output = output.replaceAll(finding.Secret, `[REDACTED:${finding.RuleID}]`);
     }
   }
+
   return output;
 };
 
@@ -134,6 +144,7 @@ const scanAndRedact = (
   }
 
   let processResult: ScannerProcessResult;
+
   try {
     processResult = runner({
       executable: config.executable,
@@ -148,11 +159,13 @@ const scanAndRedact = (
   if (processResult.error !== undefined) {
     return { ok: false, category: classifyExecutionFailure(processResult.error) };
   }
+
   if (processResult.status !== 0) {
     return { ok: false, category: 'non-zero-exit' };
   }
 
   let parsed: unknown;
+
   try {
     parsed = JSON.parse(processResult.stdout) as unknown;
   } catch {
@@ -160,11 +173,13 @@ const scanAndRedact = (
   }
 
   const decoded = Schema.decodeUnknownResult(BetterleaksReportSchema)(parsed);
+
   if (Result.isFailure(decoded)) {
     return { ok: false, category: 'malformed-json' };
   }
 
   const findings = decoded.success;
+
   return { ok: true, hits: summarizeHits(findings), redacted: redactWith(input, findings) };
 };
 
@@ -180,4 +195,5 @@ export type {
   ScanResult,
   ScanSuccess,
 };
+
 export { escapeRegExp, scanAndRedact };

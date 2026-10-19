@@ -6,19 +6,24 @@ import path from 'node:path';
 import { assertIdiomaticFiles } from '../src/lib/mise/idiomatic';
 
 let root = '';
+
 bunTest.beforeEach(() => {
   root = mkdtempSync(path.join(tmpdir(), 'mise-idiomatic-'));
 });
+
 bunTest.afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
+
 const inspect = (tool: string, filename: string, source: string): (() => void) => {
   const project = mkdtempSync(path.join(root, 'project-'));
   writeFileSync(path.join(project, filename), source);
+
   return () => {
     assertIdiomaticFiles(new Set([project]), new Set([tool]), path.join(root, 'plugins'));
   };
 };
+
 const pkg = (tool: string, data: unknown): (() => void) =>
   inspect(tool, 'package.json', JSON.stringify(data));
 
@@ -103,6 +108,7 @@ bunTest.test('ignores fields mise does not read and declarations for other tools
     packageManager: 'pnpm@https://example.invalid/payload',
     devEngines: { runtime: { name: 'deno', version: 'path:./payload' } },
   };
+
   bunTest.expect(pkg('node', data)).not.toThrow();
   bunTest.expect(pkg('bun', data)).not.toThrow();
   bunTest.expect(pkg('deno', data)).toThrow('runtime.version');
@@ -234,6 +240,7 @@ bunTest.test(
       },
       packageManager: 'bun@1.4+sha512.$(echo fictional)',
     };
+
     bunTest.expect(pkg('bun', data)).not.toThrow();
     data.devEngines.packageManager.version = '1.4';
     bunTest.expect(pkg('bun', data)).toThrow('package.json: packageManager');

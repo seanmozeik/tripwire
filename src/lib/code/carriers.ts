@@ -20,17 +20,22 @@ type CodeInput =
 
 const irrelevant: CodeInput = { kind: 'irrelevant' };
 const blocked = (reason: string): CodeInput => ({ kind: 'blocked', reason });
+
 const interpreterLanguage = (head: string): CodeLanguage | null => {
   const name = path.posix.basename(head);
+
   if (/^(?:python|pypy)(?:[23](?:\.\d+)*t?)?$/u.test(name)) {
     return 'python';
   }
+
   if (['node', 'nodejs'].includes(name)) {
     return 'javascript';
   }
+
   if (['bun', 'deno', 'tsx', 'ts-node'].includes(name)) {
     return 'typescript';
   }
+
   return null;
 };
 
@@ -48,6 +53,7 @@ const argumentValues = (words: readonly ShellWord[]): readonly (string | null)[]
   ) {
     return null;
   }
+
   return words.map((word) => (word.kind === 'literal' ? word.value : null));
 };
 
@@ -55,32 +61,43 @@ const standardInput = (invocation: CarrierInvocation, language: CodeLanguage): C
   const entry = invocation.words.findIndex((word) =>
     ['-', '/dev/stdin', '/dev/fd/0'].includes(word.value),
   );
+
   const trailing = argumentValues(entry === -1 ? [] : invocation.words.slice(entry + 1));
+
   if (trailing === null) {
     return blocked(
       'Interpreter argument expansion has an unresolved argument count. Quote scalar arguments and avoid array or unquoted expansions.',
     );
   }
+
   const argv = language === 'python' ? ['-', ...trailing] : [null, '-', ...trailing];
+
   const inputs = invocation.redirects.filter((redirect) =>
     ['<<', '<<<', '<', '<&'].includes(redirect.op),
   );
+
   if (inputs.length !== 1) {
     return blocked('Interpreter input is absent, piped, or redirected more than once.');
   }
+
   const [input] = inputs;
+
   if (input?.op === '<' && input.target.kind === 'literal') {
     return irrelevant;
   }
+
   if (input?.op === '<<' && input.heredoc !== undefined) {
     if (!input.heredoc.quoted && /[$`\\]/u.test(input.heredoc.content)) {
       return blocked('Unquoted interpreter heredoc can change during shell expansion.');
     }
+
     return { kind: 'source', language, source: input.heredoc.content, argv };
   }
+
   if (input?.op === '<<<' && input.target.kind === 'literal') {
     return { kind: 'source', language, source: input.target.value, argv };
   }
+
   return blocked('Interpreter input bytes are not available for inspection.');
 };
 
@@ -115,6 +132,7 @@ const VALUE_OPTIONS = new Set([
   '--env-file',
   '--env-file-if-exists',
 ]);
+
 const STARTUP_OPTIONS = new Set([
   '--require',
   '-r',
@@ -129,10 +147,13 @@ const STARTUP_OPTIONS = new Set([
 
 const sourceFlag = (token: string, language: CodeLanguage, name: string): string | null => {
   const flags = language === 'python' ? ['-c'] : ['-e', '-p', '--eval', '--print'];
+
   if (flags.includes(token) || (name === 'deno' && token === 'eval')) {
     return '';
   }
+
   const prefixes = language === 'python' ? ['-c'] : ['--eval=', '--print=', '-e', '-p'];
+
   return (
     prefixes.find(
       (prefix) => token.startsWith(prefix) && (prefix.length > 2 || !token.startsWith('--')),
@@ -150,11 +171,15 @@ const sourceInput = (
   if (startup) {
     return blocked('Inline source has unverified interpreter startup options.');
   }
+
   const source = invocation.words[index + (prefix === '' ? 2 : 1)];
+
   if (source?.kind !== 'literal') {
     return blocked('Interpreter source or trailing arguments are not fully inspected.');
   }
+
   const trailing = invocation.words.slice(index + (prefix === '' ? 3 : 2));
+
   if (
     language !== 'python' &&
     trailing[0]?.value !== '--' &&
@@ -164,15 +189,19 @@ const sourceInput = (
       'Trailing interpreter options can change startup. Put literal program arguments after --.',
     );
   }
+
   if (language !== 'python' && trailing[0]?.value === '--') {
     trailing.shift();
   }
+
   const argv = argumentValues(trailing);
+
   if (argv === null) {
     return blocked(
       'Interpreter argument expansion has an unresolved argument count. Quote scalar arguments and avoid array or unquoted expansions.',
     );
   }
+
   return {
     kind: 'source',
     language,
@@ -190,18 +219,23 @@ const entryInput = (
   if (['-', '/dev/stdin', '/dev/fd/0'].includes(token)) {
     return standardInput(invocation, language);
   }
+
   if (token === '--') {
     return next === '-' ? standardInput(invocation, language) : irrelevant;
   }
+
   if (language === 'python' && token.startsWith('-m')) {
     return irrelevant;
   }
+
   if (!token.startsWith('-')) {
     return irrelevant;
   }
+
   if (language === 'python' && /^-[^-]*c/u.test(token)) {
     return blocked('Combined Python source flags require inspection.');
   }
+
   return null;
 };
 
@@ -210,20 +244,26 @@ const directInput = (invocation: CarrierInvocation, language: CodeLanguage): Cod
   const args = invocation.words.slice(1);
   let startup = false;
   let commandMode = false;
+
   for (let index = 0; index < args.length; index += 1) {
     const word = args[index];
+
     if (word?.kind !== 'literal') {
       return blocked('Interpreter arguments contain runtime substitutions.');
     }
+
     const token = word.value;
     const prefix = sourceFlag(token, language, name);
+
     if (prefix !== null) {
       return sourceInput(invocation, index, prefix, language, startup);
     }
+
     if (name === 'bun' && token === 'run' && !commandMode) {
       commandMode = true;
     } else {
       const entry = entryInput(invocation, token, args[index + 1]?.value, language);
+
       if (entry !== null) {
         return withContext(
           entry,
@@ -231,13 +271,16 @@ const directInput = (invocation: CarrierInvocation, language: CodeLanguage): Cod
           'Inline stdin source has unverified interpreter startup options.',
         );
       }
+
       const option = token.split('=')[0] ?? '';
       startup ||= STARTUP_OPTIONS.has(option);
+
       if (VALUE_OPTIONS.has(option) && !token.includes('=')) {
         index += 1;
       }
     }
   }
+
   if (
     commandMode ||
     args.some(
@@ -248,6 +291,7 @@ const directInput = (invocation: CarrierInvocation, language: CodeLanguage): Cod
   ) {
     return irrelevant;
   }
+
   return withContext(
     standardInput(invocation, language),
     startup,
@@ -265,6 +309,7 @@ const PACKAGE_LAUNCHERS = new Set([
   'pnpm',
   'yarn',
 ]);
+
 const LAUNCHER_VALUES = new Set([
   '--allow-build',
   '--cpu',
@@ -279,6 +324,7 @@ const LAUNCHER_VALUES = new Set([
   '--prefix',
   '--cwd',
 ]);
+
 // Keep shell provenance until the child reaches its own script/source boundary.
 const forwardedInput = (
   invocation: CarrierInvocation,
@@ -288,17 +334,21 @@ const forwardedInput = (
   if (words[0]?.kind !== 'literal') {
     return blocked('Forwarded command executable is unresolved.');
   }
+
   const child: CarrierInvocation = {
     head: words[0].value,
     words,
     tokens: words.map((word) => word.value),
     redirects: invocation.redirects,
   };
+
   const input = interpreterInput(child, depth + 1);
   const head = path.posix.basename(child.head);
+
   const requiresContext = SHELL_WRAPPER_HEADS.has(head)
     ? !hasScriptOperand(child)
     : ['rm', 'find', 'env', 'uv'].includes(head);
+
   return input.kind === 'irrelevant'
     ? {
         kind: 'command',
@@ -321,9 +371,11 @@ const withContext = (input: CodeInput, unsafe: boolean, reason: string): CodeInp
 
 const uvInput = (invocation: CarrierInvocation, depth: number): CodeInput => {
   const child = uvInvocation(invocation);
+
   if (child.kind !== 'command') {
     return child;
   }
+
   return withContext(
     forwardedInput(invocation, child.words, depth),
     child.unsafeInlineContext,
@@ -363,15 +415,18 @@ const packageCommandKind = (
   if (forwarded) {
     return null;
   }
+
   if (['npm', 'pnpm', 'yarn'].includes(launcher) && PACKAGE_LIFECYCLE_COMMANDS.has(word)) {
     return 'lifecycle';
   }
+
   if (
     ['run', 'exec', 'x'].includes(word) ||
     (['pnpm', 'yarn'].includes(launcher) && word === 'dlx')
   ) {
     return 'forward';
   }
+
   return null;
 };
 
@@ -381,31 +436,39 @@ const packageInput = (invocation: CarrierInvocation, depth: number): CodeInput =
   let unsafeContext = false;
   let subcommand = false;
   let shellMode = false;
+
   for (; index < invocation.words.length; index += 1) {
     const word = invocation.words[index];
+
     if (word?.kind !== 'literal') {
       return blocked('Package command contains unresolved arguments.');
     }
+
     if (word.value === '--') {
       index += 1;
       break;
     }
+
     // Package lifecycle commands and named scripts are not executable operands.
     // Explicit exec/x forwarding still reaches the child's normal policy checks.
     const kind = packageCommandKind(launcher, word.value, subcommand);
+
     if (kind === 'lifecycle') {
       return irrelevant;
     }
+
     if (kind === 'forward') {
       subcommand = true;
     } else {
       if (!word.value.startsWith('-')) {
         break;
       }
+
       if (launcher === 'pnpm' && ['-c', '--shell-mode'].includes(word.value)) {
         shellMode = true;
       } else if (['-c', '--call'].includes(word.value)) {
         const source = invocation.words[index + 1];
+
         return source?.kind === 'literal'
           ? withContext(
               { kind: 'command', command: source.value, requiresContext: true },
@@ -414,14 +477,18 @@ const packageInput = (invocation: CarrierInvocation, depth: number): CodeInput =
             )
           : blocked('Package shell source is unresolved.');
       }
+
       const option = word.value.split('=')[0] ?? '';
       unsafeContext ||= ['--dir', '-C', '--prefix', '--cwd'].includes(option);
+
       if (LAUNCHER_VALUES.has(option) && !word.value.includes('=')) {
         index += 1;
       }
     }
   }
+
   const words = invocation.words.slice(index);
+
   return words.length === 0
     ? irrelevant
     : withContext(
@@ -435,20 +502,27 @@ const interpreterInput = (invocation: CarrierInvocation, depth = 0): CodeInput =
   if (depth > 8) {
     return blocked('Interpreter wrapper depth exceeded.');
   }
+
   const name = path.posix.basename(invocation.head);
+
   if (name === 'uv') {
     return uvInput(invocation, depth);
   }
+
   if (name === 'bun' && invocation.tokens[1] === 'exec') {
     const source = invocation.words.at(2);
+
     return source?.kind === 'literal' && invocation.words.length === 3
       ? { kind: 'command', command: source.value, requiresContext: true }
       : blocked('Bun exec requires one literal shell program.');
   }
+
   if (PACKAGE_LAUNCHERS.has(name) || (name === 'bun' && invocation.tokens[1] === 'x')) {
     return packageInput(invocation, depth);
   }
+
   const language = interpreterLanguage(invocation.head);
+
   return language === null ? irrelevant : directInput(invocation, language);
 };
 

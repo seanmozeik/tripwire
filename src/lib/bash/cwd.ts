@@ -9,6 +9,7 @@ const resolveShellPath = (target: string, cwd: string | null): string | null => 
   if (path.isAbsolute(target)) {
     return path.resolve(target);
   }
+
   return cwd === null ? null : path.resolve(cwd, target);
 };
 
@@ -25,14 +26,19 @@ const resolveDirectory = (
   if (target?.kind !== 'literal' || target.value === '-' || target.value === '') {
     return null;
   }
+
   const expanded = target.value;
+
   if (!path.isAbsolute(expanded) && cwd === null) {
     return null;
   }
+
   const resolved = resolveShellPath(expanded, cwd);
+
   if (resolved === null) {
     return null;
   }
+
   try {
     return statSync(resolved).isDirectory() ? resolved : null;
   } catch {
@@ -43,6 +49,7 @@ const resolveDirectory = (
 // `mkdir -p` fails when an existing component is a file or a dangling link.
 const canCreateDirectory = (target: string): boolean => {
   let current = target;
+
   for (;;) {
     try {
       return statSync(current).isDirectory();
@@ -51,16 +58,21 @@ const canCreateDirectory = (target: string): boolean => {
         return false;
       }
     }
+
     try {
       lstatSync(current);
+
       return false;
     } catch {
       // The component is missing. Check its parent.
     }
+
     const parent = path.dirname(current);
+
     if (parent === current) {
       return false;
     }
+
     current = parent;
   }
 };
@@ -70,16 +82,21 @@ const mkdirParentOperands = (invocation: ShellInvocation): readonly ShellWord[] 
   let parents = false;
   const operands: ShellWord[] = [];
   const words = invocation.words.slice(1);
+
   for (let index = 0; index < words.length; index += 1) {
     const word = words[index];
+
     if (word?.kind !== 'literal') {
       return null;
     }
+
     const { value } = word;
+
     if (value === '--') {
       operands.push(...words.slice(index + 1));
       break;
     }
+
     if (value === '-m' || value === '--mode') {
       index += 1;
     } else if (value === '--parents' || /^-[pv]+$/u.test(value)) {
@@ -88,9 +105,11 @@ const mkdirParentOperands = (invocation: ShellInvocation): readonly ShellWord[] 
       if (value.startsWith('-')) {
         return null;
       }
+
       operands.push(word);
     }
   }
+
   return parents ? operands : null;
 };
 
@@ -100,9 +119,11 @@ const recordCreatedDirectories = (invocation: ShellInvocation, environment: Envi
   if (invocation.head !== 'mkdir' || invocation.synthetic) {
     return;
   }
+
   for (const operand of mkdirParentOperands(invocation) ?? []) {
     if (operand.kind === 'literal' && !operand.value.split('/').includes('..')) {
       const target = resolveShellPath(operand.value, invocation.cwd);
+
       if (target !== null && canCreateDirectory(target)) {
         environment.createdDirectories.add(target);
       }
@@ -112,6 +133,7 @@ const recordCreatedDirectories = (invocation: ShellInvocation, environment: Envi
 
 const usesCdpath = (target: ShellWord, environment: Environment): boolean => {
   const cdpath = environment.bindings.get('CDPATH');
+
   return (
     cdpath !== undefined &&
     cdpath.value !== '' &&
@@ -127,15 +149,20 @@ const changeDirectory = (invocation: ShellInvocation, environment: Environment):
   if (['command', 'builtin'].includes(invocation.head)) {
     const words = invocation.words.slice(skipHeadRenamingPrefix(invocation));
     const [head] = words;
+
     if (head?.kind === 'literal' && ['cd', 'pushd', 'popd'].includes(head.value)) {
       changeDirectory({ ...invocation, head: head.value, words }, environment);
     }
+
     return;
   }
+
   if (!['cd', 'pushd', 'popd'].includes(invocation.head)) {
     return;
   }
+
   const args = invocation.words.slice(1).filter((word) => word.value !== '--');
+
   if (invocation.head === 'popd') {
     environment.cwd = args.length === 0 ? (environment.directoryStack.pop() ?? null) : null;
   } else if (invocation.head === 'pushd' && args.length === 0) {
@@ -146,6 +173,7 @@ const changeDirectory = (invocation: ShellInvocation, environment: Environment):
     if (invocation.head === 'pushd') {
       environment.directoryStack.push(environment.cwd);
     }
+
     const target = args[0] ?? environment.bindings.get('HOME');
     const searched = target !== undefined && usesCdpath(target, environment);
     environment.cwd =
@@ -153,9 +181,11 @@ const changeDirectory = (invocation: ShellInvocation, environment: Environment):
         ? resolveDirectory(target, environment.cwd, environment.createdDirectories)
         : null;
   }
+
   if (environment.cwd === null) {
     environment.directoryStack = [];
   }
+
   environment.bindings.delete('PWD');
 };
 

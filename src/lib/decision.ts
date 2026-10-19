@@ -24,13 +24,16 @@ const deny = (rule: string, message: string): Decision => ({ kind: 'deny', rule,
 // Merge picks the most restrictive kind.
 const merge = (decisions: readonly Decision[]): Decision => {
   let best: Decision = allow('none');
+
   for (const d of decisions) {
     if (order[d.kind] > order[best.kind]) {
       best = d;
     }
   }
+
   return best;
 };
 
 export type { Decision, DecisionKind };
+
 export { allow, ask, deny, merge, warn };

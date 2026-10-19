@@ -14,7 +14,7 @@ import pathModule from 'node:path';
 
 import { BunServices } from '@effect/platform-bun';
 import { Effect, Option } from 'effect';
-import { Argument, Command, Flag } from 'effect/unstable/cli';
+import { Argument, Command, Flag } from 'effect/cli';
 
 import pkg from '../../package.json' with { type: 'json' };
 import {
@@ -29,14 +29,19 @@ import { runCheckedScript } from './run-script';
 
 const hookCommand = (): string[] => {
   const isBunCli = /(?:^|[/\\])bun(?:\.exe)?$/iu.test(process.execPath);
+
   if (isBunCli) {
     const modulePath = import.meta.filename;
+
     if (pathModule.basename(modulePath) === 'tripwire.js') {
       return [process.execPath, modulePath, '--tripwire-hook'];
     }
+
     const entryPath = pathModule.join(import.meta.dirname, '..', 'main.ts');
+
     return [process.execPath, entryPath, '--tripwire-hook'];
   }
+
   return [process.execPath, '--tripwire-hook'];
 };
 
@@ -66,15 +71,19 @@ const buildToolInput = (
   if (tool === 'Bash') {
     return { command: command ?? '' };
   }
+
   if (tool === 'Read') {
     return { file_path: path ?? '' };
   }
+
   if (tool === 'Write') {
     return { file_path: path ?? '', content: content ?? '' };
   }
+
   if (tool === 'Edit' || tool === 'MultiEdit') {
     return { file_path: path ?? '', old_string: '', new_string: content ?? '' };
   }
+
   return null;
 };
 
@@ -92,6 +101,7 @@ const buildEvent = (params: EventParams): BuiltEvent => {
   const { tool, post, command, path, stdout, stderr, content } = params;
   const eventName = post ? 'PostToolUse' : 'PreToolUse';
   const toolInput = buildToolInput(tool, command, path, content);
+
   const event: BuiltEvent = {
     hook_event_name: eventName,
     tool_name: tool,
@@ -99,10 +109,12 @@ const buildEvent = (params: EventParams): BuiltEvent => {
     session_id: 'tripwire-cli-test',
     ...(toolInput !== null && { tool_input: toolInput }),
   };
+
   if (post) {
     event.tool_response =
       tool === 'Bash' ? { stdout: stdout ?? '', stderr: stderr ?? '' } : { content: content ?? '' };
   }
+
   return event;
 };
 
@@ -126,17 +138,20 @@ const runTest = (config: {
   Effect.sync(() => {
     const { command, content, path, post, stderr, stdout, tool } = config;
     const event = buildEvent({ tool, post, command, path, stdout, stderr, content });
+
     const result = Bun.spawnSync(hookCommand(), {
       stdin: new TextEncoder().encode(JSON.stringify(event)),
       timeout: 10_000,
       stdout: 'pipe',
       stderr: 'pipe',
     });
+
     if (result.exitCode !== 0) {
       const errorOutput = new TextDecoder().decode(result.stderr);
       process.stderr.write(`error: ${errorOutput}\n`);
       process.exit(1);
     }
+
     const output = new TextDecoder().decode(result.stdout);
     process.stdout.write(`${prettyJson(output)}\n`);
   });
@@ -197,6 +212,7 @@ const runInstall = (target: string): Effect.Effect<void> =>
       readonly target: string;
       readonly result: { readonly success: boolean; readonly message: string };
     }[];
+
     const installOptions = { hookCommand: hookCommandText() };
 
     switch (target) {
@@ -205,32 +221,38 @@ const runInstall = (target: string): Effect.Effect<void> =>
         results = [{ target: 'claude', result }];
         break;
       }
+
       case 'codex': {
         const result = yield* Effect.promise(() => installCodex(installOptions));
         results = [{ target: 'codex', result }];
         break;
       }
+
       case 'pi': {
         const result = yield* Effect.promise(() => installPi(installOptions));
         results = [{ target: 'pi', result }];
         break;
       }
+
       case 'oh-my-pi':
       case 'omp': {
         const result = yield* Effect.promise(() => installOhMyPi(installOptions));
         results = [{ target: 'oh-my-pi', result }];
         break;
       }
+
       case 'cursor': {
         const result = yield* Effect.promise(() => installCursor(installOptions));
         results = [{ target: 'cursor', result }];
         break;
       }
+
       case 'all': {
         const installResults = yield* Effect.promise(() => installAll(installOptions));
         results = installResults.map((r) => ({ target: r.target, result: r }));
         break;
       }
+
       default: {
         results = [];
         break;
@@ -238,6 +260,7 @@ const runInstall = (target: string): Effect.Effect<void> =>
     }
 
     let hasFailure = false;
+
     for (const { target: t, result: r } of results) {
       if (r.success) {
         const symbol = r.message.startsWith('Already configured') ? '⊙' : '✓';

@@ -14,12 +14,14 @@ bunTest.describe('project command classification (commands are never executed)',
       bunTest.expect(result.kind, result.message).toBe(fixture.allowed ? 'allow' : 'deny');
     });
   }
+
   bunTest.test('command lookup emits no executable operand', () => {
     const result = analyzeBash('command -v node python3 pnpm', { cwd: '/tripwire-policy-fixture' });
     bunTest.expect(result.invocations.map((invocation) => invocation.head)).toEqual(['command']);
   });
   bunTest.test('Bun scripts do not depend on the selected package manifest', () => {
     const cwd = mkdtempSync(path.join(tmpdir(), 'tripwire-project-command-'));
+
     try {
       mkdirSync(path.join(cwd, 'server'));
       writeFileSync(
@@ -28,6 +30,7 @@ bunTest.describe('project command classification (commands are never executed)',
           scripts: { 'generate:database-types': 'inert fixture', 'qa:release': 'inert fixture' },
         }),
       );
+
       for (const command of [
         'bun --cwd server --cwd missing run qa:release',
         'bun run --cwd server --preload ./payload.js qa:release',
@@ -61,6 +64,7 @@ bunTest.describe('project command classification (commands are never executed)',
         const result = decideBash(command, {}, { cwd });
         bunTest.expect(result.kind, `${command}: ${result.message}`).toBe('allow');
       }
+
       for (const command of [
         'bun --cwd server run qa:release; rm -rf /protected',
         'bun -e \'require("fs").unlinkSync("/protected")\'',
@@ -71,6 +75,7 @@ bunTest.describe('project command classification (commands are never executed)',
       ]) {
         bunTest.expect(decideBash(command, {}, { cwd }).kind, command).toBe('deny');
       }
+
       bunTest
         .expect(
           decideBash('bun run generate:database-types', {}, { cwd: path.join(cwd, 'server') }).kind,
@@ -78,6 +83,7 @@ bunTest.describe('project command classification (commands are never executed)',
         .toBe('allow');
       writeFileSync(path.join(cwd, 'server/package.json'), '{invalid');
       bunTest.expect(decideBash('bun --cwd server run qa:release', {}, { cwd }).kind).toBe('allow');
+
       for (const manifest of [
         { scripts: ['inert fixture'] },
         { scripts: { 'qa:release': null } },
@@ -89,6 +95,7 @@ bunTest.describe('project command classification (commands are never executed)',
           .expect(decideBash('bun --cwd server run qa:release', {}, { cwd }).kind)
           .toBe('allow');
       }
+
       writeFileSync(path.join(cwd, 'server/package.json'), ' '.repeat(1_048_577));
       bunTest.expect(decideBash('bun --cwd server run qa:release', {}, { cwd }).kind).toBe('allow');
       writeFileSync(path.join(cwd, 'server/package.json'), new Uint8Array([255]));

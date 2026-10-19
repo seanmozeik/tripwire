@@ -9,10 +9,13 @@ import path from 'node:path';
 const repository = path.resolve(import.meta.dir, '../..');
 const temporary = realpathSync(mkdtempSync(path.join(tmpdir(), 'tripwire-test-')));
 const fixture = path.join(temporary, 'fixture');
+
 mkdirSync(fixture);
+
 for (const name of ['home', 'work', 'bin']) {
   mkdirSync(path.join(fixture, name));
 }
+
 for (const name of Object.keys(process.env)) {
   if (
     name.startsWith('MISE_') ||
@@ -24,18 +27,27 @@ for (const name of Object.keys(process.env)) {
     Reflect.deleteProperty(process.env, name);
   }
 }
+
 symlinkSync(process.execPath, path.join(fixture, 'bin/bun'));
+
 process.env['PATH'] = [path.join(fixture, 'bin'), '/usr/bin', '/bin'].join(path.delimiter);
+
 process.env['MISE_CEILING_PATHS'] = `${fixture}${path.delimiter}${temporary}`;
+
 process.env['MISE_SYSTEM_CONFIG_DIR'] = path.join(fixture, 'system-mise');
+
 process.env['HOME'] = path.join(fixture, 'home');
+
 process.env['TMPDIR'] = temporary;
+
 await bunTest.mock.module('node:os', () => ({
   ...os,
   homedir: () => process.env['HOME'] ?? path.join(fixture, 'home'),
   tmpdir: () => process.env['TMPDIR'] ?? temporary,
 }));
+
 process.chdir(path.join(fixture, 'work'));
+
 bunTest.afterAll(() => {
   process.chdir(repository);
   rmSync(temporary, { recursive: true, force: true });

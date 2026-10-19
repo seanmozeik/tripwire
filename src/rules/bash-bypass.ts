@@ -48,6 +48,7 @@ const applyShellBypass = (program: ShellProgram, decision: Decision): Decision =
   if (!program.hasBypass || decision.kind === 'allow' || NON_BYPASSABLE_RULES.has(decision.rule)) {
     return decision;
   }
+
   return allow(decision.rule);
 };
 

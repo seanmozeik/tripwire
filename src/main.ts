@@ -9,11 +9,14 @@ const FORCE_CLI_FLAG = '--tripwire-force-cli';
 
 const forceCliIndex = process.argv.indexOf(FORCE_CLI_FLAG, 2);
 const forceCli = forceCliIndex !== -1;
+
 if (forceCli) {
   process.argv.splice(forceCliIndex, 1);
 }
+
 const cliArguments = process.argv.slice(2);
 const executableName = path.basename(process.argv0);
+
 const isHook =
   !forceCli &&
   (executableName === 'tripwire-hook' ||

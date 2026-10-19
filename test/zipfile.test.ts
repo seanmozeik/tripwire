@@ -45,8 +45,10 @@ bunTest.describe('Python archive and text operations', () => {
 
   bunTest.test('reads local JSON as data and retains protected-path checks', () => {
     const cwd = mkdtempSync(path.join(tmpdir(), 'fictional-json-'));
+
     try {
       writeFileSync(path.join(cwd, 'package.json'), '{"version":"0.0.0-fictional"}');
+
       for (const [source, expected] of [
         ['console.log(require("./package.json").version)', 'allow'],
         ['require("./secrets.json")', 'deny'],

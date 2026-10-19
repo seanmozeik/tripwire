@@ -21,6 +21,7 @@ const sameBinding = (left: ShellWord | undefined, right: ShellWord): boolean =>
 
 const joinBindings = (environments: readonly Environment[]): Map<string, ShellWord> => {
   const bindings = new Map<string, ShellWord>();
+
   for (const environment of environments) {
     for (const [name, word] of environment.bindings) {
       bindings.set(
@@ -31,6 +32,7 @@ const joinBindings = (environments: readonly Environment[]): Map<string, ShellWo
       );
     }
   }
+
   return bindings;
 };
 
@@ -42,11 +44,13 @@ const bindingsChanged = (
 
 const widenBindings = (environments: readonly Environment[]): Map<string, ShellWord> => {
   const bindings = joinBindings(environments);
+
   for (const [name, word] of bindings) {
     if (name !== 'HOME' && name !== 'PWD') {
       bindings.set(name, dynamicBinding(word));
     }
   }
+
   return bindings;
 };
 
@@ -55,6 +59,7 @@ const replaceBindings = (
   bindings: ReadonlyMap<string, ShellWord>,
 ): void => {
   environment.bindings.clear();
+
   for (const [name, word] of bindings) {
     environment.bindings.set(name, word);
   }
@@ -69,6 +74,7 @@ const visitRepeatedBindings = (
   const outgoing = cloneEnvironment(environment);
   visit(outgoing);
   const branches = [incoming, outgoing];
+
   if (bindingsChanged(incoming.bindings, outgoing.bindings)) {
     const replay = cloneEnvironment(outgoing);
     replaceBindings(replay, widenBindings(branches));
@@ -76,6 +82,7 @@ const visitRepeatedBindings = (
     visit(replay);
     branches.push(replay);
   }
+
   replaceBindings(environment, joinBindings(branches));
 };
 
@@ -86,13 +93,16 @@ const invalidateArithmeticBinding = (
   if (expression.type === 'ArithmeticGroup') {
     return invalidateArithmeticBinding(expression.expression, environment);
   }
+
   const name =
     expression.type === 'ArithmeticWord'
       ? /^(?<name>[A-Za-z_][A-Za-z0-9_]*)/u.exec(expression.value)?.groups?.['name']
       : undefined;
+
   if (name === undefined) {
     return false;
   }
+
   environment.temps.delete(name);
   environment.bindings.set(name, {
     source: name,
@@ -101,6 +111,7 @@ const invalidateArithmeticBinding = (
     range: { start: expression.pos, end: expression.end },
     quoted: false,
   });
+
   return true;
 };
 
@@ -111,10 +122,13 @@ const restoreDeclaredBinding = (
   environment: Environment,
 ): void => {
   const name = assignedNameOf(word);
+
   if (name === undefined) {
     return;
   }
+
   const scalar = !invocation.flags.some((flag) => /^-[^-]*[aAin]/u.test(flag));
+
   if (!scalar || word.kind !== 'literal' || word.value.startsWith(`${name}+=`)) {
     environment.bindings.set(name, dynamicBinding(word));
   } else if (word.value.startsWith(`${name}=`)) {
@@ -127,28 +141,37 @@ const restoreDeclaredBinding = (
 const variableWriteTargets = (invocation: ShellInvocation): readonly ShellWord[] | null => {
   if (invocation.head === 'getopts') {
     const index = invocation.tokens[1] === '--' ? 3 : 2;
+
     return invocation.words.slice(index, index + 1);
   }
+
   if (invocation.head === 'read') {
     const start = skipOptions(
       invocation.words,
       1,
       new Set(['-a', '-d', '-i', '-n', '-N', '-p', '-t', '-u']),
     );
+
     return invocation.words.slice(start);
   }
+
   if (invocation.head !== 'printf') {
     return null;
   }
+
   const targets: ShellWord[] = [];
+
   for (let index = 1; index < invocation.words.length; index += 1) {
     const flag = invocation.words[index];
+
     if (flag === undefined || !flag.value.startsWith('-v')) {
       break;
     }
+
     if (flag.value === '-v') {
       index += 1;
       const target = invocation.words[index];
+
       if (target !== undefined) {
         targets.push(target);
       }
@@ -156,6 +179,7 @@ const variableWriteTargets = (invocation: ShellInvocation): readonly ShellWord[]
       targets.push({ ...flag, value: flag.value.slice(2) });
     }
   }
+
   return targets.length === 0 ? null : targets;
 };
 

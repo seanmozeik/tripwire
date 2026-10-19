@@ -21,6 +21,7 @@ const packageVersion = packageManifest.version;
 
 const run = (arguments_: readonly string[], label: string, cwd = process.cwd()): void => {
   const result = Bun.spawnSync([...arguments_], { cwd, stderr: 'inherit', stdout: 'inherit' });
+
   if (result.exitCode !== 0) {
     throw new Error(`${label} failed with exit code ${result.exitCode}`);
   }
@@ -29,11 +30,14 @@ const run = (arguments_: readonly string[], label: string, cwd = process.cwd()):
 const publishArtifact = (source: string, target: string, executable = false): void => {
   const pending = `${target}.${process.pid}.next`;
   rmSync(pending, { force: true });
+
   try {
     copyFileSync(source, pending);
+
     if (executable) {
       chmodSync(pending, 0o755);
     }
+
     renameSync(pending, target);
   } finally {
     rmSync(pending, { force: true });
@@ -46,18 +50,22 @@ const publishDirectory = (source: string, target: string): void => {
   rmSync(pending, { force: true, recursive: true });
   rmSync(previous, { force: true, recursive: true });
   let previousMoved = false;
+
   try {
     cpSync(source, pending, { recursive: true });
+
     if (existsSync(target)) {
       renameSync(target, previous);
       previousMoved = true;
     }
+
     renameSync(pending, target);
     rmSync(previous, { force: true, recursive: true });
   } catch (cause) {
     if (previousMoved && !existsSync(target)) {
       renameSync(previous, target);
     }
+
     throw cause;
   } finally {
     rmSync(pending, { force: true, recursive: true });
@@ -95,6 +103,7 @@ const deniedHookInput = { ...safeHookInput, tool_input: { command: 'rm -rf /' } 
 
 const smokeEmbeddedCode = (runtime: readonly string[]): void => {
   const home = mkdtempSync(path.join(tmpdir(), 'tripwire-corpus-home-'));
+
   try {
     for (const fixture of allCodeFixtures) {
       // The only executable is Tripwire. Destructive strings travel exclusively as JSON stdin.
@@ -107,6 +116,7 @@ const smokeEmbeddedCode = (runtime: readonly string[]): void => {
         },
         { ...process.env, HOME: home },
       );
+
       if (fixture.allowed) {
         assertAllowed(result, `Embedded code: ${fixture.name}`);
       } else {
@@ -120,6 +130,7 @@ const smokeEmbeddedCode = (runtime: readonly string[]): void => {
 
 const smokePackageScripts = (runtime: readonly string[]): void => {
   const cwd = mkdtempSync(path.join(tmpdir(), 'tripwire-package-script-smoke-'));
+
   try {
     const directory = path.join(cwd, 'project');
     mkdirSync(directory);
@@ -128,6 +139,7 @@ const smokePackageScripts = (runtime: readonly string[]): void => {
       path.join(directory, 'package.json'),
       JSON.stringify({ scripts: { 'qa:fixture': 'exit 97' } }),
     );
+
     for (const command of [
       'bun --cwd project run qa:fixture',
       'bun run --cwd=project qa:fixture',
@@ -143,6 +155,7 @@ const smokePackageScripts = (runtime: readonly string[]): void => {
         'Trusted package script',
       );
     }
+
     for (const command of ['bun --cwd project --preload ./payload.ts -e "console.log(1)"']) {
       assertDenied(
         runWithInput([...runtime, '--tripwire-hook'], {
@@ -169,11 +182,13 @@ const assertAllowed = (result: SyncResult, label: string): void => {
 
 const assertCliAllowed = (result: SyncResult, label: string): void => {
   let output: unknown;
+
   try {
     output = JSON.parse(result.stdout.toString());
   } catch {
     throw new Error(`${label} returned invalid JSON`);
   }
+
   if (
     result.exitCode !== 0 ||
     typeof output !== 'object' ||
@@ -187,12 +202,15 @@ const assertCliAllowed = (result: SyncResult, label: string): void => {
 
 const assertDenied = (result: SyncResult, label: string): void => {
   let output: unknown;
+
   try {
     output = JSON.parse(result.stdout.toString());
   } catch {
     throw new Error(`${label} returned invalid JSON`);
   }
+
   const hookOutput = isRecord(output) ? output['hookSpecificOutput'] : undefined;
+
   if (
     result.exitCode !== 0 ||
     !isRecord(hookOutput) ||
@@ -281,6 +299,7 @@ const smokeStagedExtension = async (extensionPath: string): Promise<void> => {
   const loaded: unknown = await import(
     `${pathToFileURL(extensionPath).href}?build=${Date.now().toString()}`
   );
+
   if (
     typeof loaded !== 'object' ||
     loaded === null ||
@@ -293,12 +312,14 @@ const smokeStagedExtension = async (extensionPath: string): Promise<void> => {
   const api = new SmokeApi();
   loaded.default(api);
   const { toolCall, toolResult } = api;
+
   if (toolCall === undefined || toolResult === undefined) {
     throw new Error('Compiled Pi extension did not register both lifecycle handlers');
   }
 
   const notifications: string[] = [];
   const state = { aborted: false, notifications };
+
   const context: SmokeExtensionContext = {
     abort: () => {
       state.aborted = true;
@@ -310,14 +331,17 @@ const smokeStagedExtension = async (extensionPath: string): Promise<void> => {
       },
     },
   };
+
   const preResult = await toolCall(
     { input: { command: 'printf safe' }, toolCallId: 'build-pre', toolName: 'bash' },
     context,
   );
+
   const deniedResult = await toolCall(
     { input: { command: 'rm -rf /' }, toolCallId: 'build-deny', toolName: 'bash' },
     context,
   );
+
   await toolResult(
     {
       content: [],
@@ -329,6 +353,7 @@ const smokeStagedExtension = async (extensionPath: string): Promise<void> => {
     },
     context,
   );
+
   if (
     preResult?.block === true ||
     deniedResult?.block !== true ||
@@ -349,12 +374,14 @@ const stagedExtension = path.join(stagedDist, 'tripwire-pi.js');
 const stagedTypes = path.join(stagedDist, 'types');
 const launcherSmokeRoot = path.join(compileWorkspace, 'launcher-smoke');
 const launcherSmokeDist = path.join(launcherSmokeRoot, 'dist');
+
 const launcherSmokePackage = path.join(
   launcherSmokeRoot,
   'node_modules',
   '@seanmozeik',
   'tripwire-darwin-arm64',
 );
+
 const platformExecutable = path.join(
   projectDirectory,
   'packages',
@@ -362,7 +389,9 @@ const platformExecutable = path.join(
   'bin',
   'tripwire',
 );
+
 const checkedSafeScript = path.join(projectDirectory, 'test', 'fixtures', 'checked-safe.sh');
+
 const checkedDangerousScript = path.join(
   projectDirectory,
   'test',
@@ -522,16 +551,19 @@ try {
     ),
     'Tripwire native checked-script deny smoke test',
   );
+
   const portableVersion = Bun.spawnSync(
     [process.execPath, stagedPortable, '--tripwire-force-cli', '--version'],
     { stderr: 'pipe', stdout: 'pipe' },
   );
+
   if (
     portableVersion.exitCode !== 0 ||
     portableVersion.stdout.toString().trim() !== packageVersion
   ) {
     throw new Error('Tripwire portable version smoke test failed');
   }
+
   assertAllowed(
     runWithInput([process.execPath, stagedPortable, '--tripwire-hook'], safeHookInput),
     'Tripwire portable hook smoke test',
@@ -599,6 +631,7 @@ try {
   const library: unknown = await import(
     `${pathToFileURL(stagedLibrary).href}?build=${Date.now().toString()}`
   );
+
   if (
     typeof library !== 'object' ||
     library === null ||
@@ -633,12 +666,14 @@ try {
     stderr: 'pipe',
     stdout: 'pipe',
   });
+
   if (
     nativeLauncherVersion.exitCode !== 0 ||
     nativeLauncherVersion.stdout.toString().trim() !== packageVersion
   ) {
     throw new Error('Tripwire native launcher smoke test failed');
   }
+
   assertAllowed(
     runWithInput([smokeHookLauncher], safeHookInput),
     'Tripwire native hook launcher smoke test',
@@ -647,22 +682,26 @@ try {
     runWithInput([smokeHookLauncher], deniedHookInput),
     'Tripwire native hook launcher deny smoke test',
   );
+
   const portableEnvironment = {
     ...process.env,
     TRIPWIRE_BUN: process.execPath,
     TRIPWIRE_FORCE_PORTABLE: '1',
   };
+
   const portableLauncherVersion = Bun.spawnSync([smokeCliLauncher, '--version'], {
     env: portableEnvironment,
     stderr: 'pipe',
     stdout: 'pipe',
   });
+
   if (
     portableLauncherVersion.exitCode !== 0 ||
     portableLauncherVersion.stdout.toString().trim() !== packageVersion
   ) {
     throw new Error('Tripwire portable launcher smoke test failed');
   }
+
   assertAllowed(
     runWithInput([smokeHookLauncher], safeHookInput, portableEnvironment),
     'Tripwire portable hook launcher smoke test',
@@ -675,11 +714,13 @@ try {
 
   const installSmokeHome = path.join(compileWorkspace, 'home');
   mkdirSync(installSmokeHome, { recursive: true });
+
   const installSmoke = Bun.spawnSync([stagedNative, 'install', 'oh-my-pi'], {
     env: { ...process.env, HOME: installSmokeHome, TRIPWIRE_PACKAGE_DIST: stagedDist },
     stderr: 'inherit',
     stdout: 'pipe',
   });
+
   if (installSmoke.exitCode !== 0) {
     throw new Error('Tripwire compiled Pi installer smoke test failed');
   }

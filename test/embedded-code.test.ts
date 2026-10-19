@@ -47,6 +47,7 @@ bunTest.describe('embedded executable code policy (never executes fixtures)', ()
       [],
       '/tripwire-policy-fixture',
     );
+
     bunTest.expect(report.gap).toBeNull();
     bunTest.expect(report.operations.map(({ kind }) => kind)).toEqual(['delete']);
   });
@@ -64,6 +65,7 @@ bunTest.describe('embedded executable code policy (never executes fixtures)', ()
         },
       },
     ];
+
     bunTest.expect(runRulesSync(rules).kind).toBe('deny');
     const decision = await Effect.runPromise(runRules(rules, 250));
     bunTest.expect(decision.kind).toBe('deny');

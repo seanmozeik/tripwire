@@ -40,6 +40,7 @@ bunTest.describe('compound shell commands', () => {
     for (const command of dangerous) {
       bunTest.expect(shellDecision(command).kind, command).toBe('deny');
     }
+
     bunTest.expect(shellDecision('! test -f file').kind).toBe('allow');
     bunTest.expect(shellDecision('if ! test -f file; then echo missing; fi').kind).toBe('allow');
   });

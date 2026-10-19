@@ -28,6 +28,7 @@ const javascript = [
   'console.log(Array.from([1,2], x=>x*2))',
   'console.log(JSON.stringify({x:1}, (k,v)=>v))',
 ];
+
 const python = [
   'xs=[1,2]\nxs.sort(key=lambda x:-x)\nprint(xs)',
 
@@ -53,6 +54,7 @@ const python = [
   'import json\nprint(json.dumps({"x":1},indent=2,sort_keys=True))',
   'with open("example") as f:\n print(f.readlines())',
 ];
+
 for (const [language, sources] of [
   ['javascript', javascript],
   ['python', python],
@@ -61,6 +63,7 @@ for (const [language, sources] of [
     bunTest.expect(analyzeCode(language, source, [], '/tripwire-policy-fixture').gap).toBeNull();
   });
 }
+
 const attacks: readonly [CodeLanguage, string][] = [
   ['javascript', 'console.log(()=>require("fs").rmSync("/"))'],
   ['javascript', 'console.log(JSON.stringify({x:()=>1}))'],
@@ -89,9 +92,11 @@ const attacks: readonly [CodeLanguage, string][] = [
   ['python', 'def f(x=eval("example")):\n return x'],
   ['python', 'def f(x: eval("example")):\n return x'],
 ];
+
 bunTest.test.each(attacks)('keeps dangerous %s opaque: %s', (language, source) => {
   bunTest.expect(analyzeCode(language, source, [], '/tripwire-policy-fixture').gap).not.toBeNull();
 });
+
 bunTest.test('closure calls extract actual file effects', () => {
   const report = analyzeCode(
     'python',
@@ -99,6 +104,7 @@ bunTest.test('closure calls extract actual file effects', () => {
     [],
     '/tripwire-policy-fixture',
   );
+
   bunTest.expect(report.gap).toBeNull();
   bunTest.expect(report.operations.map((operation) => operation.kind)).toEqual(['delete']);
 });

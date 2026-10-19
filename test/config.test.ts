@@ -32,6 +32,7 @@ bunTest.describe('loadConfigResult', () => {
   bunTest.test('missing file → ok with defaults (the one quiet case)', async () => {
     const result = await Effect.runPromise(loadConfigResult(path.join(dir, 'absent.json')));
     bunTest.expect(result.ok).toBe(true);
+
     if (result.ok) {
       bunTest.expect(result.config.git.protectedBranches).toEqual([]);
       bunTest.expect(result.config.git.enforceConventionalCommits).toBe(false);
@@ -54,6 +55,7 @@ bunTest.describe('loadConfigResult', () => {
     );
     const result = await Effect.runPromise(loadConfigResult(configPath));
     bunTest.expect(result.ok).toBe(true);
+
     if (result.ok) {
       bunTest.expect(result.config.blockedCommands).toHaveLength(1);
       bunTest.expect(result.config.blockedCommands[0]?.pattern).toBe('example-danger');
@@ -81,6 +83,7 @@ bunTest.describe('loadConfigResult', () => {
 
     const result = await Effect.runPromise(loadConfigResult(configPath));
     bunTest.expect(result.ok).toBe(true);
+
     if (result.ok) {
       bunTest
         .expect(result.config.git)
@@ -97,6 +100,7 @@ bunTest.describe('loadConfigResult', () => {
 
     const result = await Effect.runPromise(loadConfigResult(configPath));
     bunTest.expect(result.ok).toBe(true);
+
     if (result.ok) {
       bunTest
         .expect(result.config.secretScanner)
@@ -116,6 +120,7 @@ bunTest.describe('loadConfigResult', () => {
 
     const result = await Effect.runPromise(loadConfigResult(configPath));
     bunTest.expect(result.ok).toBe(true);
+
     if (result.ok) {
       bunTest
         .expect(result.config.shell.executionCarrierAliases)
@@ -139,6 +144,7 @@ bunTest.describe('loadConfigResult', () => {
 
     const result = await Effect.runPromise(loadConfigResult(configPath));
     bunTest.expect(result.ok).toBe(true);
+
     if (result.ok) {
       bunTest
         .expect(result.config.ruleActions)
@@ -168,6 +174,7 @@ bunTest.describe('loadConfigResult', () => {
       await writeFile(configPath, JSON.stringify({ ruleActions: { [rule]: 'allow' } }));
       const result = await Effect.runPromise(loadConfigResult(configPath));
       bunTest.expect(result.ok).toBe(false);
+
       if (!result.ok) {
         bunTest.expect(result.error).toContain(rule);
       }
@@ -194,6 +201,7 @@ bunTest.describe('loadConfigResult', () => {
 
     const result = await Effect.runPromise(loadConfigResult(configPath));
     bunTest.expect(result.ok).toBe(false);
+
     if (!result.ok) {
       bunTest.expect(result.error).toContain('timeoutMs');
     }
@@ -209,6 +217,7 @@ bunTest.describe('loadConfigResult', () => {
 
     const result = await Effect.runPromise(loadConfigResult(configPath));
     bunTest.expect(result.ok).toBe(false);
+
     if (!result.ok) {
       bunTest.expect(result.error).toContain('extra');
     }
@@ -230,6 +239,7 @@ bunTest.describe('loadConfigResult', () => {
     );
 
     const config = await Effect.runPromise(loadConfig(configPath));
+
     const decision = decide(
       {
         cwd: '/tripwire-policy-fixture',
@@ -239,6 +249,7 @@ bunTest.describe('loadConfigResult', () => {
       },
       config,
     );
+
     bunTest.expect(decision).toMatchObject({ kind: 'warn', rule: 'prefer-example' });
   });
 
@@ -246,6 +257,7 @@ bunTest.describe('loadConfigResult', () => {
     await writeFile(configPath, JSON.stringify({ rtk: { foo: 'bar' } }));
     const result = await Effect.runPromise(loadConfigResult(configPath));
     bunTest.expect(result.ok).toBe(false);
+
     if (!result.ok) {
       bunTest.expect(result.error).toContain('rtk');
     }
@@ -264,6 +276,7 @@ bunTest.describe('loadConfigResult', () => {
     const result = await Effect.runPromise(loadConfigResult(path.join(parentFile, 'config.json')));
 
     bunTest.expect(result.ok).toBe(false);
+
     if (!result.ok) {
       bunTest.expect(result.error).toContain('ConfigReadError');
       bunTest.expect(result.error).toContain('ENOTDIR');
@@ -275,12 +288,14 @@ bunTest.describe('loadConfig (loud loader)', () => {
   bunTest.test('broken config dies rather than silently defaulting', async () => {
     await writeFile(configPath, JSON.stringify({ rtk: {} }));
     let threw = false;
+
     try {
       await Effect.runPromise(loadConfig(configPath));
     } catch (error) {
       threw = true;
       bunTest.expect(String(error)).toContain('config load failed');
     }
+
     bunTest.expect(threw).toBe(true);
   });
 
@@ -305,6 +320,7 @@ bunTest.describe('dispatcher on broken config', () => {
       tool_name: 'Bash',
       tool_input: { command: 'echo hi' },
     };
+
     const proc = Bun.spawnSync(
       [process.execPath, new URL('../src/dispatch.ts', import.meta.url).pathname],
       {
@@ -314,6 +330,7 @@ bunTest.describe('dispatcher on broken config', () => {
         stderr: 'pipe',
       },
     );
+
     const out = parseJsonRecord(proc.stdout.toString());
     const hookOutput = recordField(out, 'hookSpecificOutput');
     bunTest.expect(hookOutput?.['permissionDecision']).toBe('deny');
@@ -342,16 +359,20 @@ bunTest.describe('dispatcher on broken config', () => {
             stderr: 'pipe',
           },
         );
+
         bunTest.expect(proc.exitCode).toBe(0);
+
         return parseJsonRecord(proc.stdout.toString());
       };
 
       const fixture = 'SYNTHETIC_SCANNER_INPUT';
+
       const post = run({
         hook_event_name: 'PostToolUse',
         tool_name: 'Bash',
         tool_response: { stdout: fixture },
       });
+
       bunTest.expect(post['decision']).toBe('block');
       bunTest.expect(post['reason']).toContain('secret-scanner-failed');
       bunTest.expect(post['reason']).not.toContain(fixture);
@@ -361,6 +382,7 @@ bunTest.describe('dispatcher on broken config', () => {
         tool_name: 'Bash',
         tool_input: { command: 'echo hi' },
       });
+
       bunTest
         .expect(recordField(nextPre, 'hookSpecificOutput')?.['permissionDecision'])
         .toBe('deny');

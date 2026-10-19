@@ -63,9 +63,12 @@ const classifyProtectedPath = (
   specs: readonly ProtectedPathSpec[],
 ): ProtectedPathSpec | null => {
   const absolutePath = path.resolve(submittedPath);
+
   const resolvedPath =
     access === 'write' ? resolveWritePath(absolutePath) : resolveExistingPath(absolutePath);
+
   const candidates = [submittedPath, absolutePath];
+
   if (resolvedPath !== null && !candidates.includes(resolvedPath)) {
     candidates.push(resolvedPath);
   }
@@ -77,18 +80,22 @@ const classifyProtectedPath = (
       }
     }
   }
+
   return null;
 };
 
 const pathProtect = (input: EditInput | WriteInput): Decision => {
   const protection = classifyProtectedPath(input.file_path, 'write', protections);
+
   if (protection !== null) {
     return deny(protection.rule, protection.message);
   }
+
   return allow('path-protect');
 };
 
 export type { PathAccess, ProtectedPathSpec };
+
 export { classifyProtectedPath, pathProtect };
 
 export { resolveWritePath } from '../lib/path-resolution';

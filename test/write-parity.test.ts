@@ -36,6 +36,7 @@ bunTest.test('ordinary writes retain write effects even when the bytes may be em
 
 bunTest.test('Python and JS writes match dedicated Write across resolved destinations', () => {
   const cwd = mkdtempSync(path.join(tmpdir(), 'tripwire-write-parity-'));
+
   try {
     mkdirSync(path.join(cwd, 'src'));
     mkdirSync(path.join(cwd, '.ssh'));
@@ -45,6 +46,7 @@ bunTest.test('Python and JS writes match dedicated Write across resolved destina
     symlinkSync(path.join(cwd, '.env.new'), path.join(cwd, 'dangling'));
     symlinkSync(path.join(cwd, '.ssh'), path.join(cwd, 'keys'));
     symlinkSync(path.join(cwd, 'src'), path.join(cwd, 'source'));
+
     for (const [target, expected] of [
       ['src/output.json', 'allow'],
       [path.join(cwd, 'src/output.json'), 'allow'],
@@ -61,7 +63,9 @@ bunTest.test('Python and JS writes match dedicated Write across resolved destina
         tool_name: 'Write',
         tool_input: { file_path: path.join(cwd, target), content: '' },
       });
+
       bunTest.expect(dedicated.kind).toBe(expected);
+
       for (const command of [
         `python3 -c 'open("${target}","w").write("")'`,
         `node -e 'require("fs").writeFileSync("${target}","")'`,
@@ -69,6 +73,7 @@ bunTest.test('Python and JS writes match dedicated Write across resolved destina
         bunTest.expect(decideBash(command, {}, { cwd }).kind, command).toBe(dedicated.kind);
       }
     }
+
     bunTest.expect(readFileSync(path.join(cwd, '.env'), 'utf8')).toBe('fixture sentinel');
     bunTest
       .expect(readFileSync(path.join(cwd, 'src/output.json'), 'utf8'))

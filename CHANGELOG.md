@@ -4,16 +4,29 @@ This file records notable project changes. The format follows [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-19
+
 ### Added
 
 - Load `require('<package>/<file>.json')` in `node -e` and `node -p` as data. Tripwire resolves the specifier from the startup directory through the package's own exports or `node_modules`, the same way Node does. Code modules, extension fallbacks, links to other file types, and exports that map to a different file stay denied. Other runtimes keep the previous policy, because they can remap specifiers.
 - Support the Python `csv` module: readers on files, standard input, or data, and writers on files or standard output. Rows are data and cannot become paths or calls. `open()` accepts `newline=''`.
+- Configure ordinary cherry-pick, merge, and non-interactive rebase decisions through `ruleActions`. All three default to `ask`; separate safety checks remain active.
+
+### Changed
+
+- Upgrade Effect and Platform Bun to stable 4.0.5, migrate CLI imports to `effect/cli`, and update Effect TSGo to 0.53.4.
+- Update JavaScript parser dependencies and the development toolchain, including de-clank 0.1.11, Oxlint 1.88.0, and Oxfmt 0.73.0. Apply the new spacing policy.
+- Upgrade Unbash from 4.0.11 to 6.0.0. Handle ordered command items, declaration assignments, redirected compound and function bodies, flattened `elif` branches and logical tests, and structured glob parts. Use canonical child traversal for lazy syntax in shell-state checks and fail closed on truncated arithmetic.
 
 ### Fixed
 
 - Keep static variables and the working directory through `&&` lists. A command after `&&` starts from the state where the commands before it succeeded, so `cd dir && S=/path && cmd > "$S/out"` resolves the redirect. A resolved `cd` followed by `&&` no longer makes the rest of the program unresolved.
 - Treat the literal targets of `mkdir -p` as known directories for a later `cd` and for paths under them in the same command. Protected-path and destructive rules still check the resolved paths.
 - Analyze a background statement (`cmd &`) in its own scope, as Bash runs it in a subshell. `cd /tmp & rm -rf src` was checked in `/tmp`, but Bash runs `rm` in the original directory.
+- Guard rebase execution, instruction-format injection, protected branch targets, and additional ref updates. Check submitted editor, hooks-path, and environment-based Git config overrides, including through shell variables, functions, and aliases.
+- Deny interactive merge editors and require approval for external merge strategies and submitted custom merge drivers, even when ordinary merges are allowed by config.
+- Align the published Effect peers with the stable platform runtime. Fresh library installs could otherwise mix a pinned release candidate with a stable transitive dependency and fail to import.
+- Handle shorthand object bindings from the updated JavaScript parser while retaining destructive-function tracking. Reject object-binding defaults whose effects are not inspected, including defaults on renamed bindings.
 
 ## [0.11.1] - 2026-09-28
 

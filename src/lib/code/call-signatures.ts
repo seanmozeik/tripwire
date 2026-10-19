@@ -8,6 +8,7 @@ import { archiveSignatures, zipSignatures } from './zipfile';
 const inert = (value: Value): void => {
   requireData([value]);
 };
+
 const signatures: Readonly<Record<string, CallSignature>> = {
   ...pythonSignatures,
   'difflib.SequenceMatcher': { parameters: ['isjunk', 'a', 'b'], options: { autojunk: inert } },
@@ -39,6 +40,7 @@ const signatures: Readonly<Record<string, CallSignature>> = {
   },
   sorted: { parameters: ['iterable'], options: { reverse: inert } },
 };
+
 const pathSignatures: Readonly<Record<string, CallSignature>> = {
   resolve: { parameters: [], options: { strict: inert } },
   unlink: { parameters: [], options: { missing_ok: inert } },
@@ -52,9 +54,11 @@ const signatureFor = (fn: Value): CallSignature | undefined => {
   if (fn.kind === 'symbol') {
     return Object.hasOwn(signatures, fn.name) ? signatures[fn.name] : undefined;
   }
+
   if (fn.kind !== 'method') {
     return undefined;
   }
+
   if (
     fn.receiver.kind === 'builtin' &&
     fn.receiver.name === 'datetime' &&
@@ -62,15 +66,19 @@ const signatureFor = (fn: Value): CallSignature | undefined => {
   ) {
     return { parameters: [], options: { timespec: inert, sep: inert } };
   }
+
   if (fn.receiver.kind === 'archive') {
     return Object.hasOwn(archiveSignatures, fn.name) ? archiveSignatures[fn.name] : undefined;
   }
+
   if (fn.receiver.kind === 'path') {
     return Object.hasOwn(pathSignatures, fn.name) ? pathSignatures[fn.name] : undefined;
   }
+
   if (['string', 'text', 'data'].includes(fn.receiver.kind) && fn.name === 'splitlines') {
     return { parameters: ['keepends'] };
   }
+
   if (['string', 'text'].includes(fn.receiver.kind) && ['decode', 'encode'].includes(fn.name)) {
     return {
       parameters: ['encoding'],
@@ -95,6 +103,7 @@ const signatureFor = (fn: Value): CallSignature | undefined => {
       },
     };
   }
+
   return undefined;
 };
 

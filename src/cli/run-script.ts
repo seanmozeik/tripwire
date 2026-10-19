@@ -55,8 +55,10 @@ const executeBytes = (
         stdin: 'pipe',
         stdout: 'inherit',
       });
+
       await child.stdin.write(bytes);
       await child.stdin.end();
+
       return child.exited;
     },
     catch: (cause) =>
@@ -75,15 +77,19 @@ const runCheckedScript = (
     const source = yield* decodeScript(bytes);
     const config = yield* loadCheckedScriptConfig();
     const decision = decideBash(source, config, { cwd, positionalArguments: arguments_ });
+
     if (decision.kind === 'deny' || decision.kind === 'ask') {
       return yield* new CheckedScriptError({
         message: `[tripwire:${decision.rule}] ${decision.message}`,
       });
     }
+
     if (decision.kind === 'warn') {
       process.stderr.write(`[tripwire:${decision.rule}] ${decision.message}\n`);
     }
+
     process.exitCode = yield* executeBytes(bytes, cwd, arguments_);
+
     return yield* Effect.void;
   });
 

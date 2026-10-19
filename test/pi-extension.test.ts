@@ -30,6 +30,30 @@ let root = '';
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
+const runPrivateBatch = (input: unknown): string => {
+  const child = Bun.spawnSync(
+    [process.execPath, new URL('../src/dispatch.ts', import.meta.url).pathname, '--tripwire-hook'],
+    {
+      env: { ...process.env, HOME: root },
+      stdin: new TextEncoder().encode(JSON.stringify(input)),
+      stderr: 'pipe',
+      stdout: 'pipe',
+    },
+  );
+
+  bunTest.expect(child.exitCode).toBe(0);
+
+  return child.stdout.toString();
+};
+
+const editEvent = (filePath: string) => ({
+  cwd: root,
+  hook_event_name: 'PreToolUse',
+  tool_input: { file_path: filePath, new_string: 'new', old_string: 'old' },
+  tool_name: 'Edit',
+  tool_use_id: `edit-${filePath}`,
+});
+
 bunTest.beforeEach(async () => {
   root = await mkdtemp(pathModule.join(tmpdir(), 'tripwire-pi-'));
 });
@@ -163,6 +187,7 @@ bunTest.describe('Tripwire Pi extension', () => {
       'PreToolUse',
       root,
     );
+
     bunTest.expect(hashlineInputs).toHaveLength(2);
     bunTest
       .expect(hashlineInputs[1])
@@ -195,6 +220,7 @@ bunTest.describe('Tripwire Pi extension', () => {
       'PreToolUse',
       root,
     );
+
     bunTest.expect(applyPatchInputs).toHaveLength(5);
     bunTest.expect(applyPatchInputs.map((input) => input['tool_input'])).toEqual([
       {
@@ -250,21 +276,28 @@ bunTest.describe('Tripwire Pi extension', () => {
     let processCalls = 0;
     let receivedInput: unknown;
     const receivedPaths: string[] = [];
+
     const processRunner: TripwireProcessRunner = (_hookPath, input) => {
       processCalls += 1;
       receivedInput = input;
       const events: readonly unknown[] = Array.isArray(input) ? input : [input];
+
       const blocked = events.some((event) => {
         if (!isRecord(event)) {
           return false;
         }
+
         const toolInput = event['tool_input'];
+
         if (!isRecord(toolInput) || typeof toolInput['file_path'] !== 'string') {
           return false;
         }
+
         receivedPaths.push(toolInput['file_path']);
+
         return toolInput['file_path'] === '.env';
       });
+
       return Promise.resolve({
         exitCode: 0,
         stderr: '',
@@ -281,11 +314,13 @@ bunTest.describe('Tripwire Pi extension', () => {
         ),
       });
     };
+
     createTripwirePiExtension('/unused/tripwire', processRunner)(collector);
     const toolCall = collector.requireToolCall();
 
     let aborted = false;
     const notifications: string[] = [];
+
     const result = await toolCall(
       {
         input: {
@@ -318,56 +353,16 @@ bunTest.describe('Tripwire Pi extension', () => {
   });
 
   bunTest.test('evaluates canonical private batches with one merged response', () => {
-    const run = (input: unknown) => {
-      const child = Bun.spawnSync(
-        [
-          process.execPath,
-          new URL('../src/dispatch.ts', import.meta.url).pathname,
-          '--tripwire-hook',
-        ],
-        {
-          env: { ...process.env, HOME: root },
-          stdin: new TextEncoder().encode(JSON.stringify(input)),
-          stderr: 'pipe',
-          stdout: 'pipe',
-        },
-      );
-      bunTest.expect(child.exitCode).toBe(0);
-      return parseJsonRecord(child.stdout.toString());
-    };
-    const event = (filePath: string) => ({
-      cwd: root,
-      hook_event_name: 'PreToolUse',
-      tool_input: { file_path: filePath, new_string: 'new', old_string: 'old' },
-      tool_name: 'Edit',
-      tool_use_id: `edit-${filePath}`,
-    });
-
-    bunTest.expect(run([event('one.ts'), event('two.ts')])).toEqual({ continue: true });
-    const denied = run([event('safe.ts'), event('.env')]);
+    bunTest
+      .expect(parseJsonRecord(runPrivateBatch([editEvent('one.ts'), editEvent('two.ts')])))
+      .toEqual({ continue: true });
+    const denied = parseJsonRecord(runPrivateBatch([editEvent('safe.ts'), editEvent('.env')]));
     const hookOutput = recordField(denied, 'hookSpecificOutput');
     bunTest.expect(hookOutput?.['permissionDecision']).toBe('deny');
     bunTest.expect(hookOutput?.['permissionDecisionReason']).toContain('.env');
   });
 
   bunTest.test('rejects empty, mixed-phase, and mixed-host private batches', () => {
-    const run = (input: unknown) => {
-      const child = Bun.spawnSync(
-        [
-          process.execPath,
-          new URL('../src/dispatch.ts', import.meta.url).pathname,
-          '--tripwire-hook',
-        ],
-        {
-          env: { ...process.env, HOME: root },
-          stdin: new TextEncoder().encode(JSON.stringify(input)),
-          stderr: 'pipe',
-          stdout: 'pipe',
-        },
-      );
-      bunTest.expect(child.exitCode).toBe(0);
-      return child.stdout.toString();
-    };
     const event = {
       cwd: root,
       hook_event_name: 'PreToolUse',
@@ -375,13 +370,13 @@ bunTest.describe('Tripwire Pi extension', () => {
       tool_name: 'Bash',
     };
 
-    bunTest.expect(run([])).toContain('tripwire-batch-error');
-    bunTest.expect(run([{}])).toContain('tripwire-batch-error');
+    bunTest.expect(runPrivateBatch([])).toContain('tripwire-batch-error');
+    bunTest.expect(runPrivateBatch([{}])).toContain('tripwire-batch-error');
     bunTest
-      .expect(run([event, { ...event, hook_event_name: 'PostToolUse' }]))
+      .expect(runPrivateBatch([event, { ...event, hook_event_name: 'PostToolUse' }]))
       .toContain('tripwire-batch-error');
     bunTest
-      .expect(run([event, { ...event, turn_id: 'codex-turn' }]))
+      .expect(runPrivateBatch([event, { ...event, turn_id: 'codex-turn' }]))
       .toContain('tripwire-batch-error');
   });
 
@@ -411,6 +406,7 @@ bunTest.describe('Tripwire Pi extension', () => {
     collector.requireToolResult();
     let aborted = false;
     let notification = '';
+
     const result = await toolCall(
       { input: { command: 'git status' }, toolCallId: 'call-1', toolName: 'bash' },
       {
@@ -425,6 +421,7 @@ bunTest.describe('Tripwire Pi extension', () => {
         },
       },
     );
+
     bunTest.expect(result?.block).toBe(true);
     bunTest.expect(result?.reason).toContain('Tripwire failed closed');
     bunTest.expect(aborted).toBe(false);
@@ -458,9 +455,11 @@ bunTest.describe('Pi installation', () => {
     const installedStatus = await lstat(installed);
     bunTest.expect(installedStatus.isSymbolicLink()).toBe(true);
     bunTest.expect(await readlink(installed)).toBe(extensionSource);
+
     const settings = parseJsonRecord(
       await readFile(pathModule.join(agentDirectory, 'settings.json'), 'utf8'),
     );
+
     const hooks = recordField(settings, 'hooks') ?? {};
     const customGroup = recordArrayField(hooks, 'customEvent')[0] ?? {};
     bunTest.expect(recordArrayField(customGroup, 'hooks')[0]?.['command']).toBe('custom-hook');

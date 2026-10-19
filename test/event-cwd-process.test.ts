@@ -10,12 +10,15 @@ bunTest.test('hook and CLI event boundaries use real cwd without the test preloa
   const cwd = path.join(root, 'project');
   const other = path.join(root, 'other');
   const home = path.join(root, 'home');
+
   for (const directory of [cwd, other, home]) {
     mkdirSync(directory);
   }
+
   writeFileSync(path.join(cwd, 'fixture.json'), '{"value":"fictional"}');
   const code = 'const value=require("./fixture.json"); console.log(value)';
   const command = `node -e '${code}'`;
+
   const run = (args: readonly string[], event?: unknown): string => {
     const child = Bun.spawnSync([process.execPath, entry, ...args], {
       cwd,
@@ -28,9 +31,12 @@ bunTest.test('hook and CLI event boundaries use real cwd without the test preloa
       stdout: 'pipe',
       stderr: 'pipe',
     });
+
     bunTest.expect(child.exitCode).toBe(0);
+
     return child.stdout.toString();
   };
+
   try {
     for (const [tool, input] of [
       ['Bash', { command }],
@@ -41,6 +47,7 @@ bunTest.test('hook and CLI event boundaries use real cwd without the test preloa
       bunTest.expect(run(['--tripwire-hook'], event).trim()).toBe('{"continue": true}');
       bunTest.expect(run(['--tripwire-hook'], { ...event, cwd: other })).toContain('"deny"');
     }
+
     bunTest.expect(run(['test', command])).toContain('"continue": true');
     const script = path.join(cwd, 'example.sh');
     writeFileSync(script, 'cd project-child\nprintf "cwd-boundary-ok"\n');

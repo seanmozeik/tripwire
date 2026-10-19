@@ -17,6 +17,14 @@ bunTest.afterEach(async () => {
 });
 
 bunTest.describe('package command contract', () => {
+  bunTest.test('publishes stable Effect peers matching the development runtimes', () => {
+    for (const name of ['effect', '@effect/platform-bun'] as const) {
+      const version = packageJson.devDependencies[name];
+      bunTest.expect(packageJson.peerDependencies[name]).toBe(version);
+      bunTest.expect(version).toMatch(/^4\.\d+\.\d+$/u);
+    }
+  });
+
   bunTest.test('publishes a portable root package with an optional native executable', () => {
     bunTest
       .expect(packageJson.bin)

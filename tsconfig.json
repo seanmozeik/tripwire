@@ -1,5 +1,5 @@
 {
-  "$schema": "https://raw.githubusercontent.com/Effect-TS/language-service/refs/heads/main/schema.json",
+  "$schema": "./node_modules/@effect/tsgo/schema.json",
   "compilerOptions": {
     "target": "ESNext",
     "module": "ESNext",
@@ -24,7 +24,17 @@
     "noPropertyAccessFromIndexSignature": true,
     "exactOptionalPropertyTypes": true,
 
-    "plugins": [{ "name": "@effect/language-service" }]
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        // These CLI and Bun entrypoint APIs remain unstable in stable Effect; package versions are pinned.
+        "allowedUnstableApis": [
+          "effect/cli",
+          "@effect/platform-bun/BunServices#layer",
+          "@effect/platform-bun/BunRuntime#runMain"
+        ]
+      }
+    ]
   },
   "include": ["**/*.ts"],
   "exclude": ["node_modules", ".venv", "dist"]

@@ -25,10 +25,12 @@ interface ControlContext {
 const inspectBranches = (node: SyntaxNode, context: ControlContext): void => {
   let before = context.snapshot();
   const states: EvaluationSnapshot[] = [before];
+
   for (const part of children(node).filter(
     (child) => !['if', 'elif', 'else', '(', ')'].includes(child.name),
   )) {
     context.restore(before);
+
     if (part.name === 'Body' || part.name === 'Block' || part.name.endsWith('Statement')) {
       context.statement(part);
       states.push(context.snapshot());
@@ -38,6 +40,7 @@ const inspectBranches = (node: SyntaxNode, context: ControlContext): void => {
       states.push(before);
     }
   }
+
   context.join(states);
 };
 
@@ -46,6 +49,7 @@ const inspectBranches = (node: SyntaxNode, context: ControlContext): void => {
 // as its old safe value in a later iteration.
 const forgetLoopWrites = (node: SyntaxNode, context: ControlContext): void => {
   const parts = children(node);
+
   if (
     [
       'AssignStatement',
@@ -60,6 +64,7 @@ const forgetLoopWrites = (node: SyntaxNode, context: ControlContext): void => {
     ].includes(node.name)
   ) {
     const end = parts.findIndex((part) => ['AssignOp', 'Equals', 'in'].includes(part.name));
+
     for (const part of end === -1 ? parts : parts.slice(0, end)) {
       if (part.name === 'VariableName' || part.name === 'VariableDefinition') {
         const previous = context.bindings.get(context.text(part));
@@ -70,16 +75,19 @@ const forgetLoopWrites = (node: SyntaxNode, context: ControlContext): void => {
       }
     }
   }
+
   if (node.name === 'CallExpression' || node.name === 'MemberExpression') {
     for (const part of parts) {
       if (part.name === 'VariableName') {
         const value = context.bindings.get(context.text(part));
+
         if (value?.kind === 'list' || value?.kind === 'object') {
           value.opaque = true;
         }
       }
     }
   }
+
   for (const part of parts) {
     forgetLoopWrites(part, context);
   }
@@ -92,7 +100,9 @@ const bindTarget = (target: SyntaxNode, value: Value, context: ControlContext): 
     ) {
       return failInspection('Destructuring defaults or nested patterns are not inspected.');
     }
+
     const names = children(target).filter((part) => part.name === 'VariableDefinition');
+
     for (const [index, name] of names.entries()) {
       context.bindings.set(
         context.text(name),
@@ -115,16 +125,20 @@ const iterationValues = (iterable: Value): readonly Value[] => {
   if (iterable.kind === 'list' && iterable.opaque !== true) {
     return iterable.items;
   }
+
   if (iterable.kind === 'sequence') {
     requireData([iterable.item]);
+
     return [iterable.item];
   }
+
   if (
     ['data', 'text', 'string', 'list', 'object', 'file', 'builtin'].includes(iterable.kind) ||
     (iterable.kind === 'symbol' && iterable.name === 'sys.stdin')
   ) {
     return [data];
   }
+
   return failInspection('Iteration needs bounded literals or inert JSON data.');
 };
 
@@ -142,40 +156,51 @@ const iterate = (
   ) {
     return failInspection('Only simple iteration bindings are inspected.');
   }
+
   const iterable = context.evaluate(input);
   const values = iterationValues(iterable);
+
   if (values.length > 128) {
     return failInspection('Iteration needs bounded literals or inert JSON data.');
   }
+
   const before = context.snapshot();
   const states: EvaluationSnapshot[] = [before];
+
   const repeated =
     iterable.kind !== 'list' ||
     iterable.opaque === true ||
     (body !== undefined && containsLoopJump(body));
+
   // Empty bodies are also checked; unreachable syntax cannot hide operations.
   for (const value of values.length === 0 ? [unknown] : values) {
     bindTarget(target, value, context);
+
     if (iterable.kind === 'list' && !repeated) {
       visit();
+
       if (containerMutated(iterable)) {
         failInspection('Mutation of an iterated container changes the iteration bounds.');
       }
     } else {
       context.repeat(body ?? input, visit);
     }
+
     states.push(context.snapshot());
   }
+
   context.join(states);
 };
 
 const inspectLoop = (node: SyntaxNode, context: ControlContext): void => {
   const parts = children(node);
   const spec = parts.find((part) => part.name === 'ForOfSpec');
+
   if (spec !== undefined) {
     const fields = children(spec);
     const [, declaration, target, operator, input] = fields;
     const block = parts.at(2);
+
     if (
       fields.length !== 6 ||
       !['const', 'let'].includes(declaration?.name ?? '') ||
@@ -184,6 +209,7 @@ const inspectLoop = (node: SyntaxNode, context: ControlContext): void => {
     ) {
       return failInspection('Unsupported JavaScript iteration form.');
     }
+
     iterate(
       target,
       input,
@@ -193,22 +219,28 @@ const inspectLoop = (node: SyntaxNode, context: ControlContext): void => {
       },
       block,
     );
+
     return;
   }
+
   const index = parts.findIndex((part) => part.name === 'in');
   const body = parts[index + 2];
+
   if (index < 2 || body?.name !== 'Body') {
     return failInspection('Unsupported loop shape.');
   }
+
   iterate(
     parts[index - 1],
     parts[index + 1],
     context,
     () => {
       const targets = parts.slice(1, index).filter((part) => part.name === 'VariableName');
+
       if (targets.length > 1) {
         const last = targets.at(-1);
         const row = last === undefined ? data : context.bindings.get(context.text(last));
+
         for (const [position, target] of targets.entries()) {
           context.bindings.set(
             context.text(target),
@@ -216,6 +248,7 @@ const inspectLoop = (node: SyntaxNode, context: ControlContext): void => {
           );
         }
       }
+
       context.statement(body);
     },
     body,
@@ -225,6 +258,7 @@ const inspectLoop = (node: SyntaxNode, context: ControlContext): void => {
 const inspectComprehension = (parts: readonly SyntaxNode[], context: ControlContext): Value => {
   const index = parts.findIndex((part) => part.name === 'for');
   const expression = parts[index - 1];
+
   if (
     index !== 1 ||
     expression === undefined ||
@@ -233,6 +267,7 @@ const inspectComprehension = (parts: readonly SyntaxNode[], context: ControlCont
   ) {
     return failInspection('Only single-generator comprehensions are inspected.');
   }
+
   const before = context.snapshot();
   iterate(
     parts[index + 1],
@@ -242,12 +277,15 @@ const inspectComprehension = (parts: readonly SyntaxNode[], context: ControlCont
       if (parts.length === 7) {
         const [, candidate] = parts.slice(5);
         const condition = candidate ?? failInspection('Missing comprehension filter.');
+
         if (parts[5]?.name !== 'if') {
           failInspection('Unsupported comprehension filter.');
         }
+
         requireData([context.evaluate(condition)]);
         const [left, operator, right] = children(condition);
         const target = parts[index + 1];
+
         if (
           condition.name === 'BinaryExpression' &&
           left?.name === 'VariableName' &&
@@ -258,6 +296,7 @@ const inspectComprehension = (parts: readonly SyntaxNode[], context: ControlCont
           context.text(left) === context.text(target)
         ) {
           const allowed = context.evaluate(right);
+
           if (
             allowed.kind === 'list' &&
             allowed.items.length > 0 &&
@@ -266,22 +305,28 @@ const inspectComprehension = (parts: readonly SyntaxNode[], context: ControlCont
           ) {
             const name = context.text(target);
             const previous = context.bindings.get(name) ?? unknown;
+
             for (const value of allowed.items) {
               context.bindings.set(name, value);
               requireData([context.evaluate(expression)]);
             }
+
             context.bindings.set(name, previous);
+
             return;
           }
         }
       }
+
       requireData([context.evaluate(expression)]);
     },
     expression.parent ?? expression,
   );
   context.restore(before);
+
   return data;
 };
 
 export { forgetLoopWrites, inspectBranches, inspectComprehension, inspectLoop };
+
 export type { ControlContext, EvaluationSnapshot };

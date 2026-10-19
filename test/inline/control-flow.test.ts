@@ -4,6 +4,7 @@ import { decideBash } from '../../src/dispatch';
 import type { CodeLanguage } from '../../src/lib/code/types';
 
 const quote = (value: string): string => `'${value.replaceAll("'", String.raw`'\''`)}'`;
+
 const denied: readonly [CodeLanguage, string][] = [
   [
     'python',
@@ -94,6 +95,7 @@ const denied: readonly [CodeLanguage, string][] = [
   ],
   ['python', 'import os\nimport subprocess\nsubprocess.run(os.listdir("."))'],
 ];
+
 bunTest.test.each(denied)('denies effects through %s state: %s', (language, source) => {
   bunTest
     .expect(

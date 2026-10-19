@@ -94,16 +94,19 @@ bunTest.describe('adversarial review regressions (policy-only)', () => {
 
   bunTest.test('symlink escape blocks and leaves the sentinel unchanged', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'tripwire-symlink-review-'));
+
     try {
       mkdirSync(path.join(root, 'kept'));
       const sentinel = path.join(root, 'kept', 'sentinel');
       writeFileSync(sentinel, 'unchanged');
       symlinkSync(path.join(root, 'kept'), path.join(root, 'dist'));
+
       const decision = decideBash(
         javascript('require("fs").rmSync("dist/sentinel")'),
         {},
         { cwd: root },
       );
+
       bunTest.expect(decision.kind).toBe('deny');
       bunTest.expect(readFileSync(sentinel, 'utf8')).toBe('unchanged');
     } finally {

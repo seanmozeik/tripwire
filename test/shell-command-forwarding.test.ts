@@ -22,6 +22,7 @@ bunTest.test.each([
     )
     .toBe('allow');
 });
+
 bunTest.test.each([
   '-D example',
   '-m example other',
@@ -35,6 +36,7 @@ bunTest.test.each([
     )
     .toBe('deny');
 });
+
 bunTest.test('xargs forwards argv without reparsing generated data as redirects', () => {
   bunTest
     .expect(

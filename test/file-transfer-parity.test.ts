@@ -6,8 +6,10 @@ import path from 'node:path';
 import { decide } from '../src/dispatch';
 
 const quote = (source: string): string => `'${source.replaceAll("'", String.raw`'\''`)}'`;
+
 const inspect = (command: string, cwd: string): string =>
   decide({ hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd, tool_input: { command } }).kind;
+
 const transfers = [
   ['mv', 'python3 -c', 'from pathlib import Path; Path(SOURCE).rename(TARGET)'],
   ['mv', 'python3 -c', 'from pathlib import Path; Path(SOURCE).replace(TARGET)'],
@@ -30,9 +32,11 @@ const transfers = [
 
 bunTest.test.each(transfers)('%s parity through %s: %s', (shell, runner, template) => {
   const cwd = mkdtempSync(path.join(tmpdir(), 'example-transfer-'));
+
   try {
     mkdirSync(path.join(cwd, 'directory'));
     symlinkSync('.env', path.join(cwd, 'alias'));
+
     for (const [source, target, expected] of [
       ['a.txt', 'b.txt', 'allow'],
       ['a.txt', '.env', 'deny'],
@@ -44,6 +48,7 @@ bunTest.test.each(transfers)('%s parity through %s: %s', (shell, runner, templat
       const code = template
         .replaceAll('SOURCE', JSON.stringify(source))
         .replaceAll('TARGET', JSON.stringify(target));
+
       const shellDecision = inspect(`${shell} -- ${quote(source)} ${quote(target)}`, cwd);
       bunTest.expect(shellDecision).toBe(expected);
       bunTest.expect(inspect(`${runner} ${quote(code)}`, cwd)).toBe(shellDecision);
@@ -57,20 +62,24 @@ bunTest.test.each(['mv', 'cp', 'ln', 'ln -s', 'rsync -a', 'install', 'install -m
   '%s checks directory destinations and effective child paths',
   (command) => {
     const cwd = mkdtempSync(path.join(tmpdir(), 'example-directory-transfer-'));
+
     try {
       mkdirSync(path.join(cwd, '.ssh'));
       mkdirSync(path.join(cwd, '.aws'));
       mkdirSync(path.join(cwd, 'ordinary'));
       symlinkSync('.ssh', path.join(cwd, 'alias'));
+
       for (const suffix of ['', '/']) {
         for (const destination of ['.ssh', 'alias', '~/.ssh']) {
           bunTest
             .expect(inspect(`${command} /tmp/example-source ${destination}${suffix}`, cwd))
             .toBe('deny');
         }
+
         bunTest.expect(inspect(`${command} credentials .aws${suffix}`, cwd)).toBe('deny');
         bunTest.expect(inspect(`${command} example.txt ordinary${suffix}`, cwd)).toBe('allow');
       }
+
       // The slash itself declares a directory even before it exists.
       bunTest.expect(inspect(`${command} credentials absent/.aws/`, cwd)).toBe('deny');
     } finally {
@@ -83,24 +92,30 @@ bunTest.test.each(transfers)(
   'protected directory parity for %s via %s: %s',
   (shell, runner, template) => {
     const cwd = mkdtempSync(path.join(tmpdir(), 'example-inline-directory-'));
+
     try {
       mkdirSync(path.join(cwd, '.ssh'));
       mkdirSync(path.join(cwd, '.aws'));
       mkdirSync(path.join(cwd, 'ordinary'));
       symlinkSync('.ssh', path.join(cwd, 'alias'));
+
       for (const suffix of ['', '/']) {
         for (const target of ['.ssh', 'alias', 'ordinary']) {
           const destination = `${target}${suffix}`;
+
           const code = template
             .replaceAll('SOURCE', '"example.txt"')
             .replaceAll('TARGET', JSON.stringify(destination));
+
           const expected = target === 'ordinary' ? 'allow' : 'deny';
           bunTest.expect(inspect(`${shell} example.txt ${destination}`, cwd)).toBe(expected);
           bunTest.expect(inspect(`${runner} ${quote(code)}`, cwd)).toBe(expected);
         }
+
         const code = template
           .replaceAll('SOURCE', '"credentials"')
           .replaceAll('TARGET', JSON.stringify(`.aws${suffix}`));
+
         bunTest.expect(inspect(`${runner} ${quote(code)}`, cwd)).toBe('deny');
       }
     } finally {
@@ -111,10 +126,12 @@ bunTest.test.each(transfers)(
 
 bunTest.test('pwd transfer provenance requires a known cwd and an unshadowed builtin', () => {
   const cwd = mkdtempSync(path.join(tmpdir(), 'example-pwd-transfer-'));
+
   try {
     bunTest
       .expect(inspect('src=$(pwd); dst=$(mktemp -d); rsync -- "$src" "$dst"', cwd))
       .toBe('allow');
+
     for (const prefix of [
       'pwd() { echo /example/.ssh; };',
       'alias pwd="echo /example/.ssh";',
@@ -124,6 +141,7 @@ bunTest.test('pwd transfer provenance requires a known cwd and an unshadowed bui
         .expect(inspect(`${prefix} src=$(pwd); dst=$(mktemp -d); rsync -- "$src" "$dst"`, cwd))
         .toBe('deny');
     }
+
     bunTest.expect(inspect('src=$(pwd); rsync -- "$src" .ssh/', cwd)).toBe('deny');
   } finally {
     rmSync(cwd, { recursive: true, force: true });

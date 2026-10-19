@@ -80,10 +80,13 @@ bunTest.beforeAll(async () => {
     ],
     { stderr: 'pipe', stdout: 'pipe' },
   );
+
   if (build.exitCode !== 0) {
     throw new Error(`Pi lifecycle fixture build failed: ${build.stderr.toString()}`);
   }
+
   let loaded: unknown;
+
   try {
     process.env['TRIPWIRE_BUN'] = process.execPath;
     process.env['TRIPWIRE_FORCE_PORTABLE'] = '1';
@@ -92,6 +95,7 @@ bunTest.beforeAll(async () => {
     delete process.env['TRIPWIRE_BUN'];
     delete process.env['TRIPWIRE_FORCE_PORTABLE'];
   }
+
   if (
     typeof loaded !== 'object' ||
     loaded === null ||
@@ -100,6 +104,7 @@ bunTest.beforeAll(async () => {
   ) {
     throw new Error('Compiled Pi lifecycle fixture has no default extension');
   }
+
   compiledExtension = loaded.default;
 });
 
@@ -112,12 +117,14 @@ const registerHandlers = (
 ): { readonly toolCall: ToolCallHandler; readonly toolResult: ToolResultHandler } => {
   const collector = new PiHandlerCollector();
   extension(collector);
+
   return { toolCall: collector.requireToolCall(), toolResult: collector.requireToolResult() };
 };
 
 const lifecycleState = (): LifecycleState => {
   const state = { aborted: false };
   const notifications: string[] = [];
+
   const context: PiExtensionContext = {
     abort: () => {
       state.aborted = true;
@@ -129,6 +136,7 @@ const lifecycleState = (): LifecycleState => {
       },
     },
   };
+
   return {
     get aborted() {
       return state.aborted;
@@ -155,6 +163,7 @@ const compiledLifecycleExtension = (): PiExtension => {
   if (compiledExtension === undefined) {
     throw new Error('Compiled Pi extension is not loaded');
   }
+
   return compiledExtension;
 };
 
@@ -209,10 +218,12 @@ const lifecycleTests = (name: string, extension: () => PiExtension): void => {
     bunTest.test('fails closed when the dispatcher fails', async () => {
       const handlers = registerHandlers(extension());
       const preState = lifecycleState();
+
       const preResult = await handlers.toolCall(
         toolCallEvent('dispatcher-failure', {}),
         preState.context,
       );
+
       bunTest.expect(preResult?.block).toBe(true);
       bunTest.expect(preResult?.reason).toContain('fixture dispatcher failure');
 
@@ -228,4 +239,5 @@ const lifecycleTests = (name: string, extension: () => PiExtension): void => {
 };
 
 lifecycleTests('source', () => createTripwirePiExtension(hookPath));
+
 lifecycleTests('compiled', compiledLifecycleExtension);

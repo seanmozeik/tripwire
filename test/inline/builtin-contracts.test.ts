@@ -24,6 +24,7 @@ bunTest.test.each([
       ).kind,
     )
     .toBe('deny');
+
   if (!exception.startsWith('(')) {
     bunTest
       .expect(analyzeCode('python', `raise ${exception}`, [], '/tripwire-policy-fixture').gap)

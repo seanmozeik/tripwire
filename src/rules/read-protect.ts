@@ -48,9 +48,11 @@ const PROTECTIONS: readonly ProtectedPathSpec[] = [
 
 const readProtect = (input: ReadInput): Decision => {
   const protection = classifyProtectedPath(input.file_path, 'read', PROTECTIONS);
+
   if (protection !== null) {
     return deny(protection.rule, protection.message);
   }
+
   return allow('read-protect');
 };
 

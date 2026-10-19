@@ -31,6 +31,7 @@ const FLAGS = new Set([
   '--verbose',
   '-v',
 ]);
+
 const VALUE_OPTIONS = new Set([
   '--project',
   '--directory',
@@ -43,6 +44,7 @@ const VALUE_OPTIONS = new Set([
   '--with-editable',
   '--with-requirements',
 ]);
+
 const CONTEXT_OPTIONS = new Set([
   '--project',
   '--directory',
@@ -50,18 +52,23 @@ const CONTEXT_OPTIONS = new Set([
   '--with-editable',
   '--with-requirements',
 ]);
+
 const scriptInvocation = (
   words: readonly ShellWord[],
   unsafeInlineContext: boolean,
 ): UvInvocation | null => {
   const option = words[0]?.value;
+
   if (option === undefined || !(option === '--script' || option.startsWith('--script='))) {
     return null;
   }
+
   const target = words[option === '--script' ? 1 : 0];
+
   if (target === undefined) {
     return { kind: 'irrelevant' };
   }
+
   return {
     kind: 'command',
     words: [
@@ -95,19 +102,24 @@ const uvInvocation = (invocation: Pick<ShellInvocation, 'words' | 'tokens'>): Uv
   const words = invocation.words.slice(1);
   let index = 0;
   let unsafeInlineContext = false;
+
   const flags = (): void => {
     while (index < words.length) {
       const token = words[index]?.value ?? '';
+
       if (words[index]?.kind !== 'literal') {
         break;
       }
+
       if (FLAGS.has(token)) {
         index += 1;
       } else if (token === '--python' || token === '-p' || token.startsWith('--python=')) {
         const attached = token.startsWith('--python=');
+
         const version = attached
           ? token.slice('--python='.length)
           : (words[index + 1]?.value ?? '');
+
         unsafeInlineContext ||= !/^[23](?:\.\d+){0,2}t?$/u.test(version);
         index += attached ? 1 : 2;
       } else if (VALUE_OPTIONS.has(token.split('=')[0] ?? '')) {
@@ -118,23 +130,31 @@ const uvInvocation = (invocation: Pick<ShellInvocation, 'words' | 'tokens'>): Uv
       }
     }
   };
+
   flags();
+
   if (words[index]?.value !== 'run') {
     return invocation.tokens.includes('run')
       ? unsupportedOptions(words[index]?.value ?? '', 'The uv run options require review.')
       : { kind: 'irrelevant' };
   }
+
   index += 1;
   flags();
+
   if (words[index]?.value === '--') {
     index += 1;
   }
+
   const script = scriptInvocation(words.slice(index), unsafeInlineContext);
+
   if (script !== null) {
     return script;
   }
+
   const executable = words[index];
   const head = executable?.value;
+
   if (
     executable === undefined ||
     head === undefined ||
@@ -142,9 +162,11 @@ const uvInvocation = (invocation: Pick<ShellInvocation, 'words' | 'tokens'>): Uv
   ) {
     return { kind: 'irrelevant' };
   }
+
   if (head.startsWith('-') && head !== '-') {
     return unsupportedOptions(head, 'The uv run command or options require review.');
   }
+
   return {
     kind: 'command',
     words:

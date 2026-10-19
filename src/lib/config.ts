@@ -102,6 +102,7 @@ const getDefaultConfig = (): ResolvedConfig => ({
 
 const mergeWithDefaults = (partial: Config): ResolvedConfig => {
   const defaults = getDefaultConfig();
+
   return {
     git: {
       protectedBranches: partial.git?.protectedBranches ?? defaults.git.protectedBranches,
@@ -130,19 +131,23 @@ type ConfigLoad =
 export const loadConfigResult = (path: string = CONFIG_PATH): Effect.Effect<ConfigLoad> =>
   Effect.gen(function* loadConfigResultEffect() {
     const raw = yield* readConfigFile(path);
+
     if (raw === null) {
       const result: ConfigLoad = { ok: true, config: getDefaultConfig() };
+
       return result;
     }
 
     const parsed = yield* parseConfigJson(raw);
     const config = yield* decodeConfig(parsed);
     const result: ConfigLoad = { ok: true, config: mergeWithDefaults(config) };
+
     return result;
   }).pipe(
     Effect.timeout(1000),
     Effect.catchCause((cause) => {
       const result: ConfigLoad = { ok: false, error: Cause.pretty(cause) };
+
       return Effect.succeed(result);
     }),
   );
@@ -158,11 +163,17 @@ export const loadConfig = (path: string = CONFIG_PATH): Effect.Effect<ResolvedCo
   );
 
 export type BlockRule = typeof BlockRuleSchema.Type;
+
 export type GitConfig = typeof GitConfigSchema.Type;
+
 export type SafePathsConfig = typeof SafePathsConfigSchema.Type;
+
 export type ToolPolicy = typeof ToolPolicySchema.Type;
+
 export type SecretScannerConfig = typeof SecretScannerConfigSchema.Type;
+
 export type { ExecutionCarrierAlias, ShellConfig } from './bash/config';
+
 export type Config = typeof ConfigSchema.Type;
 
 export interface ResolvedConfig {
@@ -180,6 +191,7 @@ export interface ResolvedConfig {
 }
 
 export type { ConfigLoad };
+
 export {
   CONFIG_PATH,
   ConfigSchema,

@@ -14,12 +14,16 @@ const parsePackageSpecifier = (specifier: string): PackageSpecifier | null => {
   if (/[\\%:]/u.test(specifier) || /^[./#]/u.test(specifier)) {
     return null;
   }
+
   const segments = specifier.split('/');
+
   if (segments.some((segment) => ['', '.', '..'].includes(segment))) {
     return null;
   }
+
   const nameLength = segments[0]?.startsWith('@') === true ? 2 : 1;
   const packageName = segments[nameLength - 1];
+
   if (
     segments.length <= nameLength ||
     segments[0] === '@' ||
@@ -28,7 +32,9 @@ const parsePackageSpecifier = (specifier: string): PackageSpecifier | null => {
   ) {
     return null;
   }
+
   const subpath = segments.slice(nameLength).join('/');
+
   return subpath.endsWith('.json')
     ? { name: segments.slice(0, nameLength).join('/'), subpath }
     : null;
@@ -47,6 +53,7 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 
 const readManifest = (file: string): Manifest => {
   let source: string;
+
   try {
     source = readFileSync(file, 'utf8');
   } catch (cause) {
@@ -54,14 +61,18 @@ const readManifest = (file: string): Manifest => {
       cause instanceof Error &&
       'code' in cause &&
       ['ENOENT', 'ENOTDIR'].includes(String(cause.code));
+
     return { kind: missing ? 'missing' : 'invalid' };
   }
+
   let parsed: unknown;
+
   try {
     parsed = JSON.parse(source);
   } catch {
     return { kind: 'invalid' };
   }
+
   return isRecord(parsed) ? { kind: 'present', fields: parsed } : { kind: 'invalid' };
 };
 
@@ -76,8 +87,10 @@ const exportedFile = (manifest: Manifest, directory: string, subpath: string): s
   if (manifest.kind !== 'present') {
     return null;
   }
+
   const { exports: exportsField } = manifest.fields;
   const key = `./${subpath}`;
+
   return isRecord(exportsField) && Object.hasOwn(exportsField, key) && exportsField[key] === key
     ? path.join(directory, subpath)
     : null;
@@ -85,18 +98,24 @@ const exportedFile = (manifest: Manifest, directory: string, subpath: string): s
 
 const nearestManifest = (directory: string): { directory: string; manifest: Manifest } | null => {
   let current = directory;
+
   for (;;) {
     if (path.basename(current) === 'node_modules') {
       return null;
     }
+
     const manifest = readManifest(path.join(current, 'package.json'));
+
     if (manifest.kind !== 'missing') {
       return { directory: current, manifest };
     }
+
     const parent = path.dirname(current);
+
     if (parent === current) {
       return null;
     }
+
     current = parent;
   }
 };
@@ -107,14 +126,17 @@ type Lookup = { readonly kind: 'file'; readonly file: string } | { readonly kind
 // Anything other than one regular file here could load code instead of data.
 const packageFile = (packageDirectory: string, subpath: string): Lookup => {
   const candidate = path.join(packageDirectory, subpath);
+
   try {
     if (statSync(candidate).isFile()) {
       return { kind: 'file', file: candidate };
     }
+
     return null;
   } catch {
     // Missing. Check below that Node has no other candidate here.
   }
+
   for (const alternative of [
     candidate,
     `${candidate}.js`,
@@ -123,11 +145,13 @@ const packageFile = (packageDirectory: string, subpath: string): Lookup => {
   ]) {
     try {
       lstatSync(alternative);
+
       return null;
     } catch {
       // Missing.
     }
   }
+
   return { kind: 'next' };
 };
 
@@ -138,23 +162,31 @@ const selfReference = (
   start: string,
 ): { readonly resolved: string | null } | null => {
   const scope = nearestManifest(start);
+
   if (scope === null || scope.manifest.kind === 'missing') {
     return null;
   }
+
   if (scope.manifest.kind === 'invalid') {
     return { resolved: null };
   }
+
   const { name } = scope.manifest.fields;
+
   if (name === undefined || !hasExports(scope.manifest)) {
     return null;
   }
+
   if (typeof name !== 'string') {
     return { resolved: null };
   }
+
   if (specifier !== name && !specifier.startsWith(`${name}/`)) {
     return null;
   }
+
   const subpath = specifier.slice(name.length + 1);
+
   return {
     resolved: subpath === '' ? null : exportedFile(scope.manifest, scope.directory, subpath),
   };
@@ -162,40 +194,54 @@ const selfReference = (
 
 const resolvePackageJsonModule = (specifier: string, cwd: string): string | null => {
   const parsed = parsePackageSpecifier(specifier);
+
   if (parsed === null) {
     return null;
   }
+
   let start: string;
+
   try {
     start = realpathSync(cwd);
   } catch {
     return null;
   }
+
   const self = selfReference(specifier, start);
+
   if (self !== null) {
     return self.resolved;
   }
+
   let current = start;
+
   for (;;) {
     if (path.basename(current) !== 'node_modules') {
       const packageDirectory = path.join(current, 'node_modules', parsed.name);
       const manifest = readManifest(path.join(packageDirectory, 'package.json'));
+
       if (manifest.kind === 'invalid') {
         return null;
       }
+
       if (hasExports(manifest)) {
         return exportedFile(manifest, packageDirectory, parsed.subpath);
       }
+
       const lookup = packageFile(packageDirectory, parsed.subpath);
+
       if (lookup?.kind !== 'next') {
         return lookup?.file ?? null;
       }
     }
+
     const parent = path.dirname(current);
+
     if (parent === current) {
       // NODE_PATH and global folders are not modeled.
       return null;
     }
+
     current = parent;
   }
 };

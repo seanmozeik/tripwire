@@ -10,6 +10,7 @@ const quote = (source: string): string => `'${source.replaceAll("'", String.raw`
 const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'example-data-modules-')));
 const project = path.join(root, 'work/project');
 const modules = path.join(project, 'node_modules');
+
 interface ExampleManifest {
   readonly name: string;
   readonly version?: string;
@@ -20,30 +21,46 @@ const writePackage = (directory: string, manifest: ExampleManifest): void => {
   mkdirSync(directory, { recursive: true });
   writeFileSync(path.join(directory, 'package.json'), JSON.stringify(manifest));
 };
+
 writePackage(project, { name: 'example-project' });
+
 mkdirSync(path.join(project, 'app'));
+
 writePackage(path.join(modules, 'example-pkg'), { name: 'example-pkg', version: '1.2.3' });
+
 writeFileSync(path.join(modules, 'example-pkg/index.js'), 'module.exports = 1;');
+
 writeFileSync(path.join(modules, 'example-pkg/data.json.js'), 'module.exports = 1;');
+
 writePackage(path.join(modules, '@example/scoped'), { name: '@example/scoped' });
+
 writePackage(path.join(modules, 'exported-pkg'), {
   name: 'exported-pkg',
   exports: { '.': './index.js', './package.json': './package.json' },
 });
+
 writePackage(path.join(modules, 'mapped-pkg'), {
   name: 'mapped-pkg',
   exports: { './package.json': './payload.js' },
 });
+
 writePackage(path.join(modules, 'conditional-pkg'), {
   name: 'conditional-pkg',
   exports: { './package.json': { node: './payload.js', default: './package.json' } },
 });
+
 mkdirSync(path.join(modules, 'linked-pkg'));
+
 writeFileSync(path.join(root, 'payload.js'), 'module.exports = 1;');
+
 symlinkSync(path.join(root, 'payload.js'), path.join(modules, 'linked-pkg/package.json'));
+
 writePackage(path.join(root, 'home/.ssh/example-keys'), { name: 'example-keys' });
+
 symlinkSync(path.join(root, 'home/.ssh/example-keys'), path.join(modules, 'example-keys'));
+
 const selfProject = path.join(root, 'work/self');
+
 writePackage(selfProject, { name: 'self-pkg', exports: { './package.json': './payload.js' } });
 
 bunTest.afterAll(() => {
@@ -55,8 +72,10 @@ const decide = (
   cwd = project,
 ): { readonly kind: string; readonly rule: string } => {
   const { kind, rule } = decideBash(command, {}, { cwd });
+
   return { kind, rule };
 };
+
 const allowed = { kind: 'allow', rule: 'none' };
 const embeddedDeny = { kind: 'deny', rule: 'embedded-code' };
 
@@ -71,6 +90,7 @@ bunTest.describe('Node require of package JSON', () => {
     ] as const) {
       bunTest.expect(decide(`node -p ${quote(source)}`, cwd)).toEqual(allowed);
     }
+
     bunTest
       .expect(
         decide(`cd ${project} && node -p "require('example-pkg/package.json').version"`, root),
@@ -92,6 +112,7 @@ bunTest.describe('Node require of package JSON', () => {
     ]) {
       bunTest.expect(decide(`node -p ${quote(source)}`)).toEqual(embeddedDeny);
     }
+
     bunTest
       .expect(decide(`node -p ${quote("require('self-pkg/package.json')")}`, selfProject))
       .toEqual(embeddedDeny);
@@ -143,6 +164,7 @@ bunTest.describe('Python csv', () => {
     ]) {
       bunTest.expect(decide(python(source))).toEqual(embeddedDeny);
     }
+
     bunTest
       .expect(decide(python("import csv\nprint(list(csv.reader(open('/scratch/run-1/.env'))))")))
       .toEqual({ kind: 'deny', rule: 'read-env' });

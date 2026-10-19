@@ -13,6 +13,7 @@ try {
 const logError = (rule: string, err: unknown): void => {
   const stamp = new Date().toISOString();
   const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
+
   try {
     appendFileSync(LOG_PATH, `[${stamp}] [${rule}] ${msg}\n`);
   } catch {

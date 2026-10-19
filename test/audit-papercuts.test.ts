@@ -116,12 +116,15 @@ bunTest.test.each([
 
 bunTest.test('rm unlinks a final temporary link but still checks traversal', () => {
   const cwd = mkdtempSync(path.join(tmpdir(), 'tripwire-unlink-'));
+
   try {
     const link = path.join(cwd, 'link');
     symlinkSync('/protected', link);
+
     for (const command of [`rm ${quote(link)}`, `rm -rf ${quote(link)}`]) {
       bunTest.expect(decideBash(command, {}, { cwd }).kind).toBe('allow');
     }
+
     for (const target of [`${link}/`, `${link}/child`, `${link}/.`]) {
       bunTest.expect(decideBash(`rm -rf ${quote(target)}`, {}, { cwd }).kind).toBe('deny');
     }

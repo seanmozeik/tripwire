@@ -3,6 +3,7 @@ import { Result, Schema } from 'effect';
 import type { HookEvent } from './event';
 
 const JsonRecordSchema = Schema.Record(Schema.String, Schema.Unknown);
+
 type JsonRecord = typeof JsonRecordSchema.Type;
 
 type HookHost =
@@ -46,10 +47,12 @@ const isRecord = (value: unknown): value is JsonRecord =>
 const stringField = (value: JsonRecord, ...names: readonly string[]): string | undefined => {
   for (const name of names) {
     const candidate = value[name];
+
     if (typeof candidate === 'string') {
       return candidate;
     }
   }
+
   return undefined;
 };
 
@@ -59,6 +62,7 @@ const valueField = (value: JsonRecord, ...names: readonly string[]): unknown => 
       return value[name];
     }
   }
+
   return undefined;
 };
 
@@ -68,12 +72,15 @@ const inputStringField = (
   ...names: readonly string[]
 ): string | undefined => {
   const fromRaw = stringField(raw, ...names);
+
   if (fromRaw !== undefined) {
     return fromRaw;
   }
+
   if (typeof input === 'string' && names.includes('command')) {
     return input;
   }
+
   return isRecord(input) ? stringField(input, ...names) : undefined;
 };
 
@@ -81,11 +88,13 @@ const requiredString = (value: string | undefined, label: string): string => {
   if (value === undefined) {
     throw new Error(`Cursor hook payload missing ${label}`);
   }
+
   return value;
 };
 
 const normalizeCursorToolName = (name: string): string => {
   const normalized = name.toLowerCase();
+
   if (
     normalized === 'bash' ||
     normalized === 'exec' ||
@@ -94,12 +103,15 @@ const normalizeCursorToolName = (name: string): string => {
   ) {
     return 'Bash';
   }
+
   if (normalized === 'read' || normalized === 'read_file') {
     return 'Read';
   }
+
   if (normalized === 'write' || normalized === 'write_file') {
     return 'Write';
   }
+
   if (
     normalized === 'edit' ||
     normalized === 'edit_file' ||
@@ -108,6 +120,7 @@ const normalizeCursorToolName = (name: string): string => {
   ) {
     return 'Edit';
   }
+
   return name;
 };
 
@@ -116,44 +129,57 @@ const isFileTool = (tool: string): boolean =>
 
 const normalizeBashInput = (input: unknown, required: boolean) => {
   let command: string | undefined;
+
   if (typeof input === 'string') {
     command = input;
   } else if (isRecord(input)) {
     command = stringField(input, 'command', 'cmd');
   }
+
   if (required && command === undefined) {
     throw new Error('Cursor hook payload missing command');
   }
+
   if (typeof input === 'string') {
     return { command: input };
   }
+
   if (!isRecord(input) || command === undefined) {
     return input;
   }
+
   return { ...input, command };
 };
 
 const normalizeFileInput = (tool: string, input: JsonRecord, required: boolean): JsonRecord => {
   const filePath = stringField(input, 'file_path', 'filePath', 'path');
+
   if (required && filePath === undefined) {
     throw new Error(`Cursor ${tool} hook payload missing file path`);
   }
+
   if (tool === 'Read') {
     return { ...input, file_path: filePath ?? '' };
   }
+
   if (tool === 'Write') {
     const content = stringField(input, 'content', 'fileText', 'text');
+
     if (required && content === undefined) {
       throw new Error('Cursor Write hook payload missing content');
     }
+
     return { ...input, file_path: filePath ?? '', content: content ?? '' };
   }
+
   if (tool === 'Edit') {
     const oldString = stringField(input, 'old_string', 'oldString');
     const newString = stringField(input, 'new_string', 'newString');
+
     if (required && (oldString === undefined || newString === undefined)) {
       throw new Error('Cursor Edit hook payload missing oldString or newString');
     }
+
     return {
       ...input,
       file_path: filePath ?? '',
@@ -161,6 +187,7 @@ const normalizeFileInput = (tool: string, input: JsonRecord, required: boolean):
       new_string: newString ?? '',
     };
   }
+
   return input;
 };
 
@@ -168,15 +195,19 @@ const normalizeToolInput = (tool: string, input: unknown, required = true): unkn
   if (tool === 'Bash') {
     return normalizeBashInput(input, required);
   }
+
   if (!isFileTool(tool)) {
     return input;
   }
+
   if (!isRecord(input)) {
     if (required) {
       throw new Error(`Cursor ${tool} hook payload is missing tool input`);
     }
+
     return input;
   }
+
   return normalizeFileInput(tool, input, required);
 };
 
@@ -184,12 +215,15 @@ const normalizeToolResponse = (tool: string, response: unknown) => {
   if (typeof response !== 'string') {
     return response;
   }
+
   if (tool === 'Bash') {
     return { stdout: response, stderr: '' };
   }
+
   if (tool === 'Read') {
     return { content: response };
   }
+
   return { content: response };
 };
 
@@ -197,6 +231,7 @@ const cursorToolName = (eventName: string, raw: JsonRecord): string => {
   if (eventName === 'beforeShellExecution' || eventName === 'afterShellExecution') {
     return 'Bash';
   }
+
   if (
     eventName === 'beforeReadFile' ||
     eventName === 'beforeTabFileRead' ||
@@ -205,11 +240,15 @@ const cursorToolName = (eventName: string, raw: JsonRecord): string => {
   ) {
     return eventName.startsWith('before') ? 'Read' : 'Edit';
   }
+
   const rawName = stringField(raw, 'tool_name', 'toolName');
+
   if (rawName !== undefined) {
     return normalizeCursorToolName(rawName);
   }
+
   const input = valueField(raw, 'tool_input', 'toolInput');
+
   if (
     stringField(raw, 'command', 'cmd') !== undefined ||
     typeof input === 'string' ||
@@ -217,12 +256,14 @@ const cursorToolName = (eventName: string, raw: JsonRecord): string => {
   ) {
     return 'Bash';
   }
+
   if (
     stringField(raw, 'file_path', 'filePath', 'path') !== undefined ||
     (isRecord(input) && stringField(input, 'file_path', 'filePath', 'path') !== undefined)
   ) {
     return 'Read';
   }
+
   return '';
 };
 
@@ -230,10 +271,13 @@ const cursorTopLevelToolInput = (tool: string, raw: JsonRecord): JsonRecord => {
   if (tool === 'Bash') {
     return { command: inputStringField(raw, undefined, 'command', 'cmd') };
   }
+
   const fileInput = { file_path: stringField(raw, 'file_path', 'filePath', 'path') };
+
   if (tool === 'Write') {
     return { ...fileInput, content: stringField(raw, 'content', 'fileText', 'text') };
   }
+
   if (tool === 'Edit') {
     return {
       ...fileInput,
@@ -241,21 +285,27 @@ const cursorTopLevelToolInput = (tool: string, raw: JsonRecord): JsonRecord => {
       new_string: stringField(raw, 'new_string', 'newString'),
     };
   }
+
   return fileInput;
 };
 
 const cursorToolInput = (eventName: string, tool: string, raw: JsonRecord, post: boolean) => {
   const decoded = Schema.decodeResult(JsonRecordSchema)(raw);
+
   if (Result.isFailure(decoded)) {
     throw new Error('Cursor sent an invalid tool event');
   }
+
   const boundary = decoded.success;
   const input = valueField(boundary, 'tool_input', 'toolInput');
   const required = !post;
+
   if (eventName === 'beforeShellExecution' || eventName === 'afterShellExecution') {
     const command = inputStringField(boundary, input, 'command', 'cmd');
+
     return { command: required ? requiredString(command, 'command') : (command ?? '') };
   }
+
   if (
     eventName === 'beforeReadFile' ||
     eventName === 'beforeTabFileRead' ||
@@ -263,6 +313,7 @@ const cursorToolInput = (eventName: string, tool: string, raw: JsonRecord, post:
     eventName === 'afterTabFileEdit'
   ) {
     const filePath = inputStringField(boundary, input, 'file_path', 'filePath', 'path');
+
     return normalizeToolInput(
       tool,
       {
@@ -272,9 +323,11 @@ const cursorToolInput = (eventName: string, tool: string, raw: JsonRecord, post:
       required,
     );
   }
+
   if (input === undefined && ['Bash', 'Read', 'Write', 'Edit'].includes(tool)) {
     return normalizeToolInput(tool, cursorTopLevelToolInput(tool, boundary), required);
   }
+
   return normalizeToolInput(tool, input, required);
 };
 
@@ -282,6 +335,7 @@ const cursorToolResponse = (eventName: string, tool: string, raw: JsonRecord): u
   if (eventName === 'afterShellExecution') {
     return normalizeToolResponse(tool, stringField(raw, 'output') ?? '');
   }
+
   const response = valueField(
     raw,
     'tool_response',
@@ -291,6 +345,7 @@ const cursorToolResponse = (eventName: string, tool: string, raw: JsonRecord): u
     'result',
     'result_json',
   );
+
   return normalizeToolResponse(tool, response);
 };
 
@@ -305,6 +360,7 @@ const normalizeCursorEvent = (
   const cwd = stringField(raw, 'cwd');
   const sessionId = stringField(raw, 'conversation_id', 'session_id');
   const toolUseId = stringField(raw, 'tool_use_id');
+
   const event: HookEvent = {
     hook_event_name: post ? 'PostToolUse' : 'PreToolUse',
     ...(tool.length > 0 && { tool_name: tool }),
@@ -314,6 +370,7 @@ const normalizeCursorEvent = (
     ...(sessionId !== undefined && { session_id: sessionId }),
     ...(toolUseId !== undefined && { tool_use_id: toolUseId }),
   };
+
   return { event, host: cursorHost(eventName) };
 };
 
@@ -321,19 +378,25 @@ const normalizeHookInput = (raw: unknown, hintedEventName?: string): NormalizedH
   if (hintedEventName !== undefined && !isCursorEventName(hintedEventName)) {
     throw new Error(`Unknown Cursor hook event "${hintedEventName}"`);
   }
+
   if (!isRecord(raw)) {
     if (hintedEventName !== undefined) {
       throw new Error(`Cursor ${hintedEventName} hook payload must be a JSON object`);
     }
+
     return { event: raw, host: { kind: 'native' } };
   }
+
   const eventName = hintedEventName ?? stringField(raw, 'hook_event_name');
+
   if (eventName !== undefined && CURSOR_PRE_EVENTS.has(eventName)) {
     return normalizeCursorEvent(raw, eventName, false);
   }
+
   if (eventName !== undefined && CURSOR_POST_EVENTS.has(eventName)) {
     return normalizeCursorEvent(raw, eventName, true);
   }
+
   return { event: raw, host: { kind: 'native' } };
 };
 

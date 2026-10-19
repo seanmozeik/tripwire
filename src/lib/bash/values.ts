@@ -37,6 +37,7 @@ const rangeOf = (node: { readonly pos: number; readonly end: number }): SourceRa
 
 const basename = (value: string): string => {
   const index = value.lastIndexOf('/');
+
   return index === -1 ? value : value.slice(index + 1);
 };
 
@@ -78,10 +79,16 @@ const partsAreStatic = (parts: readonly WordPart[]): boolean =>
       case 'AnsiCQuoted': {
         return true;
       }
+
       case 'DoubleQuoted':
       case 'LocaleString': {
         return partsAreStatic(part.parts);
       }
+
+      case 'Glob': {
+        return partsAreStatic(part.parts ?? []);
+      }
+
       case 'SimpleExpansion':
       case 'ParameterExpansion':
       case 'CommandExpansion':
@@ -91,6 +98,7 @@ const partsAreStatic = (parts: readonly WordPart[]): boolean =>
       case 'BraceExpansion': {
         return false;
       }
+
       default: {
         return false;
       }
@@ -103,37 +111,52 @@ const staticCommandOf = (script: ParsedScript | undefined): StaticCommand | null
   if (script === undefined || (script.errors?.length ?? 0) > 0 || script.commands.length !== 1) {
     return null;
   }
+
   const [statement] = script.commands;
-  if (statement === undefined || statement.background === true || statement.redirects.length > 0) {
+
+  if (statement === undefined || statement.background === true) {
     return null;
   }
+
   const { command } = statement;
+
   if (command.type !== 'Command' || command.name === undefined || !wordIsStatic(command.name)) {
     return null;
   }
-  if (command.prefix.length > 0 || command.suffix.some((word) => !wordIsStatic(word))) {
+
+  if (
+    command.prefix.some((item) => item.type === 'Assignment') ||
+    command.args.some((word) => word.type !== 'Word' || !wordIsStatic(word))
+  ) {
     return null;
   }
+
   return {
     command,
     head: basename(command.name.value),
-    args: command.suffix.map((word) => word.value),
+    args: command.args.flatMap((word) => (word.type === 'Word' ? [word.value] : [])),
   };
 };
 
 const soleCommandExpansion = (word: Word): ParsedScript | undefined => {
   const parts = word.parts ?? [];
+
   if (parts.length !== 1) {
     return undefined;
   }
+
   const [part] = parts;
+
   if (part?.type === 'CommandExpansion') {
     return part.script;
   }
+
   if (part?.type !== 'DoubleQuoted' || part.parts.length !== 1) {
     return undefined;
   }
+
   const [child] = part.parts;
+
   return child?.type === 'CommandExpansion' ? child.script : undefined;
 };
 
@@ -149,38 +172,45 @@ const generatedCwd = (parsed: StaticCommand, environment: Environment): string |
   ) {
     return environment.cwd?.replace(/\n+$/u, '') ?? null;
   }
+
   return null;
 };
 
 const staticGeneratedValue = (word: Word, environment: Environment): string | null => {
   const parsed = staticCommandOf(soleCommandExpansion(word));
+
   if (parsed === null || commandIsShadowed(parsed, environment)) {
     return null;
   }
+
   const cwd = generatedCwd(parsed, environment);
+
   if (cwd !== null) {
     return cwd;
   }
+
   if (parsed.head === 'cat' && parsed.args.length === 0 && parsed.command.redirects.length === 1) {
     const [redirect] = parsed.command.redirects;
-    if (redirect?.operator !== '<<' && redirect?.operator !== '<<-') {
+
+    if (redirect?.type !== 'HereDoc') {
       return null;
     }
-    if (
-      redirect.heredocQuoted === true ||
-      redirect.body === undefined ||
-      wordIsStatic(redirect.body)
-    ) {
-      return (redirect.content ?? '').replace(/\n+$/u, '');
+
+    if (redirect.delimiter?.quoted === true || partsAreStatic(redirect.body.parts ?? [])) {
+      return redirect.body.text.replace(/\n+$/u, '');
     }
+
     return null;
   }
+
   if (parsed.head === 'printf' && parsed.args.length === 2) {
     const [format, value] = parsed.args;
+
     if (format === '%s' || format === String.raw`%s\n`) {
       return value ?? '';
     }
   }
+
   return null;
 };
 
@@ -204,8 +234,10 @@ const mktempArguments = (
   let systemTempTemplate = false;
   let explicitDirectory: string | null = null;
   const positionals: string[] = [];
+
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
+
     if (arg === '-t') {
       systemTempTemplate = true;
       index += 1;
@@ -218,11 +250,13 @@ const mktempArguments = (
       positionals.push(arg);
     }
   }
+
   return { explicitDirectory, positionals, systemTempTemplate };
 };
 
 const isTrustedMktemp = (word: Word, environment: Environment): boolean => {
   const parsed = staticCommandOf(soleCommandExpansion(word));
+
   if (
     parsed?.head !== 'mktemp' ||
     commandIsShadowed(parsed, environment) ||
@@ -235,34 +269,39 @@ const isTrustedMktemp = (word: Word, environment: Environment): boolean => {
   ) {
     return false;
   }
+
   const { explicitDirectory, positionals, systemTempTemplate } = mktempArguments(parsed.args);
+
   if (explicitDirectory !== null && !isSafeTemporaryTemplate(explicitDirectory)) {
     return false;
   }
+
   if (positionals.length === 0 || systemTempTemplate || explicitDirectory !== null) {
     return true;
   }
+
   const [template] = positionals;
+
   return positionals.length === 1 && template !== undefined && isSafeTemporaryTemplate(template);
 };
 
 const expansionVariable = (part: WordPart): string | null => {
   if (part.type === 'SimpleExpansion') {
     const match = /^\$(?<name>[A-Za-z_][A-Za-z0-9_]*|[0-9]+|!)$/u.exec(part.text);
+
     return match?.groups?.['name'] ?? null;
   }
+
   if (
     part.type === 'ParameterExpansion' &&
-    part.indirect !== true &&
-    part.length !== true &&
-    part.operator === undefined &&
+    part.prefix === undefined &&
+    part.operation === undefined &&
     part.index === undefined &&
-    part.slice === undefined &&
-    part.replace === undefined &&
     /^(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+|!)$/u.test(part.parameter)
   ) {
     return part.parameter;
   }
+
   return null;
 };
 
@@ -278,6 +317,7 @@ const scalarExpansion = (word: Word): ScalarExpansion | null => {
     | { readonly kind: 'literal'; readonly value: string }
     | { readonly kind: 'variable'; readonly quoted: boolean; readonly variable: string }
   )[] = [];
+
   const collect = (parts: readonly WordPart[], quoted: boolean): boolean => {
     for (const part of parts) {
       switch (part.type) {
@@ -287,22 +327,37 @@ const scalarExpansion = (word: Word): ScalarExpansion | null => {
           fragments.push({ kind: 'literal', value: part.value });
           break;
         }
+
         case 'DoubleQuoted':
         case 'LocaleString': {
           if (!collect(part.parts, true)) {
             return false;
           }
+
           break;
         }
+
         case 'SimpleExpansion':
         case 'ParameterExpansion': {
           const variable = expansionVariable(part);
+
           if (variable === null) {
             return false;
           }
+
           fragments.push({ kind: 'variable', quoted, variable });
           break;
         }
+
+        case 'Glob': {
+          if (!partsAreStatic(part.parts ?? [])) {
+            return false;
+          }
+
+          fragments.push({ kind: 'literal', value: part.value });
+          break;
+        }
+
         case 'ArithmeticExpansion':
         case 'BraceExpansion':
         case 'CommandExpansion':
@@ -310,28 +365,37 @@ const scalarExpansion = (word: Word): ScalarExpansion | null => {
         case 'ProcessSubstitution': {
           return false;
         }
+
         default: {
           return false;
         }
       }
     }
+
     return true;
   };
+
   if (!collect(word.parts ?? [], false)) {
     return null;
   }
+
   const variables = fragments.filter(
     (fragment): fragment is Extract<(typeof fragments)[number], { readonly kind: 'variable' }> =>
       fragment.kind === 'variable',
   );
+
   if (variables.length !== 1) {
     return null;
   }
+
   const [variable] = variables;
+
   if (variable === undefined) {
     return null;
   }
+
   const variableIndex = fragments.indexOf(variable);
+
   return {
     prefix: fragments
       .slice(0, variableIndex)
@@ -350,31 +414,42 @@ const quotedExpansion = (
   word: Word,
 ): { readonly variable: string; readonly suffix: string } | null => {
   const parts = word.parts ?? [];
+
   if (parts.length !== 1 || parts[0]?.type !== 'DoubleQuoted') {
     return null;
   }
+
   const children = parts[0].parts;
+
   if (children.length < 1 || children.length > 2) {
     return null;
   }
+
   const [firstChild] = children;
   const variable = firstChild === undefined ? null : expansionVariable(firstChild);
+
   if (variable === null) {
     return null;
   }
+
   const [, suffixPart] = children;
+
   if (suffixPart !== undefined && suffixPart.type !== 'Literal') {
     return null;
   }
+
   return { variable, suffix: suffixPart?.value ?? '' };
 };
 
 const trustedTempWord = (word: Word, environment: Environment): ShellWord | null => {
   const expansion = quotedExpansion(word);
+
   if (expansion === null || !environment.temps.has(expansion.variable)) {
     return null;
   }
+
   const { suffix, variable } = expansion;
+
   if (
     (suffix !== '' && !suffix.startsWith('/')) ||
     suffix.split('/').includes('..') ||
@@ -382,6 +457,7 @@ const trustedTempWord = (word: Word, environment: Environment): ShellWord | null
   ) {
     return null;
   }
+
   return {
     source: word.text,
     value: `${TRUSTED_TEMP_ROOT}/${variable}${suffix}`,
@@ -394,11 +470,14 @@ const trustedTempWord = (word: Word, environment: Environment): ShellWord | null
 
 const boundWord = (word: Word, environment: Environment): ShellWord | null => {
   const expansion = scalarExpansion(word);
+
   if (expansion === null) {
     return null;
   }
+
   const { prefix, quoted, suffix, variable } = expansion;
   const binding = environment.bindings.get(variable);
+
   if (
     binding === undefined ||
     binding.kind === 'dynamic' ||
@@ -409,18 +488,22 @@ const boundWord = (word: Word, environment: Environment): ShellWord | null => {
   ) {
     return null;
   }
+
   const value = `${prefix}${binding.value}${suffix}`;
+
   if (
     !quoted &&
     (/\s/u.test(value) || value.includes('*') || value.includes('?') || value.includes('['))
   ) {
     return null;
   }
+
   return { ...binding, source: word.text, value, range: rangeOf(word), quoted, variable };
 };
 
 const backgroundPidWord = (word: Word, environment: Environment): ShellWord | null => {
   const expansion = scalarExpansion(word);
+
   if (
     !environment.backgroundPidAvailable ||
     expansion?.variable !== '!' ||
@@ -429,6 +512,7 @@ const backgroundPidWord = (word: Word, environment: Environment): ShellWord | nu
   ) {
     return null;
   }
+
   return {
     source: word.text,
     value: BACKGROUND_PID_VALUE,
@@ -452,4 +536,5 @@ export {
   trustedTempWord,
   wordIsStatic,
 };
+
 export type { Environment };

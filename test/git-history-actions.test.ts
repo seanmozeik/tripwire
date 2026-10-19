@@ -8,10 +8,12 @@ import type { RuleAction } from '../src/lib/rule-actions';
 import { parseJsonRecord, recordField } from './support/json';
 
 const git = { protectedBranches: ['main'] };
+
 const configured: Config = {
   git,
   ruleActions: { 'git-cherry-pick': 'allow', 'git-merge': 'allow', 'git-rebase': 'allow' },
 };
+
 const policies: readonly Config[] = [{ git }, configured];
 const options = { cwd: '/work/example.git.feature' };
 
@@ -52,6 +54,7 @@ bunTest.describe('configurable Git history workflow', () => {
         const config: Config = {
           ruleActions: { 'git-cherry-pick': action, 'git-merge': action, 'git-rebase': action },
         };
+
         bunTest.expect(decideBash(command, config, options).kind).toBe(action);
       }
     },
@@ -146,6 +149,7 @@ bunTest.describe('configurable Git history workflow', () => {
         ])('uses workflow policy when additional branch updates are disabled: %s', (command) => {
           const decision = decideBash(command, policy, options);
           bunTest.expect(decision.kind).toBe(policy.ruleActions === undefined ? 'ask' : 'allow');
+
           if (policy.ruleActions === undefined) {
             bunTest.expect(decision.rule).toBe('git-rebase');
           }
@@ -215,6 +219,7 @@ bunTest.describe('configurable Git history workflow', () => {
         ])('uses workflow policy for ordinary merges: %s', (command) => {
           const decision = decideBash(command, policy, options);
           bunTest.expect(decision.kind).toBe(policy.ruleActions === undefined ? 'ask' : 'allow');
+
           if (policy.ruleActions === undefined) {
             bunTest.expect(decision.rule).toBe('git-merge');
           }
@@ -288,11 +293,14 @@ bunTest.test(
   'source tripwire test matches unit decisions without running submitted commands',
   () => {
     const home = mkdtempSync(path.join(tmpdir(), 'tripwire-history-cli-'));
+
     try {
       const configDirectory = path.join(home, '.config', 'tripwire');
       mkdirSync(configDirectory, { recursive: true });
+
       for (const policy of policies) {
         writeFileSync(path.join(configDirectory, 'config.json'), JSON.stringify(policy));
+
         for (const command of [
           'git -C /work/example.git.feature cherry-pick 1111111..2222222',
           'GIT_SEQUENCE_EDITOR=true git -C /work/example.git.feature rebase --autosquash 1111111',
@@ -307,6 +315,7 @@ bunTest.test(
           'git -c merge.example.driver=./merge-tool merge feature/x',
         ]) {
           const decision = decideBash(command, policy, options);
+
           const result = Bun.spawnSync(
             [
               process.execPath,
@@ -322,9 +331,11 @@ bunTest.test(
               timeout: 10_000,
             },
           );
+
           bunTest.expect(result.exitCode).toBe(0);
           bunTest.expect(result.stderr.toString()).toBe('');
           const output = parseJsonRecord(result.stdout.toString());
+
           if (decision.kind === 'allow') {
             bunTest.expect(output).toEqual({ continue: true });
           } else {

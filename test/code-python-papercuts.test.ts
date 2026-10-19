@@ -23,6 +23,7 @@ bunTest.describe('Python data operation regressions', () => {
       [],
       '/tripwire-policy-fixture',
     );
+
     bunTest.expect(report.gap).toBeNull();
     bunTest
       .expect(report.operations.map((operation) => operation.kind))

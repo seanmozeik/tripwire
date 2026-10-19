@@ -39,6 +39,7 @@ interface AgentHooksConfig extends Record<string, unknown> {
 }
 
 const { packageDist } = readRuntimeEnvironment();
+
 const piExtensionSourceCandidates = [
   ...(packageDist === undefined ? [] : [pathModule.join(packageDist, 'tripwire-pi.js')]),
   pathModule.join(pathModule.dirname(process.execPath), 'tripwire-pi.js'),
@@ -86,6 +87,7 @@ export const replaceTextAtomically = async (
 ): Promise<void> => {
   let publicationPath = targetPath;
   let targetIsSymlink = false;
+
   try {
     const targetStatus = await lstat(targetPath);
     targetIsSymlink = targetStatus.isSymbolicLink();
@@ -94,6 +96,7 @@ export const replaceTextAtomically = async (
       throw error;
     }
   }
+
   if (targetIsSymlink) {
     // A dangling link fails here instead of being replaced.
     publicationPath = await realpath(targetPath);
@@ -113,6 +116,7 @@ export const replaceTextAtomically = async (
   }
 
   await rm(pendingPath, { force: true });
+
   try {
     handle = await open(pendingPath, 'wx', mode);
     await handle.writeFile(text, 'utf8');
@@ -151,10 +155,13 @@ const isAgentHooksConfig = (value: unknown): value is AgentHooksConfig => {
   if (!isJsonRecord(value)) {
     return false;
   }
+
   const { hooks } = value;
+
   if (hooks === undefined) {
     return true;
   }
+
   return (
     isJsonRecord(hooks) &&
     (hooks['PreToolUse'] === undefined || isHookGroups(hooks['PreToolUse'])) &&
@@ -164,24 +171,31 @@ const isAgentHooksConfig = (value: unknown): value is AgentHooksConfig => {
 
 const parseAgentHooksConfig = (raw: string, label: string): AgentHooksConfig => {
   const value: unknown = JSON.parse(raw);
+
   if (!isAgentHooksConfig(value)) {
     throw new Error(`${label} hook config has an unsupported shape`);
   }
+
   return value;
 };
 
 const parseCursorConfig = (raw: string): CursorConfig => {
   const value: unknown = JSON.parse(raw);
+
   if (!isJsonRecord(value)) {
     throw new Error('Cursor hooks.json must contain a JSON object');
   }
+
   const { hooks } = value;
+
   if (hooks === undefined) {
     return value;
   }
+
   if (!isJsonRecord(hooks)) {
     throw new Error('Cursor hooks.json `hooks` must be an object');
   }
+
   for (const [eventName, eventHooks] of Object.entries(hooks)) {
     if (
       !Array.isArray(eventHooks) ||
@@ -190,6 +204,7 @@ const parseCursorConfig = (raw: string): CursorConfig => {
       throw new Error(`Cursor hooks.json event ${eventName} must contain command hooks`);
     }
   }
+
   return value;
 };
 
@@ -200,34 +215,44 @@ const installExtensionLink = async (
   extensionPath: string,
 ): Promise<ExtensionLinkResult> => {
   await mkdir(pathModule.dirname(extensionPath), { recursive: true });
+
   try {
     const status = await lstat(extensionPath);
+
     if (!status.isSymbolicLink()) {
       return { action: 'already', success: false };
     }
+
     const currentTarget = await readlink(extensionPath);
+
     if (currentTarget === source) {
       return { action: 'already', success: true };
     }
+
     const resolvedTarget = pathModule.resolve(pathModule.dirname(extensionPath), currentTarget);
+
     if (pathModule.basename(resolvedTarget) !== 'tripwire-pi.js') {
       return { action: 'already', success: false };
     }
 
     const pendingPath = `${extensionPath}.${process.pid}.next`;
     await rm(pendingPath, { force: true });
+
     try {
       await symlink(source, pendingPath);
       await rename(pendingPath, extensionPath);
     } finally {
       await rm(pendingPath, { force: true });
     }
+
     return { action: 'updated', success: true };
   } catch (error) {
     if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) {
       throw error;
     }
+
     await symlink(source, extensionPath);
+
     return { action: 'installed', success: true };
   }
 };
@@ -257,10 +282,12 @@ const addCursorHook = (
   hookCommand = TRIPWIRE_HOOK,
 ): [CursorHook[], boolean] => {
   const failClosed = CURSOR_FAIL_CLOSED_EVENTS.has(eventName);
+
   const newHook = {
     command: `${hookCommand} --cursor-event ${eventName}`,
     ...(failClosed && { failClosed: true }),
   };
+
   if (hooks === undefined) {
     return [[newHook], true];
   }
@@ -268,20 +295,25 @@ const addCursorHook = (
   let changed = false;
   const hasTripwire = hooks.some((hook) => isTripwireCommand(hook.command));
   const desiredCommand = `${hookCommand} --cursor-event ${eventName}`;
+
   const normalized = hooks.map((hook) => {
     if (!isTripwireCommand(hook.command)) {
       return hook;
     }
+
     if (hook.command === desiredCommand && (!failClosed || hook.failClosed === true)) {
       return hook;
     }
+
     changed = true;
+
     return { ...hook, command: desiredCommand, ...(failClosed && { failClosed: true }) };
   });
 
   if (hasTripwire) {
     return [normalized, changed];
   }
+
   return [[...normalized, newHook], true];
 };
 
@@ -291,6 +323,7 @@ const addHookIfMissing = (
 ): [HookGroup[], boolean] => {
   if (!hooks) {
     const newHooks: HookGroup[] = [{ hooks: [{ type: 'command', command: hookCommand }] }];
+
     return [newHooks, false];
   }
 
@@ -302,10 +335,13 @@ const addHookIfMissing = (
       if (isTripwireCommand(hook.command)) {
         if (hook.command !== hookCommand) {
           needsNormalization = true;
+
           return { ...hook, command: hookCommand };
         }
+
         return hook;
       }
+
       return hook;
     }),
   }));
@@ -322,6 +358,7 @@ const addHookIfMissing = (
     ...normalizedHooks,
     { hooks: [{ type: 'command', command: hookCommand }] },
   ];
+
   return [newHooks, false];
 };
 
@@ -331,6 +368,7 @@ export const installClaude = async (
   const homeDirectory = options.homeDirectory ?? homedir();
   const hookCommand = options.hookCommand ?? TRIPWIRE_HOOK;
   const configPath = `${homeDirectory}/.claude/settings.json`;
+
   try {
     const raw = await readFile(configPath, 'utf8');
     const config = parseAgentHooksConfig(raw, 'Claude');
@@ -353,7 +391,9 @@ export const installClaude = async (
     if (isErrno(error, 'ENOENT')) {
       return { success: false, message: `Config file not found: ${configPath}` };
     }
+
     const message = error instanceof Error ? error.message : String(error);
+
     return { success: false, message: `Failed to update Claude config: ${message}` };
   }
 };
@@ -369,13 +409,17 @@ export const installPi = async (
     const source =
       options.extensionSource ??
       piExtensionSourceCandidates.find((candidate) => Bun.file(candidate).size > 0);
+
     if (source === undefined) {
       return { success: false, message: 'Built Pi extension not found; run `bun run build` first' };
     }
+
     const raw = await readFile(configPath, 'utf8');
     let config = parseAgentHooksConfig(raw, 'Pi');
+
     if (config.hooks !== undefined) {
       const { PreToolUse, PostToolUse, ...otherHooks } = config.hooks;
+
       const cleanGroups = (groups: HookGroup[] | undefined) =>
         groups
           ?.map((group) => ({
@@ -383,13 +427,16 @@ export const installPi = async (
             hooks: group.hooks.filter((hook) => !isTripwireCommand(hook.command)),
           }))
           .filter((group) => group.hooks.length > 0) ?? [];
+
       const cleanPreToolUse = cleanGroups(PreToolUse);
       const cleanPostToolUse = cleanGroups(PostToolUse);
+
       const nextHooks = {
         ...otherHooks,
         ...(cleanPreToolUse.length > 0 && { PreToolUse: cleanPreToolUse }),
         ...(cleanPostToolUse.length > 0 && { PostToolUse: cleanPostToolUse }),
       };
+
       if (Object.keys(nextHooks).length === 0) {
         const { hooks: _removedHooks, ...configWithoutHooks } = config;
         config = configWithoutHooks;
@@ -397,30 +444,38 @@ export const installPi = async (
         config.hooks = nextHooks;
       }
     }
+
     const nextRaw = `${JSON.stringify(config, null, 2)}\n`;
     const settingsChanged = nextRaw !== raw;
 
     // The extension must be available before old hook settings are removed.
     const link = await installExtensionLink(source, extensionPath);
+
     if (!link.success) {
       return {
         success: false,
         message: `Refusing to replace existing Pi extension: ${extensionPath}`,
       };
     }
+
     if (settingsChanged) {
       await replaceTextAtomically(configPath, nextRaw);
     }
+
     if (link.action === 'already' && !settingsChanged) {
       return { success: true, message: `Already configured: ${extensionPath}` };
     }
+
     const verb = link.action === 'updated' ? 'Updated' : 'Installed';
+
     return { success: true, message: `${verb} ${extensionPath}` };
   } catch (error) {
     if (isErrno(error, 'ENOENT')) {
       return { success: false, message: `Config file not found: ${configPath}` };
     }
+
     const message = error instanceof Error ? error.message : String(error);
+
     return { success: false, message: `Failed to update pi config: ${message}` };
   }
 };
@@ -430,27 +485,35 @@ export const installOhMyPi = async (
 ): Promise<{ success: boolean; message: string }> => {
   const homeDirectory = options.homeDirectory ?? homedir();
   const extensionPath = `${homeDirectory}/.omp/agent/extensions/tripwire.js`;
+
   try {
     const source =
       options.extensionSource ??
       piExtensionSourceCandidates.find((candidate) => Bun.file(candidate).size > 0);
+
     if (source === undefined) {
       return { success: false, message: 'Built Pi extension not found; run `bun run build` first' };
     }
+
     const link = await installExtensionLink(source, extensionPath);
+
     if (!link.success) {
       return {
         success: false,
         message: `Refusing to replace existing oh-my-pi extension: ${extensionPath}`,
       };
     }
+
     if (link.action === 'already') {
       return { success: true, message: `Already configured: ${extensionPath}` };
     }
+
     const verb = link.action === 'updated' ? 'Updated' : 'Installed';
+
     return { success: true, message: `${verb} ${extensionPath}` };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+
     return { success: false, message: `Failed to install oh-my-pi extension: ${message}` };
   }
 };
@@ -458,9 +521,11 @@ export const installOhMyPi = async (
 const parseCodexFeatures = (raw: string): Record<string, unknown> | undefined => {
   const parsed: unknown = Bun.TOML.parse(raw);
   const features = isJsonRecord(parsed) ? parsed['features'] : undefined;
+
   if (features !== undefined && !isJsonRecord(features)) {
     throw new Error('Codex config.toml `features` must be a table');
   }
+
   return features;
 };
 
@@ -472,6 +537,7 @@ const enableCodexHooks = (raw: string): string => {
   const newline = raw.includes('\r\n') ? '\r\n' : '\n';
   const featuresHeader = /^[\t ]*\[features\][\t ]*(?:#.*)?(?:\r?\n|$)/mu.exec(raw);
   let next: string;
+
   if (featuresHeader === null) {
     const separator = raw.length === 0 || raw.endsWith('\n') ? '' : newline;
     const finalNewline = raw.length === 0 || raw.endsWith('\n') ? newline : '';
@@ -483,6 +549,7 @@ const enableCodexHooks = (raw: string): string => {
     const nextHeader = nextHeaderPattern.exec(raw);
     const sectionEnd = nextHeader?.index ?? raw.length;
     const section = raw.slice(sectionStart, sectionEnd);
+
     const assignment =
       /^(?<prefix>[\t ]*hooks[\t ]*=[\t ]*)(?<value>[^#\r\n]*?)(?<suffix>[\t ]*(?:#.*)?)$/mu.exec(
         section,
@@ -495,9 +562,11 @@ const enableCodexHooks = (raw: string): string => {
     } else {
       const prefix = assignment.groups?.['prefix'];
       const value = assignment.groups?.['value'];
+
       if (prefix === undefined || value === undefined) {
         throw new Error('Could not locate Codex hooks value in config.toml');
       }
+
       const valueStart = sectionStart + assignment.index + prefix.length;
       const valueEnd = valueStart + value.length;
       next = `${raw.slice(0, valueStart)}true${raw.slice(valueEnd)}`;
@@ -507,6 +576,7 @@ const enableCodexHooks = (raw: string): string => {
   if (parseCodexFeatures(next)?.['hooks'] !== true) {
     throw new Error('Could not enable Codex hooks in config.toml');
   }
+
   return next;
 };
 
@@ -524,6 +594,7 @@ export const installCodex = async (
       readFile(hooksJsonPath, 'utf8'),
       readFile(configTomlPath, 'utf8'),
     ]);
+
     const config = parseAgentHooksConfig(hooksRaw, 'Codex');
     config.hooks ??= {};
     const [preToolUse] = addHookIfMissing(config.hooks.PreToolUse, hookCommand);
@@ -551,6 +622,7 @@ export const installCodex = async (
     if (hooksUpdated) {
       await replaceTextAtomically(hooksJsonPath, nextHooksRaw);
     }
+
     if (tomlUpdated) {
       await replaceTextAtomically(configTomlPath, nextTomlRaw);
     }
@@ -561,6 +633,7 @@ export const installCodex = async (
         message: `Already configured: ${configTomlPath} and ${hooksJsonPath}`,
       };
     }
+
     return { success: true, message: `Updated ${configTomlPath} and ${hooksJsonPath}` };
   } catch (error) {
     if (isErrno(error, 'ENOENT')) {
@@ -568,9 +641,12 @@ export const installCodex = async (
         isJsonRecord(error) && typeof error['path'] === 'string'
           ? error['path']
           : `${configTomlPath} or ${hooksJsonPath}`;
+
       return { success: false, message: `Config file not found: ${missingPath}` };
     }
+
     const message = error instanceof Error ? error.message : String(error);
+
     return { success: false, message: `Failed to update Codex config: ${message}` };
   }
 };
@@ -581,6 +657,7 @@ export const installCursor = async (
   const homeDirectory = options.homeDirectory ?? homedir();
   const hookCommand = options.hookCommand ?? TRIPWIRE_HOOK;
   const configPath = `${homeDirectory}/.cursor/hooks.json`;
+
   try {
     const raw = await readFile(configPath, 'utf8');
     const config = parseCursorConfig(raw);
@@ -588,6 +665,7 @@ export const installCursor = async (
     config.hooks ??= {};
 
     let updated = false;
+
     for (const eventName of CURSOR_HOOK_EVENTS) {
       const [hooks, changed] = addCursorHook(config.hooks[eventName], eventName, hookCommand);
       config.hooks[eventName] = hooks;
@@ -597,13 +675,17 @@ export const installCursor = async (
     if (!updated) {
       return { success: true, message: `Already configured: ${configPath}` };
     }
+
     await replaceTextAtomically(configPath, `${JSON.stringify(config, null, 2)}\n`);
+
     return { success: true, message: `Updated ${configPath}` };
   } catch (error) {
     if (isErrno(error, 'ENOENT')) {
       return { success: false, message: `Config file not found: ${configPath}` };
     }
+
     const message = error instanceof Error ? error.message : String(error);
+
     return { success: false, message: `Failed to update Cursor hooks.json: ${message}` };
   }
 };

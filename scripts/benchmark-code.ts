@@ -6,22 +6,28 @@ import { allCodeFixtures } from '../test/fixtures/code-corpus';
 // Only invoke the policy function. No fixture can reach a shell or interpreter.
 const timings: number[] = [];
 const cwd = '/tripwire-policy-fixture';
+
 for (const fixture of allCodeFixtures) {
   decideBash(fixture.command, {}, { cwd });
 }
+
 for (let round = 0; round < 20; round += 1) {
   for (const fixture of allCodeFixtures) {
     const start = performance.now();
     const decision = decideBash(fixture.command, {}, { cwd });
     timings.push(performance.now() - start);
+
     if ((decision.kind === 'allow' || decision.kind === 'warn') !== fixture.allowed) {
       throw new Error(`Unexpected decision for ${fixture.name}`);
     }
   }
 }
+
 timings.sort((left, right) => left - right);
+
 const percentile = (fraction: number): number =>
   Number((timings[Math.floor((timings.length - 1) * fraction)] ?? 0).toFixed(3));
+
 process.stdout.write(
   `${JSON.stringify({
     metric: 'warm Bash parsing plus embedded-code policy, milliseconds',

@@ -13,14 +13,17 @@ const changedPaths = (operation: CodeOperation): readonly string[] | null => {
   if (operation.kind === 'process') {
     return operation.mutations;
   }
+
   if (operation.kind === 'transfer') {
     return operation.command === 'mv'
       ? [...operation.sources, operation.destination]
       : [operation.destination];
   }
+
   if (operation.kind === 'json-package') {
     return [];
   }
+
   return operation.kind === 'read' || operation.kind === 'json-module' ? [] : [operation.path];
 };
 
@@ -33,18 +36,23 @@ const resolvePathCall = (
   if (args.length > 0 || context.cwd === null) {
     return failInspection('Path resolution needs a known working directory and checked options.');
   }
+
   const target = path.resolve(context.cwd, submitted);
   const actual = resolveWritePath(target);
+
   for (const operation of context.operations) {
     const affected = changedPaths(operation);
+
     if (
       affected === null ||
       affected.some((value) => {
         if (!path.isAbsolute(value) && operation.cwd === null) {
           return true;
         }
+
         const mutation =
           operation.cwd === null ? path.resolve(value) : path.resolve(operation.cwd, value);
+
         return overlaps(target, mutation) || overlaps(actual, resolveWritePath(mutation));
       })
     ) {
@@ -53,10 +61,13 @@ const resolvePathCall = (
       );
     }
   }
+
   recordOperation(context, { kind: 'read', path: target, range: context.range });
+
   if (method === 'resolve') {
     return { kind: 'path', path: actual };
   }
+
   try {
     return { kind: 'path', path: readlinkSync(target) };
   } catch {

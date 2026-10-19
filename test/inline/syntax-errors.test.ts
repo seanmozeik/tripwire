@@ -34,11 +34,13 @@ bunTest.test.each([
   ['node', 'console.log(1);', 'console.log(2);'],
 ])('literal backslash-n in single quotes explains heredoc: %s', (runner, first, second) => {
   const flag = runner === 'python3' ? '-c' : '-e';
+
   const result = decideBash(
     `${runner} ${flag} '${first}\\n${second}'`,
     {},
     { cwd: '/tripwire-policy-fixture' },
   );
+
   bunTest.expect(result.kind).toBe('deny');
   bunTest.expect(result.message).toContain('two characters, not a newline; use a heredoc');
   bunTest
@@ -65,6 +67,7 @@ bunTest.test(
     const spy = bunTest.spyOn(pythonParser, 'startParse').mockImplementation(() => {
       throw new Error('fictional-private-exception-text');
     });
+
     try {
       const report = analyzeCode('python', 'print(1)', [], '/tripwire-policy-fixture');
       bunTest.expect(report.gap).toContain('Internal code inspector error');
@@ -72,6 +75,7 @@ bunTest.test(
     } finally {
       spy.mockRestore();
     }
+
     bunTest
       .expect(analyzeCode('python', 'print(1)', [], '/tripwire-policy-fixture').gap)
       .toBeNull();
@@ -82,6 +86,7 @@ bunTest.test('unexpected analyzer construction errors also fail closed', () => {
   const spy = bunTest.spyOn(path, 'resolve').mockImplementation(() => {
     throw new Error('fictional-private-directory-error');
   });
+
   try {
     const report = analyzeCode('python', 'print(1)', [], '/fictional');
     bunTest.expect(report.gap).toContain('Internal code inspector error');

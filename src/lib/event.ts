@@ -11,7 +11,9 @@ const HookEvent = Schema.Struct({
   turn_id: Schema.optional(Schema.String),
   tool_use_id: Schema.optional(Schema.String),
 });
+
 type HookEventType = typeof HookEvent.Type;
+
 type ResolvedHookEvent = Omit<HookEventType, 'cwd'> & { readonly cwd: string | null };
 
 const resolveHookEvent = (event: HookEventType): ResolvedHookEvent => ({
@@ -58,10 +60,12 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const isBashInput = (x: unknown): x is BashInput => isRecord(x) && typeof x['command'] === 'string';
 
 const CodeInputSchema = Schema.Union([Schema.String, Schema.Struct({ code: Schema.String })]);
+
 const ExecInputSchema = Schema.Struct({
   cmd: Schema.String,
   workdir: Schema.optional(Schema.String),
 });
+
 const decodeCodeInput = Schema.decodeUnknownOption(CodeInputSchema);
 const decodeExecInput = Schema.decodeUnknownOption(ExecInputSchema);
 
@@ -84,18 +88,24 @@ const extractResponseText = (toolName: string, response: unknown): string => {
   if (!isRecord(response)) {
     return '';
   }
+
   if (toolName === 'Bash') {
     const stdout = typeof response['stdout'] === 'string' ? response['stdout'] : '';
     const stderr = typeof response['stderr'] === 'string' ? response['stderr'] : '';
+
     return [stdout, stderr].filter((text) => text.length > 0).join('\n');
   }
+
   if (toolName === 'Read') {
     if (typeof response['content'] === 'string') {
       return response['content'];
     }
+
     const { file } = response;
+
     return isRecord(file) && typeof file['content'] === 'string' ? file['content'] : '';
   }
+
   // Best-effort fallback: stringify and let the scanner do its thing.
   return typeof response['content'] === 'string' ? response['content'] : '';
 };
@@ -110,6 +120,7 @@ export type {
   ReadResponse,
   WriteInput,
 };
+
 export {
   HookEvent as HookEventSchema,
   resolveHookEvent,

@@ -94,4 +94,5 @@ export type {
   ShellWordKind,
   SourceRange,
 };
+
 export type { ExecutionCarrierAlias, ExecutionCarrierKind } from './config';
